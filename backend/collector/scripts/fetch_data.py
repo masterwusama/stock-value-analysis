@@ -11,14 +11,25 @@
 - 审计信息（事务所/意见类型）：定期报告 PDF 文本解析（巨潮直链）
 
 用法：
-    python fetch_data.py                 # 抓取全部配置的公司
-    python fetch_data.py --limit 2       # 只抓前 2 家（快速测试）
+    python fetch_data.py                      # 抓取 config.DEFAULT_COMPANIES 精选池
+    python fetch_data.py --all-market         # 全 A 股（沪深京 ≈ 5500 只）
+    python fetch_data.py --all-market --workers 4 --resume
+                                              # 首轮全量：4 并发 + 断点续跑
+    python fetch_data.py --all-market --shard 1/4   # 分片多进程并行
+    python fetch_data.py --codes 600028,920000       # 指定代码增量补抓
+    python fetch_data.py --codes HK.00700            # 港股代码带前缀（不补零到 6 位，不会砸 A 股同名文件）
+    python fetch_data.py --hk-connect --workers 6    # 只跑港股通名单（≈621 只）
+    python fetch_data.py --snapshot-only      # 仅用腾讯批量行情刷全市场估值（约 1 分钟）
+
+index.json 采用“合并写”：每次只覆盖本次跑到的条目，其余保留，
+因此 --limit/--codes/--shard 部分执行不会把名单截断（旧版会）。
 """
 
 import argparse
 import json
 import os
 import re
+import socket
 import sys
 import time
 import traceback
@@ -35,6 +46,37 @@ try:
     pymupdf.TOOLS.mupdf_display_errors(False)
 except Exception:
     pass
+
+# [卡死护栏①] 兼容性兜底，但**对 requests/SSL 路径不可靠**（见护栏②），
+# 只能挡住少数直接走 socket 的调用，别再把它当成防挂死的依据。
+socket.setdefaulttimeout(45)
+
+
+# [卡死护栏②] akshare 内部调 requests 一律不传 timeout，urllib3 在调用方给 None 时会
+# 把 socket 超时显式清成 None，所以 setdefaulttimeout 对它们无效——实测 2026-09-02 22:27
+# 三个工人带着护栏仍永久停在 ssl.read（堆栈：stock_financial_report_sina → requests.content
+# → read_chunked → ssl.read）。这里在传输层补默认值：只把 None 换掉，我们自己显式传过的
+# （年报 PDF 下载 timeout=90）原样放过。
+def _force_default_timeout(connect=10, read=45):
+    try:
+        from requests.adapters import HTTPAdapter
+    except ImportError:  # requests 不在，不阻断抓取
+        return
+    if getattr(HTTPAdapter.send, "_va_timeout", False):
+        return
+    _orig_send = HTTPAdapter.send
+
+    def send(self, request, timeout=None, *args, **kwargs):
+        if timeout is None:
+            timeout = (connect, read)   # 元组：连接超时 + 单次读超时
+        return _orig_send(self, request, timeout=timeout, *args, **kwargs)
+
+    send.__name__ = "send"
+    send._va_timeout = True
+    HTTPAdapter.send = send
+
+
+_force_default_timeout()
 
 from config import DEFAULT_COMPANIES, REQUEST_INTERVAL
 from scoring import compute_scores  # 预计算评分（与 assets/stock.js 一致性由 _score_check.py 验证）
@@ -55,7 +97,12 @@ CN_TZ = timezone(timedelta(hours=8))
 
 
 def sina_symbol(code: str) -> str:
-    """6/9 开头 → sh，0/2/3 开头 → sz，其余（4/8）→ bj"""
+    """6/9 开头 → sh，0/2/3 开头 → sz，4/8/92 开头 → bj
+
+    920 段是北交所新代码段(2024 起),需先于 "9→sh" 判定,否则会被当成沪市。
+    """
+    if code.startswith("92") or code.startswith(("4", "8")):
+        return "bj" + code
     if code.startswith(("6", "9")):
         return "sh" + code
     if code.startswith(("0", "2", "3")):
@@ -473,12 +520,33 @@ def fetch_hk_dividends(code: str):
     return records
 
 
+_HK_INDUSTRY_CACHE = None
+
+
+def hk_industry(code: str):
+    """港股通名单自带的行业名（东财 f100，见 universe.load_universe_hk）。
+
+    东财港股个股接口不给行业，但拉名单时一次就带全 621 只，所以在此查表而不是逐只加请求。
+    名单缓存缺失/损坏时返回 None：只丢行业列，不阻断抓取。
+    """
+    global _HK_INDUSTRY_CACHE
+    if _HK_INDUSTRY_CACHE is None:
+        try:
+            import universe as uni
+            _HK_INDUSTRY_CACHE = {c: ind for c, _, ind in uni.load_universe_hk(quiet=True)}
+        except Exception:
+            _HK_INDUSTRY_CACHE = {}
+    return _HK_INDUSTRY_CACHE.get(code)
+
+
 def fetch_company_hk(code: str, name: str):
     """抓取港股公司：指标/三大报表/快照/分红（东财 + 腾讯）；无定期报告 PDF 与审计信息"""
     result = {"code": code, "name": name, "market": "HK"}
     result["updated_at"] = datetime.now(CN_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
     errors = []
-    result["info"] = {}  # 东财港股无行业信息，留空
+    industry = hk_industry(code)
+    # 行业来自港股通名单（东财 f100）；不在名单里的港股（如非港股通标的）留空
+    result["info"] = {"行业": industry} if industry else {}
 
     try:
         result["indicators"] = fetch_hk_indicators(code)
@@ -706,7 +774,15 @@ def fetch_company_us(code: str, name: str):
     return result
 
 
-def fetch_dividends(code: str):
+def _div_year_label(report_date: str):
+    """'2025-12-31' → ('2025年报', '年度分红')：对齐巨潮的 year/type 口径。"""
+    d = str(report_date or "")
+    yy, mm = d[:4], d[5:7]
+    suffix = {"12": "年报", "06": "半年报", "03": "一季报", "09": "三季报"}.get(mm, "")
+    return f"{yy}{suffix}", ("年度分红" if mm == "12" else "中期分红")
+
+
+def _dividends_cninfo(code: str):
     """巨潮分红历史（送股/转增/派息比例 + 关键日期），按公告日期倒序"""
     df = ak.stock_dividend_cninfo(symbol=code)
     if df is None or df.empty:
@@ -728,6 +804,49 @@ def fetch_dividends(code: str):
         )
     records.sort(key=lambda r: r["announce_date"] or "", reverse=True)
     return records
+
+
+def _dividends_em(code: str):
+    """东财分红送配兜底（巨潮 403 限流时用）；只留已实施方案，字段对齐巨潮记录。"""
+    df = ak.stock_fhps_detail_em(symbol=code)
+    if df is None or df.empty:
+        return []
+    records = []
+    for _, row in df.iterrows():
+        progress = str(row.get("方案进度") or "")
+        if "实施" not in progress:
+            continue          # 预案/中止/未通过不入历史（无除权日即未落地）
+        report = to_iso(row.get("报告期")) or ""
+        year, dtype = _div_year_label(report)
+        ex = iso_or_none(row.get("除权除息日"))
+        announce = iso_or_none(row.get("最新公告日期")) or iso_or_none(row.get("预案公告日")) or ex
+        records.append(
+            {
+                "year": year,
+                "type": dtype,
+                "announce_date": announce,
+                "record_date": iso_or_none(row.get("股权登记日")),
+                "ex_date": ex,
+                "pay_date": ex,       # A 股派息日通常与除权日同日
+                "bonus_per_10": parse_number(row.get("现金分红-现金分红比例")),
+                "transfer_per_10": parse_number(row.get("送转股份-转股比例")),
+                "description": str(row.get("现金分红-现金分红比例描述") or "").strip(),
+            }
+        )
+    records.sort(key=lambda r: r["announce_date"] or "", reverse=True)
+    return records
+
+
+def fetch_dividends(code: str):
+    """分红历史：巨潮优先，限流/异常时回退东财分红送配接口"""
+    if cninfo_available():
+        try:
+            recs = _dividends_cninfo(code)
+            cninfo_note(True)
+            return recs
+        except Exception:
+            cninfo_note(False)
+    return _dividends_em(code)
 
 
 # 事务所名称前的常见修饰语（聘任表格文本：本次变更业经/续聘/已由等）
@@ -840,13 +959,23 @@ def extract_audit(text: str, is_annual: bool = False):
     return firm, opinion
 
 
-def fetch_audit(code: str, reports: list):
+# 审计 PDF 解析范围（全市场扩量开关）：审计意见只供详情页展示,不参与评分,
+# 而每份年报/半年报 PDF 达几 MB——它是全量抓取的最大耗时项。子进程走 spawn 不继
+# 承父进程全局变量,故由主进程写入环境变量后再读。
+AUDIT_SCOPES = {"full": ("年报", "半年报"), "annual": ("年报",), "none": ()}
+AUDIT_SCOPE = os.getenv("VA_AUDIT_SCOPE", "full")
+
+
+def fetch_audit(code: str, reports: list, scope: str = None):
     """解析定期报告 PDF 的审计信息（事务所 + 意见类型），写回 reports 条目。
 
     仅年报/半年报可能附审计报告（季报不审计，保持为空）；
     已解析且 PDF 链接未变化的条目直接复用旧 JSON 缓存，避免重复下载。
     返回失败下载数（网络抖动时由调用方记录到 errors）。
     """
+    wanted = AUDIT_SCOPES.get(scope or AUDIT_SCOPE, AUDIT_SCOPES["full"])
+    if not wanted:
+        return 0
     old = {}
     try:
         prev = json.loads((COMPANIES_DIR / f"{code}.json").read_text(encoding="utf-8"))
@@ -861,7 +990,7 @@ def fetch_audit(code: str, reports: list):
     headers = {"User-Agent": "Mozilla/5.0"}
     failed = 0
     for r in reports:
-        if r["category"] not in ("年报", "半年报"):
+        if r["category"] not in wanted:
             continue
         cached = old.get(r.get("pdf_url"))
         if cached:
@@ -893,43 +1022,142 @@ def fetch_audit(code: str, reports: list):
     return failed
 
 
+# ==================== 定期报告：巨潮 + 东财公告双源 ====================
+# 巨潮 hisAnnouncement 对高频抓取返回 HTTP 403（正文空 → JSON 解析失败），而定期报告
+# 是审计意见的唯一来源，单源断供会让全市场 5500 只的审计字段全空。故：
+#   1) 进程内熔断：连续失败 5 次 → 冷却 10 分钟内直接走东财，不再白打巨潮；
+#   2) 东财公告接口兜底（np-anotice-stock 列公告 + pdf.dfcfw.com 取正文 PDF）。
+EM_ANN_URL = "https://np-anotice-stock.eastmoney.com/api/security/ann"
+EM_PDF_URL = "https://pdf.dfcfw.com/pdf/H2_{art}_1.pdf"
+EM_DETAIL_URL = "https://data.eastmoney.com/notices/detail/{code}/{art}.html"
+_CNINFO_FAILS = 0
+_CNINFO_COOLDOWN_UNTIL = 0.0
+
+
+def cninfo_available():
+    """巨潮是否值得再试（熔断冷却期内为 False）。"""
+    return time.time() >= _CNINFO_COOLDOWN_UNTIL
+
+
+def cninfo_note(ok: bool):
+    """记录巨潮成败：连续 5 次失败即熔断 10 分钟（全市场抓取时避免逐只空转）。"""
+    global _CNINFO_FAILS, _CNINFO_COOLDOWN_UNTIL
+    if ok:
+        _CNINFO_FAILS = 0
+        return
+    _CNINFO_FAILS += 1
+    if _CNINFO_FAILS >= 5:
+        _CNINFO_COOLDOWN_UNTIL = time.time() + 600
+        _CNINFO_FAILS = 0
+
+
+def em_category(title: str):
+    """东财公告标题 → 定期报告类别；非定期报告正文返回 None（对齐巨潮类别名）。"""
+    t = re.sub(r"\s", "", str(title))
+    if "摘要" in t or "提示" in t or "公告" in t or "意见" in t or "决议" in t:
+        return None
+    if not re.search(r"报告(?:[（(](?:更正|更新后)[）)])?$", t):
+        return None
+    if "半年度报告" in t or "中期报告" in t:
+        return "半年报"
+    if "第一季度报告" in t or "一季度报告" in t:
+        return "一季报"
+    if "第三季度报告" in t or "三季度报告" in t:
+        return "三季报"
+    if "年度报告" in t or "年报" in t:
+        return "年报"
+    return None
+
+
+def fetch_reports_em(code: str, start_iso: str):
+    """东财公告兜底：分页拉公司公告，按标题识别定期报告（翻到 3 年前即停）。"""
+    headers = {"User-Agent": "Mozilla/5.0"}
+    out, page = [], 1
+    while page <= 6:
+        try:
+            r = requests.get(
+                EM_ANN_URL,
+                params={
+                    "sr": "-1", "page_size": "100", "page_index": str(page),
+                    "ann_type": "A", "client_source": "web",
+                    "stock_list": code, "f_node": "0", "s_node": "0",
+                },
+                headers=headers, timeout=15,
+            )
+            rows = (r.json().get("data") or {}).get("list") or []
+        except Exception:
+            rows = []
+        if not rows:
+            break
+        for row in rows:
+            date = str(row.get("notice_date") or "")[:10]
+            cat = em_category(row.get("title") or "")
+            art = str(row.get("art_code") or "")
+            if not (cat and date and art) or date < start_iso:
+                continue
+            out.append({
+                "title": str(row["title"]).strip(),
+                "category": cat,
+                "date": date,
+                "pdf_url": EM_PDF_URL.format(art=art),
+                "detail_url": EM_DETAIL_URL.format(code=code, art=art),
+            })
+        # 公告按时间倒序：末页已早于 3 年窗口（或无下一页）即停
+        oldest = str(rows[-1].get("notice_date") or "")[:10]
+        if len(rows) < 100 or oldest < start_iso:
+            break
+        page += 1
+    return out
+
+
 def fetch_reports(code: str):
-    """巨潮资讯定期报告列表（官方披露 PDF 直链），按日期倒序"""
-    reports = []
+    """定期报告列表（官方披露 PDF 直链），按日期倒序：巨潮优先，东财公告兜底"""
     today = datetime.now()
     start = (today - timedelta(days=365 * 3)).strftime("%Y%m%d")
     end = today.strftime("%Y%m%d")
-    for cat in REPORT_CATEGORIES:
-        try:
-            df = ak.stock_zh_a_disclosure_report_cninfo(
-                symbol=code,
-                category=cat,
-                start_date=start,
-                end_date=end,
-            )
-        except Exception:
-            continue
-        if df is None or df.empty:
-            continue
-        for _, row in df.head(MAX_PERIODS).iterrows():
-            title = str(row["公告标题"]).strip()
-            if "摘要" in title:
-                continue
-            date = str(row["公告时间"])[:10]
-            detail = str(row["公告链接"])
+    start_iso = f"{start[:4]}-{start[4:6]}-{start[6:]}"
+    reports = []
+    if cninfo_available():
+        failed = 0
+        for cat in REPORT_CATEGORIES:
             try:
-                aid = detail.split("announcementId=")[1].split("&")[0]
-            except IndexError:
+                df = ak.stock_zh_a_disclosure_report_cninfo(
+                    symbol=code,
+                    category=cat,
+                    start_date=start,
+                    end_date=end,
+                )
+                cninfo_note(True)
+            except Exception:
+                failed += 1
+                cninfo_note(False)
                 continue
-            reports.append(
-                {
-                    "title": title,
-                    "category": cat,
-                    "date": date,
-                    "pdf_url": f"http://static.cninfo.com.cn/finalpage/{date}/{aid}.PDF",
-                    "detail_url": detail,
-                }
-            )
+            if df is None or df.empty:
+                continue
+            for _, row in df.head(MAX_PERIODS).iterrows():
+                title = str(row["公告标题"]).strip()
+                if "摘要" in title:
+                    continue
+                date = str(row["公告时间"])[:10]
+                detail = str(row["公告链接"])
+                try:
+                    aid = detail.split("announcementId=")[1].split("&")[0]
+                except IndexError:
+                    continue
+                reports.append(
+                    {
+                        "title": title,
+                        "category": cat,
+                        "date": date,
+                        "pdf_url": f"http://static.cninfo.com.cn/finalpage/{date}/{aid}.PDF",
+                        "detail_url": detail,
+                    }
+                )
+        # 四类全挂（多为 403 限流）才走兜底；巨潮正常返回空（次新股）不重复抓
+        if not reports and failed == len(REPORT_CATEGORIES):
+            reports = fetch_reports_em(code, start_iso)
+    else:
+        reports = fetch_reports_em(code, start_iso)
     reports.sort(key=lambda r: r["date"], reverse=True)
     return reports[: MAX_PERIODS * 2]
 
@@ -945,7 +1173,7 @@ def fetch_company(code: str, name: str, market: str = "A"):
 
 def fetch_company_a(code: str, name: str):
     """抓取 A 股单家公司全部数据，失败项单独降级，不中断"""
-    result = {"code": code, "name": name}
+    result = {"code": code, "name": name, "market": "A"}
     result["updated_at"] = datetime.now(CN_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
     errors = []
 
@@ -1017,63 +1245,499 @@ def save_json(path: Path, data):
     os.replace(tmp, path)
 
 
+# ==================== 全市场扩量支持 [collector 改造] ====================
+# index.json 既服务列表页也快充当“行情快照载体”：每日仅刷估值时只改 index.json
+# 的 quote/price 字段,不重写 companies/*.json(5000+ 只 ≈ 1.6GB),使 --resume 的
+# 文件 mtime 判新仍然代表“财务数据新鲜度”。
+
+INDEX_PATH = OUTPUT_DIR / "index.json"
+LOCK_PATH = OUTPUT_DIR / ".fetch.lock"
+LOCK_STALE_SECS = 45 * 60      # 持锁进程死掉后超过此时长才可接手
+QUOTE_FIELDS = ("price", "change_pct", "pe_ttm", "pb", "market_cap",
+                "float_market_cap", "turnover_rate", "time")
+
+
+def _pid_alive(pid: int) -> bool:
+    """跨平台判活。
+
+    Windows 上不要用 os.kill(pid, 0)：它走 OpenProcess,句柄拿不到时抛 WinError 87,
+    且 CPython 会把它包装成 SystemError(非 OSError 子类)逃逸 except 分支。
+    这里直接调 kernel32.OpenProcess 查退出码,拿不到句柄即视为已死。
+    """
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            h = ctypes.windll.kernel32.OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if not h:
+                return False
+            code = ctypes.c_ulong()
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+            ctypes.windll.kernel32.CloseHandle(h)
+            # GetExitCodeProcess 失败时 code 未定义,保守按存活(避免误抢占锁)
+            return bool(ok) and code.value == STILL_ACTIVE
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def acquire_lock():
+    """单一抓取入口互斥：index.json 是全量重写,两个进程并行会互相覆盖条目。"""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    if LOCK_PATH.exists():
+        pid, age = 0, 0.0
+        try:
+            pid = int(LOCK_PATH.read_text(encoding="utf-8").strip() or 0)
+            age = time.time() - LOCK_PATH.stat().st_mtime
+        except (ValueError, OSError):
+            pass
+        if _pid_alive(pid) and age < LOCK_STALE_SECS:
+            print(f"[lock] 已有抓取在跑（PID {pid}，持锁 {age / 60:.0f} 分钟），本次退出；"
+                  f"确认无进程可删 data/.fetch.lock", flush=True)
+            sys.exit(2)
+    LOCK_PATH.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def release_lock():
+    try:
+        if LOCK_PATH.exists() and LOCK_PATH.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            LOCK_PATH.unlink()
+    except OSError:
+        pass
+
+
+def load_index_map():
+    """读现有 index.json → {code|market: entry}（损坏/缺失时返回空）。"""
+    if not INDEX_PATH.exists():
+        return {}
+    try:
+        data = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return {f"{c['code']}|{c.get('market') or 'A'}": c
+            for c in data.get("companies") or [] if c.get("code")}
+
+
+def save_index(by_code):
+    """全量重写 index.json：A 股在前、按代码升序，每 N 只调用一次中断不丢。"""
+    items = sorted(by_code.values(),
+                   key=lambda x: (x.get("market") != "A", str(x.get("code"))))
+    now = datetime.now(CN_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    save_json(INDEX_PATH, {"updated_at": now, "count": len(items), "companies": items})
+    try:
+        LOCK_PATH.touch()        # 顺带刷锁,供并发入口区分“活锁”与残留锁
+    except OSError:
+        pass
+    return items
+
+
+def fresh_codes(max_age_days):
+    """companies/ 下 mtime 在 max_age_days 内的代码集（--resume 跳过集）。"""
+    cutoff = time.time() - max_age_days * 86400
+    if not COMPANIES_DIR.exists():
+        return set()
+    out = set()
+    for path in COMPANIES_DIR.glob("*.json"):
+        try:
+            if path.stat().st_mtime >= cutoff:
+                out.add(path.stem)
+        except OSError:
+            pass
+    return out
+
+
+def _quote_of(snapshot):
+    """snapshot 字典 → index 条目用的精简行情块（只留入库字段，控制文件体积）。"""
+    snap = snapshot or {}
+    q = {k: snap.get(k) for k in QUOTE_FIELDS if snap.get(k) is not None}
+    return q or None
+
+
+def build_entry(code, name, market, data, scores):
+    snap = data.get("snapshot") or {}
+    return {
+        "code": code,
+        "name": name,
+        "market": market,
+        "industry": (data.get("info") or {}).get("行业"),
+        "price": snap.get("price"),
+        "updated_at": data["updated_at"],
+        "scores": scores,
+        "quote": _quote_of(snap),
+    }
+
+
+def guess_market(code, data, pool):
+    """判定 companies/<code>.json 属于哪个市场。
+
+    优先读 JSON 自带的 market（三个 fetch_company_* 都会写）；落到 config 精选池；
+    再落到代码形态——5 位纯数字必是港股（A 股一律 6 位）。
+    只看 config 不够：--hk-connect 灌进来的 621 只不在精选池里，会被标成 A 股，
+    于是港元报表进 A 股池，列表页与筛选全部串味。
+    """
+    m = (data or {}).get("market")
+    if m:
+        return m
+    if code in pool:
+        return pool[code]
+    if code.isdigit() and len(code) == 5:
+        return "HK"
+    if not code.isdigit():
+        return "US"
+    return "A"
+
+
+def backfill_index(by_code):
+    """companies/ 里已落盘但 index.json 无条目的股票（上次被抓断/ --resume 跳过）
+    → 从 JSON 重建条目，避免部分完成的抓取在索引里默默丢股。"""
+    pool = {c[0]: c[2] for c in DEFAULT_COMPANIES if len(c) >= 3}
+    # 只把“已有且带行情块”的条目视为完整：早期抓取写的条目没有 quote，
+    # 回读明细补齐后 portfolio_engine 才能拿到真实交易快照日期
+    have = {k.split("|")[0] for k, v in by_code.items() if v.get("quote")}
+    added = 0
+    for path in sorted(COMPANIES_DIR.glob("*.json")):
+        code = path.stem
+        if code in have:
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        market = guess_market(code, data, pool)
+        try:
+            scores = compute_scores(data)
+        except Exception:
+            scores = None
+        key = f"{code}|{market}"
+        by_code[key] = build_entry(code, data.get("name") or code, market, data, scores)
+        added += 1
+    return added
+
+
+_CODE_MARKETS = ("A", "HK", "US")
+
+
+def normalize_code(raw, market):
+    """按市场规整代码长度——这一步弄错会写掉别人的文件。
+
+    A 股 6 位、港股 5 位、美股原样大写。港股若跟着 zfill(6)，00700 会变 000700，
+    直接覆盖 A 股「模塑科技」的 companies/000700.json——入库侧有 uk_code_market 挡着，
+    文件侧没有任何保护。
+    """
+    if market == "US":
+        return raw.upper()
+    if market == "HK":
+        return raw.zfill(5)
+    return raw.zfill(6)
+
+
+def resolve_codes(spec, default_market="A"):
+    """--codes 增量补抓目标准：支持 "HK.00700" 前缀混写，或靠 --codes-market 整批指定市场。
+
+    名称优先取已落盘 JSON（补抓场景本来就有文件），其次查 A 股/港股通名单，最后回退代码。
+    """
+    import universe as uni
+
+    a_names = hk_names = None
+    out = []
+    for raw in str(spec).split(","):
+        raw = raw.strip()
+        if not raw:
+            continue
+        market = (default_market or "A").upper()
+        head, sep, tail = raw.partition(".")
+        if sep and head.upper() in _CODE_MARKETS:
+            market, raw = head.upper(), tail.strip()
+        code = normalize_code(raw, market)
+        name = None
+        path = COMPANIES_DIR / f"{code}.json"
+        if path.exists():
+            try:
+                name = json.loads(path.read_text(encoding="utf-8")).get("name")
+            except (OSError, ValueError):
+                name = None
+        if not name:
+            try:
+                if market == "HK":
+                    if hk_names is None:
+                        hk_names = {c: n for c, n, _ in uni.load_universe_hk(quiet=True)}
+                    name = hk_names.get(code)
+                else:
+                    if a_names is None:
+                        a_names = dict(uni.load_universe(quiet=True))
+                    name = a_names.get(code)
+            except Exception as e:
+                print(f"[universe] 名单不可用: {e!r}", flush=True)
+        out.append((code, name or code, market))
+    return out
+
+
+def hk_connect_targets(quiet=False):
+    """港股通标的（≈621 只）→ (code, name, "HK")；行业由 fetch_company_hk 查名单缓存补齐。"""
+    import universe as uni
+    try:
+        rows = uni.load_universe_hk(quiet=quiet)
+    except Exception as e:
+        print(f"[universe] 港股通名单不可用: {e!r}", flush=True)
+        return []
+    return [(c, n, "HK") for c, n, _ in rows]
+
+
+def resolve_targets(args):
+    """目标准：--codes > --hk-connect(港股通) / --all-market(全 A + 非 A 精选) > config 精选池。
+
+    --hk-connect 与 --all-market 可同给，合为一轮跑完（A 股 + 港股通），省一次 index.json 全量重写。
+    """
+    if args.codes:
+        return resolve_codes(args.codes, args.codes_market)
+
+    targets = []
+    if args.hk_connect:
+        targets += hk_connect_targets(quiet=args.quiet)
+    if args.all_market:
+        try:
+            import universe as uni
+            names = dict(uni.load_universe(quiet=True))
+        except Exception as e:
+            print(f"[universe] 名单不可用: {e!r}", flush=True)
+            names = {}
+        targets += [(c, n, "A") for c, n in sorted(names.items())]
+        # 非 A 股精选（港/美）不在交易所名单里，顺带刷新一遍
+        targets += [tuple(i) for i in DEFAULT_COMPANIES if len(i) >= 3 and i[2] != "A"]
+    if targets:
+        # 去重：--all-market 附带的 5 只港股精选与 --hk-connect 名单重叠，
+        # 留着会让同一只在同一轮里抓两次、后一次还可能覆盖前一次的成品
+        seen, uniq = set(), []
+        for t in targets:
+            if (t[0], t[2]) in seen:
+                continue
+            seen.add((t[0], t[2]))
+            uniq.append(t)
+        return uniq
+
+    targets = [tuple(i) if len(i) >= 3 else (i[0], i[1], "A") for i in DEFAULT_COMPANIES]
+    if args.limit > 0:
+        targets = targets[: args.limit]
+    return targets
+
+
+def crawl_one(item):
+    """单只：抓取 → 落盘 → 评分 → index 条目（异常上抛由 safe 层捕获）。"""
+    code, name, market = item
+    data = fetch_company(code, name, market)
+    save_json(COMPANIES_DIR / f"{code}.json", data)
+    # 预计算四大流派总分（与前端 JS 一致性由 scripts/_score_check.py 验证）
+    try:
+        scores = compute_scores(data)
+    except Exception:
+        scores = None
+    return build_entry(code, name, market, data, scores), (data.get("errors") or [])
+
+
+def _safe_crawl(item):
+    code, name, market = item
+    t0 = time.time()
+    try:
+        entry, errs = crawl_one(item)
+        return code, entry, errs, time.time() - t0, None
+    except Exception:
+        return code, None, [], time.time() - t0, traceback.format_exc(limit=3)
+
+
+def run_snapshot_only(args):
+    """仅刷估值快照：腾讯批量行情 → index.json 的 quote/price（分钟级日更）。"""
+    import universe as uni
+
+    by_code = load_index_map()
+    if not by_code:
+        print("[snapshot-only] index.json 为空，请先跑一次全量抓取")
+        return 1
+    codes = sorted({key.split("|")[0] for key in by_code
+                    if key.endswith("|A")})
+    print(f"[snapshot-only] 腾讯批量刷新 {len(codes)} 只 A 股估值 ...", flush=True)
+    spot = uni.tencent_spot(codes, quiet=args.quiet)
+    by_num = {key.split("|")[0]: key for key in by_code if key.endswith("|A")}
+    hit = 0
+    now = datetime.now(CN_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
+    for code, snap in spot.items():
+        if not snap.get("price"):
+            continue                      # 停牌/退市无价：保留旧快照，不抹空
+        key = by_num.get(code)
+        if not key:
+            continue
+        entry = by_code[key]
+        entry["price"] = snap.get("price")
+        entry["quote"] = _quote_of(snap)
+        entry["quote_at"] = now
+        hit += 1
+    items = save_index(by_code)
+    print(f"[snapshot-only] 行情更新 {hit}/{len(codes)} 只，index 共 {len(items)} 条")
+    return 0
+
+
+def _chunks(seq, n):
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
+def crawl_targets(targets, args, consume, flush):
+    """抓取执行器：workers<=1 串行；否则分块起进程池。
+
+    为何是进程而不是线程：akshare 部分接口用 py_mini_racer（内嵌 V8），
+    多线程并发初始化会触发 Chromium FATAL:partition_address_space.cc 直接搞挂解释器；
+    分块建池（每块一个新进程组）同时做到崩溃隔离与内存有界。
+    """
+    workers = max(1, args.workers)
+    if workers <= 1:
+        for item in targets:
+            consume(_safe_crawl(item))
+        return
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures.process import BrokenProcessPool
+
+    ctx = mp.get_context("spawn")
+    size = max(args.chunk, workers)
+    for ci, group in enumerate(_chunks(targets, size), 1):
+        started = time.time()
+        with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
+            try:
+                for res in pool.map(_safe_crawl, group, chunksize=1):
+                    consume(res)
+                continue
+            except (BrokenProcessPool, EOFError, OSError, RuntimeError) as e:
+                print(f"  [进程池中断] 第 {ci} 块: {e!r} → 本块改串行续跑", flush=True)
+        # 子进程被杀：本块未落盘的串行补跑（已抓完的按文件 mtime 跳过）
+        for item in group:
+            path = COMPANIES_DIR / f"{item[0]}.json"
+            if path.exists() and path.stat().st_mtime >= started:
+                continue
+            consume(_safe_crawl(item))
+        flush()
+
+
 def main():
     parser = argparse.ArgumentParser(description="抓取 A 股财务数据 → 静态 JSON")
     parser.add_argument("--limit", type=int, default=0, help="最多抓取的公司数（测试用）")
+    parser.add_argument("--all-market", action="store_true",
+                        help="全 A 股（沪深京）名单，来自 universe.py")
+    parser.add_argument("--hk-connect", action="store_true",
+                        help="港股通标的（≈621 只，名单来自 universe.load_universe_hk，可与 --all-market 同给）")
+    parser.add_argument("--codes", help="逗号分隔代码，只抓这些（增量补抓）")
+    parser.add_argument("--codes-market", choices=list(_CODE_MARKETS), default="A",
+                        help="--codes 的市场；代码写成 HK.00700 时可免填")
+    parser.add_argument("--workers", type=int, default=1, help="并发拓取进程数（建议 4）")
+    parser.add_argument("--chunk", type=int, default=400,
+                        help="每个进程池处理的股票数（崩溃隔离与内存有界粒度）。注意这是**静态切块**："
+                             "一个工人领完一块才领下一块，块太大时多数工人会提前空等、尾巴压在少数人身上"
+                             "（看起来就像“卡死”）；跑尾段时建议 60-100")
+    parser.add_argument("--resume", action="store_true",
+                        help="跳过 companies/ 里仍新鲜的股票（断点续跑）")
+    parser.add_argument("--max-age", type=float, default=1.0,
+                        help="--resume 的新鲜度阈值（天），全量重抓可设 6")
+    parser.add_argument("--shard", help="i/N 分片，如 2/4 只抓第 2 片（多进程并行）")
+    parser.add_argument("--snapshot-only", action="store_true",
+                        help="仅刷全市场估值快照，不重抓财务")
+    parser.add_argument("--flush-every", type=int, default=50,
+                        help="每完成 N 只重写一次 index.json")
+    parser.add_argument("--audit-scope", choices=list(AUDIT_SCOPES), default="full",
+                        help="审计 PDF 解析范围：full=年报+半年报 annual=仅年报 none=跳过"
+                             "（全市场首轮建议 annual）")
+    parser.add_argument("--quiet", action="store_true", help="只打总结行")
     args = parser.parse_args()
 
-    companies = DEFAULT_COMPANIES[: args.limit] if args.limit > 0 else DEFAULT_COMPANIES
-    print(f"[{datetime.now(CN_TZ).strftime('%F %T')}] 开始抓取 {len(companies)} 家公司 ...")
+    global AUDIT_SCOPE
+    AUDIT_SCOPE = args.audit_scope
+    os.environ["VA_AUDIT_SCOPE"] = args.audit_scope   # spawn 子进程靠环境继承
 
-    index_items = []
+    acquire_lock()     # index.json 全量重写不能并发,抢不到锁直接退出
+    try:
+        if args.snapshot_only:
+            sys.exit(run_snapshot_only(args))
+        crawl_all(args)
+    finally:
+        release_lock()
+
+
+def crawl_all(args):
+    """抓取主流程（已持锁）：定单 → 并发抓取 → 边跑边落 index.json。"""
+    targets = resolve_targets(args)
+    if args.shard:
+        idx, _, total = args.shard.partition("/")
+        idx, total = int(idx), int(total or 1)
+        targets = targets[idx - 1::total]
+    if args.limit > 0:
+        targets = targets[: args.limit]
+
+    skip = fresh_codes(args.max_age) if args.resume else set()
+    if skip:
+        before = len(targets)
+        targets = [t for t in targets if t[0] not in skip]
+        print(f"[resume] 跳过 {before - len(targets)} 只新鲜数据", flush=True)
+    if not targets:
+        print("无待抓标的")
+        return
+
+    workers = max(1, args.workers)
+    print(f"[{datetime.now(CN_TZ).strftime('%F %T')}] 开始抓取 {len(targets)} 家公司"
+          f"（workers={workers}）...", flush=True)
+
+    by_code = load_index_map()
+    fixed = backfill_index(by_code)
+    if fixed:
+        print(f"[index] 从已落盘 JSON 补齐 {fixed} 条缺失条目", flush=True)
     failed = []
-    for i, item in enumerate(companies, 1):
-        if len(item) >= 3:
-            code, name, market = item[0], item[1], item[2]
-        else:  # 兼容旧的两元组配置
-            code, name, market = item[0], item[1], "A"
-        print(f"[{i}/{len(companies)}] {code} {name} [{market}] ...", flush=True)
-        try:
-            data = fetch_company(code, name, market)
-            save_json(COMPANIES_DIR / f"{code}.json", data)
-            # 预计算四大流派总分（Python 版评分，与前端 JS 评分一致性由 scripts/_score_check.py 验证）
-            try:
-                scores = compute_scores(data)
-            except Exception:
-                scores = None
-            index_items.append(
-                {
-                    "code": code,
-                    "name": name,
-                    "market": market,
-                    "industry": (data.get("info") or {}).get("行业"),
-                    "price": (data.get("snapshot") or {}).get("price"),
-                    "updated_at": data["updated_at"],
-                    "scores": scores,
-                }
-            )
-            if data.get("errors"):
-                print(f"      部分失败: {data['errors']}")
+    done = ok = part = 0
+    t0 = time.time()
+
+    def consume(result):
+        nonlocal done, ok, part
+        code, entry, errs, el, err = result
+        done += 1
+        if entry:
+            key = f"{entry['code']}|{entry['market']}"
+            by_code[key] = entry
+            if errs:
+                part += 1
             else:
-                print("      完成")
-        except Exception:
+                ok += 1
+        else:
             failed.append(code)
-            print(f"      抓取失败: {traceback.format_exc()}", flush=True)
-        sleep_between()
+        if not args.quiet or done % 200 == 0 or err:
+            eta = (time.time() - t0) / done * (len(targets) - done) / 3600
+            head = code + " " + (entry["name"] if entry else "")
+            mark = "失败" if err else ("部分失败" if errs else "完成")
+            print(f"  [{done}/{len(targets)}] {head} {mark} {el:.0f}s"
+                  f"  ok={ok} part={part} fail={len(set(failed))} ETA={eta:.1f}h", flush=True)
+        if err:
+            print(f"      {err.strip().splitlines()[-1][:160]}", flush=True)
+        if args.flush_every and done % args.flush_every == 0:
+            save_index(by_code)
 
-    now = datetime.now(CN_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
-    save_json(
-        OUTPUT_DIR / "index.json",
-        {
-            "updated_at": now,
-            "count": len(index_items),
-            "companies": index_items,
-        },
-    )
+    crawl_targets(targets, args, consume, lambda: save_index(by_code))
 
-    print(f"完成：成功 {len(index_items)} 家，失败 {len(failed)} 家")
+    items = save_index(by_code)
+    secs = time.time() - t0
     if failed:
-        print(f"失败列表: {failed}")
+        save_json(OUTPUT_DIR / "crawl_failed.json", sorted(set(failed)))
+    print(f"完成：本次 {done} 只 ok={ok} 部分失败={part} 异常={len(set(failed))}，"
+          f"耗时 {secs / 3600:.1f}h；index 共 {len(items)} 条")
+    if failed:
+        print(f"失败列表已写 data/crawl_failed.json（{len(set(failed))} 只）")
+    # 全量跑允许少量失败；异常率 >20% 视为数据源异常，非零退出供调度记录
+    if done and len(set(failed)) / done > 0.2:
         sys.exit(1)
 
 

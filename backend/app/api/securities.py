@@ -5,7 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -117,6 +117,13 @@ SORT_COLS = {
     "fair_liq": ScoreDaily.fair_liq,
     "net_cash_ratio": ScoreDaily.net_cash_ratio,
 }
+# 四派参考价三档(买入/保守卖/公允卖)共 12 列同样可排序：原站语义是"列头按买入价、
+# 格内保守/公允小字按各自卖价"，键名与 score_daily 列/SecurityItem 字段一致。
+SORT_COLS.update({
+    col: getattr(ScoreDaily, col)
+    for school in ("graham_agg", "graham_def", "schloss", "buffett")
+    for col in (f"buy_{school}", f"sell_cons_{school}", f"sell_fair_{school}")
+})
 
 
 # 列表筛选:买点/卖点复选键(与原页 data-flt-buy 一致) → score_daily 价格参考列
@@ -133,6 +140,15 @@ FLT_SELL_COLS = {
     "buffett": (ScoreDaily.sell_cons_buffett, ScoreDaily.sell_fair_buffett),
 }
 
+# 市场板块(全市场 5500 只规模下的基本维度):按代码前缀判定,无需额外字段
+BOARDS = {
+    "shMain": ("60",),                  # 沪市主板(含 900 B 股)
+    "szMain": ("00",),                  # 深市主板
+    "gem": ("30",),                     # 创业板
+    "star": ("68",),                    # 科创板
+    "bj": ("92", "83", "87", "43"),  # 北交所
+}
+
 
 def _flt_keys(raw: str | None, valid: dict, name: str) -> list[str]:
     """逗号分隔复选键解析 + 白名单校验(非法直接 400,不做静默丢弃)。"""
@@ -145,9 +161,30 @@ def _flt_keys(raw: str | None, valid: dict, name: str) -> list[str]:
     return keys
 
 
+# 全市场 5500 只 × 每日快照：quote_daily/score_daily 一年即百万行，
+# 裸写 GROUP BY sid + MAX(trade_date) 会走全索引扫(实测 type=index,代价随行数线性)。
+# 行情/评分整批按交易日落盘，各证券最新一行必落在最近 RECENT_DATES 个交易日内
+# （美股/港股收盘滞后数日、周末补跑同样覆盖），故限定窗口后再取 max，代价与表总量无关。
+RECENT_DATES = 15
+
+
+def _latest_sub(db: Session, model, label):
+    """(sid, 最近交易日) 子查询：仅在最近 RECENT_DATES 个交易日内取每证券最大。"""
+    dates = db.execute(
+        select(model.trade_date).distinct().order_by(model.trade_date.desc()).limit(RECENT_DATES)
+    ).scalars().all()
+    q = select(model.sid, func.max(model.trade_date).label(label))
+    if dates:
+        q = q.where(model.trade_date >= dates[-1])
+    return q.group_by(model.sid).subquery()
+
+
 @router.get("", response_model=SecurityListOut)
 def list_securities(
     market: Literal["A", "HK", "US"] | None = Query(None),
+    board: Literal["shMain", "szMain", "gem", "star", "bj"] | None = Query(
+        None, description="A 股板块(代码前缀):沪主/深主/创业/科创/北交"),
+    st: bool | None = Query(None, description="True 仅 ST/*ST,False 排除"),
     keyword: str | None = Query(None, max_length=32, description="代码/名称模糊匹配"),
     industry: str | None = Query(None, max_length=64),
     fraud_max: float | None = Query(None, ge=0, le=100, description="造假风险≤(不含 Wind 增量)"),
@@ -167,14 +204,8 @@ def list_securities(
     美股在北京时间白天落后一天时仍显示昨收,不被全局快照日剔除);
     筛选语义对齐原前端 passFlt:依赖的价格/参考价缺失(SQL NULL)自动排除。
     """
-    latest_quote = (
-        select(QuoteDaily.sid, func.max(QuoteDaily.trade_date).label("qdate"))
-        .group_by(QuoteDaily.sid).subquery()
-    )
-    latest_score = (
-        select(ScoreDaily.sid, func.max(ScoreDaily.trade_date).label("sdate"))
-        .group_by(ScoreDaily.sid).subquery()
-    )
+    latest_quote = _latest_sub(db, QuoteDaily, "qdate")
+    latest_score = _latest_sub(db, ScoreDaily, "sdate")
 
     q = (
         select(Security, QuoteDaily, ScoreDaily)
@@ -199,6 +230,13 @@ def list_securities(
     conds = []
     if market:
         conds.append(Security.market == market)
+    if board:
+        prefixes = BOARDS[board]
+        conds.append(Security.market == "A")
+        conds.append(or_(*[Security.code.startswith(p) for p in prefixes]))
+    if st is not None:
+        is_st = func.upper(Security.name).like("%ST%")
+        conds.append(is_st if st else not_(is_st))
     if industry:
         conds.append(Security.industry == industry)
     if keyword:
@@ -224,7 +262,10 @@ def list_securities(
     if col is None:
         raise HTTPException(status_code=400, detail=f"invalid sort: {sort}")
     prim = col.desc() if order == "desc" else col.asc()
-    q = q.order_by(prim, Security.code.asc())
+    # 参考价/评分列允许 NULL(未抓财务、科目缺失、无评分行)：MySQL 升序把 NULL 排最前,
+    # 按买入价升序会先看一屏"-",故升序补一个 NULL 沉底键;降序本就把 NULL 放最后,
+    # 不加表达式以保留 idx_list_* 的有序扫描(避免 filesort)。
+    q = q.order_by(*([col.is_(None)] if order == "asc" else []), prim, Security.code.asc())
 
     rows = db.execute(q.limit(page_size).offset((page - 1) * page_size)).all()
 
@@ -267,6 +308,24 @@ def list_securities(
                            trade_date=db.execute(
                                select(func.max(ScoreDaily.trade_date))).scalar_one(),
                            items=items)
+
+
+@router.get("/industries")
+def list_industries(
+    market: Literal["A", "HK", "US"] | None = Query(None),
+    db: Session = Depends(get_session),
+):
+    """行业下拉选项(含只数):全市场 5500 只下行业不可枚举自当页数据。
+
+    走 idx_market_industry (market, industry) 前缀,仅 distinct 分组几百个行业。
+    注：本路由必须在 `/{code}` 之前声明,否则会被详情路由吃掉。
+    """
+    q = (select(Security.industry, func.count().label("cnt"))
+         .where(Security.industry.isnot(None), Security.industry != ""))
+    if market:
+        q = q.where(Security.market == market)
+    q = q.group_by(Security.industry).order_by(func.count().desc(), Security.industry)
+    return [{"industry": r.industry, "count": r.cnt} for r in db.execute(q)]
 
 
 # ---------- 详情 ----------

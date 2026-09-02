@@ -31,6 +31,16 @@ def load(p):
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+_IDX = {"map": None}
+
+
+def idx_entry(code):
+    """index.json 条目(全市场 5500 条 ≈ 3MB,只读一次)。"""
+    if _IDX["map"] is None:
+        _IDX["map"] = {c["code"]: c for c in load(DATA / "index.json")["companies"]}
+    return _IDX["map"].get(code) or {}
+
+
 def same_val(a, b):
     """宽松对比:数字精度安全，兼容 '--' 等脏值。"""
     if a == b:
@@ -46,10 +56,13 @@ def check_company(code):
     api = get(f"/api/securities/{code}")
     print(f"-- {code} {src['name']}")
 
-    # 行情快照
-    assert api["snapshot"]["price"] == src["snapshot"]["price"], "price mismatch"
-    assert api["snapshot"]["pe_ttm"] == src["snapshot"]["pe_ttm"], "pe mismatch"
-    assert float(api["snapshot"]["market_cap"]) == float(src["snapshot"]["market_cap"]), "mcap mismatch"
+    # 行情快照：日更只刷 index.json 的 quote(不重写明细),DB 比 companies 新,
+    # 故期望值以 index.quote 覆盖明细 snapshot
+    exp = dict(src["snapshot"] or {})
+    exp.update((idx_entry(code).get("quote") or {}))
+    assert api["snapshot"]["price"] == exp["price"], "price mismatch"
+    assert api["snapshot"]["pe_ttm"] == exp["pe_ttm"], "pe mismatch"
+    assert float(api["snapshot"]["market_cap"]) == float(exp["market_cap"]), "mcap mismatch"
 
     # 财务四表:行数一致
     for key in ("indicators", "income", "balance", "cashflow"):
@@ -87,8 +100,7 @@ def check_company(code):
     assert len(api["reports"]) == expect, f"reports {len(api['reports'])} != {expect}"
 
     # 评分快照 vs index.json
-    idx = load(DATA / "index.json")
-    sc_src = next(c["scores"] for c in idx["companies"] if c["code"] == code)
+    sc_src = idx_entry(code)["scores"]
     sc = api["scores"]
     for k in ("grahamAgg", "grahamDef", "schloss", "buffett", "fraud", "mgmt", "cycle"):
         assert sc[k] == sc_src[k], f"score {k}: {sc[k]} != {sc_src[k]}"

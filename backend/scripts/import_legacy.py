@@ -21,10 +21,11 @@ import argparse
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import JSON, select, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from app.config import LEGACY_DATA_DIR, MARKET_CURRENCY
@@ -146,33 +147,87 @@ def holder_pick(row: dict, htype: str):
     }
 
 
-def upsert_security(db, code, market, name, industry, updated_at, list_date=None):
-    vals = dict(
-        code=code, market=market, name=name, industry=industry,
-        currency=MARKET_CURRENCY[market], status="active",
-        list_date=list_date, updated_at=updated_at,
-    )
-    stmt = mysql_insert(Security).values(**vals).on_duplicate_key_update(
-        name=vals["name"], industry=vals["industry"],
-        updated_at=vals["updated_at"], list_date=vals["list_date"],
-    )
-    db.execute(stmt)
-    return db.execute(
-        select(Security.sid).where(Security.code == code, Security.market == market)
-    ).scalar_one()
-
-
 def school_cols(school: str):
     """index.json 流派键 → score_daily 列名前缀。"""
     return {"grahamAgg": "graham_agg", "grahamDef": "graham_def"}.get(school, school)
 
 
-def import_companies(db, stats):
-    """companies/*.json + index.json → 行情/财务/分红/报告/评分。"""
-    index = json.loads((DATA_DIR / "index.json").read_text(encoding="utf-8"))
-    trade_date = parse_date(index["updated_at"])
-    by_code = {c["code"]: c for c in index.get("companies", [])}
+# ==================== 全市场规模批量写入 [扩量改造] ====================
+# 5500 只 × 30+ 报告期 ≈ 百万行；逐行 db.execute 在本机要跑几十分钟，故按表攒批走
+# executemany（pymysql 拼多值 INSERT）+ 分批 commit，语句模板按（表, 列集, 冲突策略）缓存。
+BULK_ROWS = 2000          # 单次 executemany 行数（受 max_allowed_packet 限制前停）
+BULK_COMPANIES = 25       # 每导入 N 家冲刷 + commit 一次（中断不丢、内存有界）
 
+# (公司 JSON 字段, 模型, 核心列映射, 报告期键)
+FIN_SPECS = (
+    ("indicators", FinIndicator, INDICATOR_CORE, "报告期"),
+    ("income", FinIncome, INCOME_CORE, "报告日"),
+    ("balance", FinBalance, BALANCE_CORE, "报告日"),
+    ("cashflow", FinCashflow, CASHFLOW_CORE, "报告日"),
+)
+SEC_KEYS = ("code", "market", "name", "industry", "currency", "status",
+            "list_date", "updated_at")
+QUOTE_KEYS = ("sid", "trade_date", "price", "change_pct", "pe_ttm", "pb", "market_cap",
+              "float_market_cap", "turnover_rate", "fetched_at")
+DIV_KEYS = ("sid", "div_year", "div_type", "description", "bonus_per_10",
+            "transfer_per_10", "announce_date", "record_date", "ex_date", "pay_date")
+RPT_KEYS = ("sid", "report_date", "category", "title", "pdf_url", "detail_url",
+            "audit_firm", "audit_opinion")
+# 证券主数据：名称/行业/上市日缺失时不用 NULL 覆盖已有值
+SEC_UPD = ("name=VALUES(name), "
+           "industry=COALESCE(VALUES(industry), industry), "
+           "list_date=COALESCE(VALUES(list_date), list_date), "
+           "updated_at=VALUES(updated_at)")
+
+
+class _Writer:
+    """一张表一个写入器：攒够 BULK_ROWS 冲刷一次，commit 时机由调用方掌握。"""
+
+    def __init__(self, db, stats, model, keys=None, mode="ignore",
+                 upd_skip=(), upd_expr=None):
+        tbl = model.__table__
+        self.cols = [k for k in (keys or [c.name for c in tbl.columns]) if k in tbl.c]
+        self.json_cols = {c.name for c in tbl.columns
+                          if c.name in self.cols and isinstance(c.type, JSON)}
+        names = ", ".join(f"`{c}`" for c in self.cols)
+        holders = ", ".join(f":{c}" for c in self.cols)
+        if mode == "ignore":
+            sql = f"INSERT IGNORE INTO {tbl.name} ({names}) VALUES ({holders})"
+        else:
+            upd = [c for c in self.cols if c not in upd_skip]
+            expr = upd_expr or ", ".join(f"`{c}`=VALUES(`{c}`)" for c in upd)
+            sql = f"INSERT INTO {tbl.name} ({names}) VALUES ({holders}) ON DUPLICATE KEY UPDATE {expr}"
+        self.stmt, self.db, self.stats = text(sql), db, stats
+        self.table, self.rows = tbl.name, []
+
+    def add(self, row):
+        vals = {}
+        for c in self.cols:
+            v = row.get(c)
+            if c in self.json_cols and v is not None:
+                v = json.dumps(v, ensure_ascii=False)
+            vals[c] = v
+        self.rows.append(vals)
+        if len(self.rows) >= BULK_ROWS:
+            self.flush()
+
+    def flush(self):
+        rows, self.rows = self.rows, []
+        if not rows:
+            return
+        for i in range(0, len(rows), BULK_ROWS):
+            self.db.execute(self.stmt, rows[i:i + BULK_ROWS])
+        self.stats[self.table] += len(rows)
+
+
+def load_sid_map(db):
+    """全量 (code, market) → sid，避免逐只 SELECT（5500 次往返）。"""
+    rows = db.execute(select(Security.code, Security.market, Security.sid)).all()
+    return {(r.code, r.market): r.sid for r in rows}
+
+
+def build_score_rows(index, trade_date):
+    """index.json companies[] → score_daily 行（含 Wind 事件覆盖层）。"""
     score_rows = {}
     for c in index.get("companies", []):
         sc = c.get("scores") or {}
@@ -203,7 +258,7 @@ def import_companies(db, stats):
             row[f"sell_fair_{col}"] = r.get("sellFair")
         score_rows[c["code"]] = row
 
-    # Wind 事件覆盖层并入评分行(三字段拆列供列表计算 + 原始条目全量透传供详情⑨总览)
+    # Wind 事件覆盖层并入评分行（三字段拆列供列表计算 + 原始条目全量透传供详情⑨总览）
     ov_path = DATA_DIR / "events" / "index.json"
     if ov_path.exists():
         overlay = json.loads(ov_path.read_text(encoding="utf-8")).get("byCode", {})
@@ -213,8 +268,120 @@ def import_companies(db, stats):
                 score_rows[code]["wind_mgmt_delta"] = ov.get("mgmtDelta")
                 score_rows[code]["wind_flags"] = ov.get("flags")
                 score_rows[code]["wind_overlay"] = ov
+    return score_rows
 
-    for path in sorted((DATA_DIR / "companies").glob("*.json")):
+
+def import_index_snapshot(db, stats, quiet=False):
+    """index.json → security / quote_daily / score_daily（全市场日更的唯一写入面）。
+
+    --snapshot-only 只刷腾讯批量行情、不重抓财务，companies/*.json mtime 不变；
+    若仍走全目录导入就是白读 5500 个文件。本函数只读一个 index.json，干完行情与
+    评分两张快照表，新上市标的的 security 主数据也在这里建（财务等下轮深抓）。
+    """
+    index = json.loads((DATA_DIR / "index.json").read_text(encoding="utf-8"))
+    trade_date = parse_date(index["updated_at"])
+    score_rows = build_score_rows(index, trade_date)
+
+    w_sec = _Writer(db, stats, Security, SEC_KEYS, mode="upsert", upd_expr=SEC_UPD)
+    w_quote = _Writer(db, stats, QuoteDaily, QUOTE_KEYS, mode="upsert",
+                      upd_skip=("sid", "trade_date"))
+    w_score = _Writer(db, stats, ScoreDaily, mode="upsert",
+                      upd_skip=("sid", "trade_date"))
+    sids = load_sid_map(db)
+    updated_at = parse_dt(index["updated_at"]) or datetime.now()
+
+    for n, c in enumerate(index.get("companies") or [], 1):
+        code, market = c.get("code"), c.get("market") or "A"
+        if not code:
+            continue
+        w_sec.add(dict(code=code, market=market, name=c.get("name") or code,
+                       industry=c.get("industry"), currency=MARKET_CURRENCY[market],
+                       status="active", list_date=None, updated_at=updated_at))
+        if n % BULK_COMPANIES == 0:
+            w_sec.flush()
+            db.commit()
+            sids = load_sid_map(db)
+
+    # 主数据先落库（新上市代码要能拿到 sid 给下面两张子表）
+    w_sec.flush()
+    db.commit()
+    sids = load_sid_map(db)
+
+    for c in index.get("companies") or []:
+        code, market = c.get("code"), c.get("market") or "A"
+        sid = sids.get((code, market))
+        if sid is None:
+            stats["skipped_nosec"] += 1
+            continue
+        q = c.get("quote") or {}
+        qdate = parse_date(q.get("time")) or trade_date
+        if q and qdate:
+            w_quote.add(dict(
+                sid=sid, trade_date=qdate,
+                price=q.get("price"), change_pct=q.get("change_pct"),
+                pe_ttm=q.get("pe_ttm"), pb=q.get("pb"),
+                market_cap=q.get("market_cap"), float_market_cap=q.get("float_market_cap"),
+                turnover_rate=q.get("turnover_rate"),
+                fetched_at=parse_dt(q.get("time")) or updated_at,
+            ))
+        if code in score_rows:
+            w_score.add(dict(sid=sid, **score_rows[code]))
+
+    for w in (w_sec, w_quote, w_score):
+        w.flush()
+    db.commit()
+    if not quiet:
+        print(f"  [import] index 快照 {len(index.get('companies') or [])} 条 · "
+              f"交易日 {trade_date}", flush=True)
+
+
+def import_companies(db, stats, only_fresh=None, quiet=False, head=True):
+    """companies/*.json + index.json → 行情/财务/分红/报告/评分（攒批写入）。
+
+    only_fresh：仅导入 mtime 在 N 小时内的公司文件（日更增量，旧行已在库中）。
+    head=False：不写 security/quote_daily/score_daily 三张表头（由 import_index_snapshot
+    统一处理，避开全市场日更重复写 5500 行）。
+    报告期无法解析的行直接丢弃（旧路径依赖 INSERT IGNORE 默默掉，批量下需前置过滤）。
+    """
+    index = json.loads((DATA_DIR / "index.json").read_text(encoding="utf-8"))
+    trade_date = parse_date(index["updated_at"])
+    by_code = {c["code"]: c for c in index.get("companies", []) if c.get("code")}
+    score_rows = build_score_rows(index, trade_date)
+
+    files = sorted((DATA_DIR / "companies").glob("*.json"))
+    if only_fresh:
+        cutoff = time.time() - only_fresh * 3600
+        files = [p for p in files if p.stat().st_mtime >= cutoff]
+    if not files:
+        print("[import] 无待导入的公司 JSON")
+        return
+
+    writers = {}
+
+    def writer(name, model, keys=None, **kw):
+        w = writers.get(name)
+        if w is None:
+            w = writers[name] = _Writer(db, stats, model, keys, **kw)
+        return w
+
+    w_sec = writer("security", Security, SEC_KEYS, mode="upsert", upd_expr=SEC_UPD)
+    w_quote = writer("quote_daily", QuoteDaily, QUOTE_KEYS, mode="upsert",
+                     upd_skip=("sid", "trade_date"))
+    w_score = writer("score_daily", ScoreDaily, mode="upsert",
+                     upd_skip=("sid", "trade_date"))
+    w_div = writer("dividend", Dividend, DIV_KEYS)
+    w_rpt = writer("periodic_report", PeriodicReport, RPT_KEYS)
+    w_fin = {
+        spec[1].__tablename__: writer(
+            spec[1].__tablename__, spec[1],
+            ("sid", "report_date", "updated_at", "extras") + tuple(spec[2]),
+        )
+        for spec in FIN_SPECS
+    }
+
+    sids = load_sid_map(db)
+    total, t0 = len(files), time.time()
+    for n, path in enumerate(files, 1):
         d = json.loads(path.read_text(encoding="utf-8"))
         code, name = d["code"], d["name"]
         info = d.get("info") or {}
@@ -228,15 +395,34 @@ def import_companies(db, stats):
                 list_dt = datetime.strptime(str(info["上市日期"])[:10], "%Y-%m-%d").date()
             except ValueError:
                 list_dt = None
-        sid = upsert_security(db, code, market, name,
-                              idx_c.get("industry") or info.get("行业"),
-                              updated_at, list_dt)
-        stats["security"] += 1
+        sec = w_sec
+        if head:
+            sec.add(dict(code=code, market=market, name=name,
+                         industry=idx_c.get("industry") or info.get("行业"),
+                         currency=MARKET_CURRENCY[market], status="active",
+                         list_date=list_dt, updated_at=updated_at))
+        sid = sids.get((code, market))
+        if sid is None:
+            if not head:
+                # 表头已由 import_index_snapshot 落库：仍无此证券 = 代码不在 index.json
+                # （上一轮抓到一半被中断的孤儿文件），财务行跳过不报错
+                stats["skipped_nosec"] += 1
+                continue
+            # 新证券：先把主数据落库再取 sid（子表有外键约束）
+            sec.flush()
+            db.commit()
+            sid = db.execute(select(Security.sid).where(
+                Security.code == code, Security.market == market)).scalar_one()
+            sids[(code, market)] = sid
 
         snap = d.get("snapshot") or {}
-        qdate = parse_date(snap.get("time")) or updated_at.date()
-        if snap:
-            qvals = dict(
+        # index.json 的 quote 块由 --snapshot-only 日更，比未重抓的公司快照新时优先
+        idx_q = idx_c.get("quote") or {}
+        if str(idx_q.get("time") or "") > str(snap.get("time") or ""):
+            snap = idx_q
+        if snap and head:
+            qdate = parse_date(snap.get("time")) or updated_at.date()
+            w_quote.add(dict(
                 sid=sid, trade_date=qdate,
                 price=snap.get("price"), change_pct=snap.get("change_pct"),
                 pe_ttm=snap.get("pe_ttm"), pb=snap.get("pb"),
@@ -244,69 +430,52 @@ def import_companies(db, stats):
                 float_market_cap=snap.get("float_market_cap"),
                 turnover_rate=snap.get("turnover_rate"),
                 fetched_at=updated_at,
-            )
-            upd = {k: v for k, v in qvals.items() if k != "trade_date"}
-            db.execute(mysql_insert(QuoteDaily)
-                       .values(**qvals).on_duplicate_key_update(**upd))
-            stats["quote_daily"] += 1
+            ))
 
-        now = updated_at
-        for r in d.get("indicators") or []:
-            core, extras = split_core(r, INDICATOR_CORE)
-            db.execute(mysql_insert(FinIndicator).values(
-                sid=sid, report_date=parse_date(r.get("报告期")),
-                updated_at=now, extras=extras, **core,
-            ).prefix_with("IGNORE"))
-            stats["fin_indicator"] += 1
-        for r in d.get("income") or []:
-            core, extras = split_core(r, INCOME_CORE)
-            db.execute(mysql_insert(FinIncome).values(
-                sid=sid, report_date=parse_date(r.get("报告日")),
-                updated_at=now, extras=extras, **core,
-            ).prefix_with("IGNORE"))
-            stats["fin_income"] += 1
-        for r in d.get("balance") or []:
-            core, extras = split_core(r, BALANCE_CORE)
-            db.execute(mysql_insert(FinBalance).values(
-                sid=sid, report_date=parse_date(r.get("报告日")),
-                updated_at=now, extras=extras, **core,
-            ).prefix_with("IGNORE"))
-            stats["fin_balance"] += 1
-        for r in d.get("cashflow") or []:
-            core, extras = split_core(r, CASHFLOW_CORE)
-            db.execute(mysql_insert(FinCashflow).values(
-                sid=sid, report_date=parse_date(r.get("报告日")),
-                updated_at=now, extras=extras, **core,
-            ).prefix_with("IGNORE"))
-            stats["fin_cashflow"] += 1
+        for key, model, core_map, date_col in FIN_SPECS:
+            w = w_fin[model.__tablename__]
+            for r in d.get(key) or []:
+                rd = parse_date(r.get(date_col))
+                if not rd:
+                    stats["skipped_rows"] += 1
+                    continue
+                core, extras = split_core(r, core_map)
+                w.add(dict(sid=sid, report_date=rd, updated_at=updated_at,
+                           extras=extras, **core))
 
         for r in d.get("dividends") or []:
-            db.execute(mysql_insert(Dividend).values(
+            w_div.add(dict(
                 sid=sid, div_year=r.get("year"), div_type=r.get("type"),
                 description=r.get("description"),
                 bonus_per_10=r.get("bonus_per_10"), transfer_per_10=r.get("transfer_per_10"),
                 announce_date=parse_date(r.get("announce_date")),
                 record_date=parse_date(r.get("record_date")),
                 ex_date=parse_date(r.get("ex_date")), pay_date=parse_date(r.get("pay_date")),
-            ).prefix_with("IGNORE"))
-            stats["dividend"] += 1
+            ))
 
         for r in d.get("reports") or []:
             if not r.get("date"):
                 continue
-            db.execute(mysql_insert(PeriodicReport).values(
+            w_rpt.add(dict(
                 sid=sid, report_date=parse_date(r["date"]), category=r.get("category", ""),
                 title=r.get("title"), pdf_url=r.get("pdf_url"), detail_url=r.get("detail_url"),
                 audit_firm=r.get("audit_firm"), audit_opinion=r.get("audit_opinion"),
-            ).prefix_with("IGNORE"))
-            stats["periodic_report"] += 1
+            ))
 
-        if code in score_rows:
-            svals = dict(sid=sid, **score_rows[code])
-            supd = {k: v for k, v in svals.items() if k != "trade_date"}
-            db.execute(mysql_insert(ScoreDaily)
-                       .values(**svals).on_duplicate_key_update(**supd))
-            stats["score_daily"] += 1
+        if head and code in score_rows:
+            w_score.add(dict(sid=sid, **score_rows[code]))
+
+        if n % BULK_COMPANIES == 0:
+            for w in writers.values():
+                w.flush()
+            db.commit()
+        if not quiet and (n % 500 == 0 or n == total):
+            print(f"  [import] {n}/{total} 家 · {time.time() - t0:.0f}s · "
+                  f"{sum(len(x.rows) for x in writers.values())} 行待刷", flush=True)
+
+    for w in writers.values():
+        w.flush()
+    db.commit()
 
 
 def import_events(db, stats):
@@ -494,17 +663,32 @@ class _Stats(dict):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--no-clean", action="store_true", help="不清空,直接导入(upsert)")
+    ap.add_argument("--no-clean", action="store_true", help="不清空,直接导入（upsert）")
+    ap.add_argument("--only-fresh", type=float, metavar="HOURS",
+                    help="仅导入 N 小时内更新过的公司 JSON（全市场日更增量）")
+    ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
+    if args.only_fresh and not args.no_clean:
+        # 兜住一个能把库打空的组合：clean 会 TRUNCATE 全部业务表，而增量窗口只重灌
+        # 最近 N 小时改过的公司文件，窗口外的历史行永久丢失（实跑踩过：
+        # periodic_report 13.7 万 → 1.1 万）。
+        ap.error("--only-fresh 必须配 --no-clean：增量模式下先清空会丢掉窗口外的全部明细")
 
     started = datetime.now()
     db = SessionLocal()
     stats = _Stats()
+    t0 = time.time()
     try:
         if not args.no_clean:
             clean_tables(db)
             print("已清空业务表")
-        import_companies(db, stats)
+        if args.only_fresh:
+            # 日更：表头三表走 index.json 全量（快），财务明细只读刚重抓的公司文件
+            import_index_snapshot(db, stats, quiet=args.quiet)
+            import_companies(db, stats, only_fresh=args.only_fresh,
+                             quiet=args.quiet, head=False)
+        else:
+            import_companies(db, stats, quiet=args.quiet)
         import_events(db, stats)
         import_portfolio(db, stats)
         import_agro(db, stats)
@@ -514,7 +698,7 @@ def main():
             status="success", message=f"导入完成: {dict(stats)}", stats=dict(stats),
         ))
         db.commit()
-        print("导入完成:")
+        print(f"导入完成（{time.time() - t0:.0f}s）:")
         for k in sorted(stats):
             print(f"  {k}: {stats[k]}")
     except Exception as e:

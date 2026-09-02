@@ -3,6 +3,9 @@
 A股/港股/美股 价值分析数据服务 —— `masterwusama.github.io/stock-data/` 纯前端静态站的本地化重构：
 FastAPI + MySQL 提供结构化查询接口，Vue 3 前端，采集层沿用经年验证的 Python 抓取脚本。
 
+> **部署与使用请看 [docs/使用说明书.md](docs/使用说明书.md)**（首次部署七步、四个页面与筛选项、采集任务与调度节奏、
+> 20 张表逐列口径、运维症状表、已知边界）。本文只留架构速览。
+
 ## 架构
 
 ```
@@ -43,7 +46,7 @@ npm run build                               # 产物 dist/ 由 FastAPI 托管(�
 
 # 4. 采集调度(独立进程, 替代 GitHub Actions cron)
 pip install -r collector/requirements.txt
-python -m collector.scheduler   # stock 周一~六 16:05/22:05 · agro 每天 09:05/21:05
+python -m collector.scheduler   # stock 周一~六 16:05/22:05 · deep 周六 09:05 · agro 每天 09:05/21:05
 ```
 
 配置在 `backend/.env`（参考 `backend/.env.example`）：`DATABASE_URL` / `BOND_10Y` / `LEGACY_DATA_DIR` / `WIND_SKILL_DIR`。
@@ -56,7 +59,7 @@ python -m collector.scheduler   # stock 周一~六 16:05/22:05 · agro 每天 09
 .\ops\start.ps1                  # 服务 + 定时采集（已在跑则跳过，可重复执行）
 .\ops\start.ps1 -Rebuild         # 前端有改动：先 npm run build 再启动
 .\ops\start.ps1 -NoScheduler     # 只启服务    -Lan: 监听 0.0.0.0
-.\ops\status.ps1                 # 进程/端口/健康检查/前端产物/采集任务
+.\ops\status.ps1                 # 进程/端口/健康检查/前端产物/采集任务/抓取锁/index 规模
 .\ops\status.ps1 -Jobs           # 附带 etl_job_log 最近运行记录
 .\ops\stop.ps1                   # 关调度器 + 服务 + 残留采集子进程
 .\ops\stop.ps1 -Api              # 只关服务（不动正在跑的采集任务）
@@ -72,12 +75,24 @@ git -c http.proxy=http://127.0.0.1:1080 push origin main
 
 ## 采集任务
 
-| job | 内容 | 用法 |
-|---|---|---|
-| stock | 行情+财务+评分+组合调仓（约 40~50 分钟） | `python -m collector.run stock` |
-| agro | 农化价格（生意社/中农立华）+ 行业 EDB（约 20~30 分钟） | `python -m collector.run agro` |
-| events | Wind 一次性事件/股东抓取（依赖博客仓 wind-mcp-skill） | `python -m collector.run events` |
-| import | 仅把 JSON 工作目录回灌 MySQL | `python -m collector.run import` |
+标的池 = 全 A 股（沪深京 ≈ 5550 只，名单来自 `collector/scripts/universe.py`）+ 港/美精选。
+财务按季更新，所以拆两层节奏，不每天重抓 1.9GB 明细：
+
+| job | 调度 | 内容 | 用法 |
+|---|---|---|---|
+| stock | 周一~六 16:05/22:05 | 腾讯批量刷全市场估值快照 → 调仓 → 回灌（≈1~2 分钟） | `python -m collector.run stock` |
+| deep | 周六 09:05 | 全市场财务/定期报告重抓（`--resume --max-age 6`，≈5 小时） | `python -m collector.run deep` |
+| agro | 每天 09:05/21:05 | 农化价格（生意社/中农立华）+ 行业 EDB（约 20~30 分钟） | `python -m collector.run agro` |
+| events | 手动 | Wind 一次性事件/股东抓取（依赖博客仓 wind-mcp-skill） | `python -m collector.run events` |
+| import | 手动 | 仅把 JSON 工作目录回灌 MySQL | `python -m collector.run import` |
+
+首次上手：先 `python -m collector.run deep` 跑一遍全市场（中断后重跑同一命令即从断点续抓，
+已抓的按文件 mtime 跳过），跑完自动回灌。之后交给调度器。
+
+全量抓取持 `collector/data/.fetch.lock`（`index.json` 为全量重写，两进并行会互盖条目），
+同时段的 stock job 自动跳过；锁是否被活进程持有可看 `ops\status.ps1`，
+确认无进程后删该文件即可重跑。`companies/` 明细（全市场约 2GB）与 `index.json` 已 gitignore，
+MySQL 才是服务层。
 
 每次运行写 `etl_job_log` 表；抓取失败也会回灌已落盘数据（对齐原 workflow `if: always()`）。
 注意：`fetch_data --limit` 会把 `index.json` 重建为部分公司，**勿在生产工作目录使用**。
@@ -88,7 +103,7 @@ git -c http.proxy=http://127.0.0.1:1080 push origin main
 ```powershell
 python -m scripts.verify_import   # 导入行数/聚合抽查
 python -m scripts.verify_api      # API 响应 vs 原 JSON 逐字段对比
-python -m scripts.verify_filters  # 列表筛选 11 组用例 vs 原前端语义对答案
+python -m scripts.verify_filters  # 列表筛选与排序 23 组用例 vs 原前端语义对答案(含板块/ST 维度)
 ```
 
 ## 目录

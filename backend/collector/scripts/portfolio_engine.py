@@ -15,7 +15,8 @@
 - 分红除权：每日调仓前先处理持仓标的的除权除息日（ex_date）记录——现金分红
   计入现金（税前）、转增/送股增加持股数并摊薄成本价；若建仓日晚于除权日则无权。
   同一笔分红只处理一次（pos.div_last 记录已处理的最近除权日），漏跑数日后补处理。
-- 不设持股数量上限：候选命中档位即可买入，由现金与单票上限自然约束分散度。
+- 不设持股数量上限：候选命中档位即可买入，由现金与单票上限自然约束分散度；
+  但一手金额就超过单票上限的高价股（千元股）无法在风控位内建仓，直接跳过。
 
 各策略参数（2026-08-29 定版）：
 - 施洛斯烟蒂：单票上限 8%；买入档位 折价 3%/8%/15%
@@ -34,10 +35,14 @@
 """
 import json
 import math
+import os
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 BASE = Path(__file__).parent.parent
+# 组合账本目录：默认 collector/portfolio/data；测试/试算可用 VA_PORTFOLIO_DIR 另指
+# （引擎按交易日幂等跳重，隔离目录跑一遍不影响线上账本）
+PF_DIR = Path(os.environ.get('VA_PORTFOLIO_DIR') or (BASE / 'portfolio' / 'data'))
 CN_TZ = timezone(timedelta(hours=8))
 INIT_CAP = 200000.0
 N_TR = 3  # 买入/卖出均为三档（每档 = 单票上限的 1/3）
@@ -76,23 +81,34 @@ def save_json(path, data):
     tmp.replace(path)
 
 
-def load_market():
+def load_market(held_codes=()):
     """读取 fetch_data 产出的数据，返回 (A 股 {code: {...}}, 分红 {code: [记录]}, 最新交易日期)。
-    交易日期取行情快照时间（companies/*.json 的 snapshot.time）而非抓取时刻，
-    保证周末/节假日兜底运行时仍归入最近的交易日；分红取同文件的 dividends 数组。"""
+    交易日期取行情快照时间（index 条目的 quote.time，即交易所最后成交日）而非抓取时刻，
+    保证周末/节假日兜底运行时仍归入最近的交易日。
+    全市场 5500 只规模下不能逐只读 companies/*.json（约 1.9GB）：行情与评分 index 已自带，
+    分红只有当前持仓（数十只）会用到的，故只对这些代码回读明细文件。"""
     idx = load_json(BASE / 'data' / 'index.json', {})
-    stocks, div_map, trade_date = {}, {}, None
+    stocks, div_map, trade_date, stale = {}, {}, None, 0
     for c in idx.get('companies') or []:
         if c.get('market') != 'A' or not c.get('price'):
             continue
         stocks[c['code']] = c
-        det = load_json(BASE / 'data' / 'companies' / ('%s.json' % c['code']), {})
-        t = ((det.get('snapshot') or {}).get('time') or '')[:10]
-        if t and (trade_date is None or t > trade_date):
-            trade_date = t
+        t = ((c.get('quote') or {}).get('time') or '')[:10]
+        if t:
+            if trade_date is None or t > trade_date:
+                trade_date = t
+        else:
+            stale += 1
+    if not trade_date and stocks:
+        # 老 index 条目无 quote 块（升级前抓取）：退化用抓取时间，至少不比真实交易日更晚
+        trade_date = max((c.get('updated_at') or '')[:10] for c in stocks.values())
+    elif stale:
+        print('%d 只缺行情快照时间，交易日按其余标的判定' % stale)
+    for code in held_codes:
+        det = load_json(BASE / 'data' / 'companies' / ('%s.json' % code), {})
         divs = [d for d in (det.get('dividends') or []) if d.get('ex_date')]
         if divs:
-            div_map[c['code']] = divs
+            div_map[code] = divs
     return stocks, div_map, trade_date
 
 
@@ -194,10 +210,17 @@ def apply_buy(strat, pos, c, trade_date, shares, reason, trades):
 def fill_buy(strat, pos, c, cfg, trade_date, target_tr, trades, note):
     """把持仓从当前批次补买到 target_tr（每档一笔流水）；返回实际买到的批次"""
     disc = discount_of(c, cfg)
+    per_tr = tranche_amount(cfg)
     while pos['tranches'] < target_tr:
-        shares = buy_lots(strat['cash'], c['price'], tranche_amount(cfg))
-        if shares == 0 and strat['cash'] >= c['price'] * 100:
-            shares = 100  # 档位金额不足一手：高价股以一手为一档，保证能建仓
+        shares = buy_lots(strat['cash'], c['price'], per_tr)
+        if shares == 0 and c['price']:
+            # 一档金额不足一手：允许以一手为一档；但千元级高价股一手就超过单票上限，
+            # 买入即破风控位（全市场标的池中必须排除），直接放弃该档
+            lot = c['price'] * 100
+            if lot <= strat['cash'] and lot <= INIT_CAP * cfg['target_w']:
+                shares = 100
+            else:
+                break
         if shares <= 0:
             break
         band = cfg['buy_bands'][pos['tranches']]
@@ -359,14 +382,17 @@ def summarize(strat, stocks, trade_date):
 
 
 def main():
-    stocks, div_map, trade_date = load_market()
+    pf_path = PF_DIR / 'portfolio.json'
+    tr_path = PF_DIR / 'trades.json'
+    nav_path = PF_DIR / 'nav.json'
+    pf = load_json(pf_path, None)
+    # 分红只按持仓需要回读明细：先取出已有持仓代码
+    held = {p['code'] for s in (load_json(pf_path.with_name('_state.json'), {}) or {}).values()
+            for p in s.get('positions') or [] if p.get('shares')}
+    stocks, div_map, trade_date = load_market(held)
     if not stocks or not trade_date:
         print('无 A 股行情，退出')
         return
-    pf_path = BASE / 'portfolio' / 'data' / 'portfolio.json'
-    tr_path = BASE / 'portfolio' / 'data' / 'trades.json'
-    nav_path = BASE / 'portfolio' / 'data' / 'nav.json'
-    pf = load_json(pf_path, None)
     trades_all = load_json(tr_path, {k: [] for k in STRATEGIES})
     nav_all = load_json(nav_path, {k: [] for k in STRATEGIES})
 

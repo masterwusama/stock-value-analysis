@@ -1,17 +1,22 @@
 # -*- coding: utf-8 -*-
-"""导入结果验证:行数核对 + 抽样对比源 JSON。"""
+"""导入结果验证:行数核对 + 抽样对比源 JSON。
+
+源数据目录统一取 app.config.LEGACY_DATA_DIR(采集工作目录,现指向 backend/collector),
+不再硬编码博客仓库——全市场回灌后博客那份 54 只的旧 JSON 会对不上答案。
+"""
 import json
 from pathlib import Path
 
 from sqlalchemy import func, select
 
+from app.config import LEGACY_DATA_DIR
 from app.db import SessionLocal
 from app.models import (
     AgroPrice, Dividend, FinBalance, FinIndicator, PeriodicReport, PfNav,
     PfPosition, PfTrade, QuoteDaily, ScoreDaily, Security, WindEvent,
 )
 
-DATA = Path(r"<项目目录>\data")
+DATA = Path(LEGACY_DATA_DIR) / "data"
 
 db = SessionLocal()
 
@@ -27,13 +32,18 @@ for market, n in db.execute(select(Security.market, func.count()).group_by(Secur
 print("== 3. 抽样:600309 最新行情 ==")
 sid = db.execute(select(Security.sid).where(Security.code == "600309")).scalar_one()
 q = db.execute(select(QuoteDaily).where(QuoteDaily.sid == sid)).scalar_one()
-src = json.loads((DATA / "companies" / "600309.json").read_text(encoding="utf-8"))["snapshot"]
+# 行情面日更只改 index.json 的 quote(不重写 companies 明细),故源以 index 为准;
+# index 无 quote 块(早期条目)时回退明细 snapshot
+IDX = json.loads((DATA / "index.json").read_text(encoding="utf-8"))
+entry = next((c for c in IDX["companies"] if c["code"] == "600309"), {})
+src = entry.get("quote") or json.loads(
+    (DATA / "companies" / "600309.json").read_text(encoding="utf-8"))["snapshot"]
 print(f"  DB:   price={q.price} pe_ttm={q.pe_ttm} mcap={q.market_cap} date={q.trade_date}")
-print(f"  JSON: price={src['price']} pe_ttm={src['pe_ttm']} mcap={src['market_cap']}")
+print(f"  JSON: price={src['price']} pe_ttm={src['pe_ttm']} mcap={src.get('market_cap')}")
 assert float(q.price) == src["price"] and float(q.pe_ttm) == src["pe_ttm"], "MISMATCH"
 
 print("== 4. 抽样:002027 评分 vs index.json ==")
-idx = json.loads((DATA / "index.json").read_text(encoding="utf-8"))
+idx = IDX
 src_sc = next(c["scores"] for c in idx["companies"] if c["code"] == "002027")
 sid2 = db.execute(select(Security.sid).where(Security.code == "002027")).scalar_one()
 s = db.execute(select(ScoreDaily).where(ScoreDaily.sid == sid2)).scalar_one()
@@ -72,7 +82,7 @@ for sid_, n in rows:
 print("== 8. 持仓与流水核对 ==")
 n_pos = db.execute(select(func.count()).select_from(PfPosition)).scalar_one()
 n_tr = db.execute(select(func.count()).select_from(PfTrade)).scalar_one()
-src_trades = json.loads(Path(r"<项目目录>\portfolio\data\trades.json")
+src_trades = json.loads((Path(LEGACY_DATA_DIR) / "portfolio" / "data" / "trades.json")
                         .read_text(encoding="utf-8"))
 assert n_tr == sum(len(v) for v in src_trades.values()), f"trade count {n_tr}"
 print(f"  pf_position={n_pos}, pf_trade={n_tr} == 源 {sum(len(v) for v in src_trades.values())}")

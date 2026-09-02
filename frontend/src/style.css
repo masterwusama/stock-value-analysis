@@ -36,7 +36,9 @@ a { color: var(--accent); text-decoration: none; }
 .topbar nav a { color: var(--sub); }
 .topbar nav a.router-link-active { color: var(--accent); font-weight: 600; }
 
-.page { max-width: 1280px; margin: 0 auto; padding: 18px 24px 60px; }
+/* 宽屏自适应：列表页 21 列在原来 1280px 的死上限下必然横向滚动，改成随视口铺开、1780px 封顶
+   （4K 屏不致拉成无限宽的一行；窄屏仍为 100% 宽，边距用 clamp 随屏宽缩放） */
+.page { width: min(100%, 1780px); margin: 0 auto; padding: 18px clamp(12px, 2vw, 40px) 60px; }
 
 .card {
   background: var(--card);
@@ -70,6 +72,11 @@ table.grid th { color: var(--sub); font-weight: 500; cursor: pointer; user-selec
 table.grid th:first-child, table.grid td:first-child,
 table.grid th.l, table.grid td.l { text-align: left; }
 table.grid tbody tr:hover { background: #f0f5ff; cursor: pointer; }
+/* 横向滚动时的固定首列（只在需要滚动的宽表上用，见列表页 .grid-list）：
+   背景必须自己不透明，否则滚动内容会从下面透出来；右侧投影提示下方还有列 */
+table.grid th.stick, table.grid td.stick { position: sticky; left: 0; z-index: 1; background: var(--card); box-shadow: 6px 0 6px -6px rgba(0, 0, 0, .25); }
+table.grid tbody tr:hover td.stick { background: #f0f5ff; }
+table.grid thead th.stick { z-index: 2; }
 
 .up { color: var(--up); }
 .down { color: var(--down); }

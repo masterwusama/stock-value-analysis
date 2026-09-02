@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ORM 模型:db_va 全部 19 张表。
+"""ORM 模型:db_va 全部 20 张表。
 
 约定:
 - security.sid 为内键,子表以 sid 外联(避免重复 (code, market) 复合键);

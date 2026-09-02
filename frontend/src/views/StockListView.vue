@@ -6,7 +6,8 @@ import { get } from '../api/client'
 const router = useRouter()
 
 const COLS = [
-  { key: 'code', label: '代码/名称', l: true },
+  // stick：横向滚动时固定在左侧，滚到右边仍知道当前是哪只（同原站 .stick）
+  { key: 'code', label: '代码/名称', l: true, stick: true },
   { key: null, label: '行业', l: true, noSort: true },
   { key: 'price', label: '现价', noSort: true },
   { key: null, label: '涨跌', noSort: true },
@@ -23,25 +24,34 @@ const COLS = [
   { key: 'fair_liq', label: '清算' },
   { key: 'net_cash_ratio', label: '净现金/市值' },
   // 价格参考合并列:每流派一列,竖排 买→保守/公允(同原站 listCells)
-  { key: 'grahamAgg', label: '格进取 买/保/公', ref: true },
-  { key: 'grahamDef', label: '格防御 买/保/公', ref: true },
-  { key: 'schloss', label: '施洛斯 买/保/公', ref: true },
-  { key: 'buffett', label: '巴菲特 买/保/公', ref: true },
+  // 排序键用列头=买入价(原站 thSort 语义),格内两档卖价由小字各自点击排序
+  { key: 'buy_graham_agg', label: '格进取 买/保/公', ref: true, school: 'grahamAgg' },
+  { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef' },
+  { key: 'buy_schloss', label: '施洛斯 买/保/公', ref: true, school: 'schloss' },
+  { key: 'buy_buffett', label: '巴菲特 买/保/公', ref: true, school: 'buffett' },
 ]
 
 const market = ref('')
+// 全市场 5500 只规模下“翻页”不实用:板块/行业/ST 作为基本维度先缩小范围
+const BOARDS = [['', '全部板块'], ['shMain', '沪主'], ['szMain', '深主'], ['gem', '创业'], ['star', '科创'], ['bj', '北交']]
+const board = ref('')
+const industry = ref('')
+const noSt = ref(false)
+const industries = ref([])
 const keyword = ref('')
 const kwDebounced = ref('')
 const sort = ref('market_cap')
 const order = ref('desc')
 const page = ref(1)
-const pageSize = 50
+const pageSize = ref(50)
+const jump = ref(null)   // 5500 只×50 行 = 110 页，逐页点不现实
 
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
 
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(须同时达保守与公允);空值=不限
+// 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
 const flt = reactive({ fraudMax: '', mgmtMin: '', buys: [], discount: '', sells: [] })
 
@@ -52,6 +62,8 @@ function toggleFlt(arr, key, on) {
 }
 function resetFlt() {
   Object.assign(flt, { fraudMax: '', mgmtMin: '', buys: [], discount: '', sells: [] })
+  industry.value = ''
+  noSt.value = false
   applyFlt()
 }
 function applyFlt() {
@@ -60,20 +72,23 @@ function applyFlt() {
 }
 const fltCount = () =>
   (flt.fraudMax !== '' ? 1 : 0) + (flt.mgmtMin !== '' ? 1 : 0) +
-  (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0)
+  (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) +
+  (industry.value ? 1 : 0) + (noSt.value ? 1 : 0)
 
 async function load() {
   loading.value = true
   error.value = ''
   try {
     data.value = await get('/securities', {
-      market: market.value, keyword: kwDebounced.value,
+      market: market.value, board: board.value, industry: industry.value,
+      st: noSt.value ? false : null,
+      keyword: kwDebounced.value,
       fraud_max: flt.fraudMax === '' ? null : flt.fraudMax,
       mgmt_min: flt.mgmtMin === '' ? null : flt.mgmtMin,
       buys: flt.buys.length ? flt.buys.join(',') : null,
       sells: flt.sells.length ? flt.sells.join(',') : null,
       discount: (flt.discount !== '' && flt.buys.length) ? flt.discount : null,
-      sort: sort.value, order: order.value, page: page.value, page_size: pageSize,
+      sort: sort.value, order: order.value, page: page.value, page_size: pageSize.value,
     })
   } catch (e) {
     error.value = `加载失败：${e.message}`
@@ -93,13 +108,22 @@ function setSort(key) {
   page.value = 1
 }
 
-watch([market, sort, order, page], load)
+// kwDebounced 必须在依赖里：搜索框原本只靠下面防抖回调里的 page=1 间接触发刷新，
+// 而搜索时通常已在第一页，页码不变 → watch 不触发 → 输入了也没发请求（applyFlt 同坑）。
+watch([market, board, sort, order, page, kwDebounced], load)
+watch(pageSize, load)
 watch(keyword, (v) => {
   clearTimeout(setSort._t)
   setSort._t = setTimeout(() => { kwDebounced.value = v.trim(); page.value = 1 }, 300)
 })
 
-onMounted(load)
+onMounted(async () => {
+  load()
+  try {
+    // 行业选项整市场一次拉取(几百个字),不随当页数据变化
+    industries.value = await get('/securities/industries')
+  } catch (e) { /* 下拉缺失不影响列表主体 */ }
+})
 
 const fmt = (n, d = 2) => n == null ? '-' : Number(n).toLocaleString('zh-CN', { minimumFractionDigits: d, maximumFractionDigits: d })
 const score2 = (n) => n == null ? '-' : (n * 100).toFixed(1) + '%'
@@ -114,13 +138,27 @@ const refKey = (k, kind) => snake(kind) + '_' + snake(k)
 const refBuy = (s, k) => s[refKey(k, 'buy')]
 const refCons = (s, k) => s[refKey(k, 'sellCons')]
 const refFair = (s, k) => s[refKey(k, 'sellFair')]
+// 表头高亮:本流派列的买/保/公任一档被排序都算激活(同原站 thSort 把 sellC-/sellF- 归一到 buy-)
+function sortActive(c) {
+  if (!c.ref) return sort.value === c.key
+  const s = snake(c.school)
+  return ['buy', 'sell_cons', 'sell_fair'].some((k) => sort.value === `${k}_${s}`)
+}
 const refTitle = (s, k) => {
   const f = (v) => v == null ? '-' : fmt(v)
   return `${REF_LABELS[k]}：买 ${f(refBuy(s, k))} / 保卖 ${f(refCons(s, k))} / 公卖 ${f(refFair(s, k))}`
 }
 const cls = (n) => n > 0 ? 'up' : n < 0 ? 'down' : 'flat'
 const MARKET_NAME = { A: 'A股', HK: '港股', US: '美股' }
-const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / pageSize)) : 1
+const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / pageSize.value)) : 1
+function doJump() {
+  const n = parseInt(jump.value, 10)
+  if (!Number.isFinite(n)) return
+  const target = Math.min(Math.max(1, n), totalPages())
+  jump.value = null
+  if (target === page.value) load()
+  else page.value = target
+}
 </script>
 
 <template>
@@ -129,13 +167,24 @@ const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / p
       <div class="tabs">
         <button v-for="t in [['', '全部'], ['A', 'A股'], ['HK', '港股'], ['US', '美股']]" :key="t[0]"
                 class="tab" :class="{ active: market === t[0] }"
-                @click="market = t[0]; page = 1">{{ t[1] }}</button>
+                @click="market = t[0]; board = ''; page = 1">{{ t[1] }}</button>
+      </div>
+      <div v-if="market === '' || market === 'A'" class="tabs">
+        <button v-for="b in BOARDS" :key="b[0]"
+                class="tab" :class="{ active: board === b[0] }"
+                @click="board = b[0]; page = 1">{{ b[1] }}</button>
       </div>
       <input v-model="keyword" placeholder="搜索代码 / 名称" />
       <span v-if="data" style="color: var(--sub)">共 {{ data.total }} 只 · 快照 {{ data.trade_date }}</span>
     </div>
 
     <div class="flts">
+      <label class="t">行业
+        <select v-model="industry" @change="applyFlt">
+          <option value="">全部</option>
+          <option v-for="i in industries" :key="i.industry" :value="i.industry">{{ i.industry }}（{{ i.count }}）</option>
+        </select></label>
+      <label class="cb" title="名称含 ST/*ST 的公司（退市风险与财务造假高发区）"><input type="checkbox" v-model="noSt" @change="applyFlt">剔除ST</label>
       <label class="num" title="财报造假可能性(0-100,越高越可疑),只保留 ≤ 该分的公司">造假≤
         <input v-model="flt.fraudMax" type="number" min="0" max="100" step="1" placeholder="不限" @change="applyFlt"></label>
       <label class="num" title="管理层水平(0-100,越高越好),只保留 ≥ 该分的公司">管理≥
@@ -158,25 +207,28 @@ const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / p
     <div v-if="loading && !data" class="loading">加载中…</div>
 
     <div v-if="data && !data.items.length && !loading" class="loading">无符合筛选条件的公司</div>
-    <div v-else-if="data" style="overflow-x: auto">
-      <table class="grid">
+    <div v-else-if="data" class="tbl-wrap">
+      <table class="grid grid-list">
         <thead>
           <tr>
-            <th v-for="c in COLS" :key="c.label" :class="{ l: c.l }"
+            <th v-for="c in COLS" :key="c.label" :class="{ l: c.l, unsort: !c.key, stick: c.stick }"
+                :title="c.ref ? '按买入参考价排序（保守/公允价点格内小字），再点切换升/降序'
+                             : (c.key ? '点击排序，再点切换升/降序' : '')"
                 @click="c.key && setSort(c.key)">
-              {{ c.label }}<template v-if="c.key && sort === c.key">{{ order === 'desc' ? ' ▼' : ' ▲' }}</template>
+              {{ c.label }}<template v-if="sortActive(c)">{{ order === 'desc' ? ' ▼' : ' ▲' }}</template>
             </th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="s in data?.items" :key="s.sid" @click="router.push(`/stock/${s.code}`)">
-            <td class="l"><b>{{ s.name }}</b> <span class="badge">{{ MARKET_NAME[s.market] }}</span> {{ s.code }}</td>
-            <td class="l">{{ s.industry || '-' }}</td>
-            <td>{{ fmt(s.price) }}</td>
+            <td class="l stick"><b>{{ s.name }}</b> <span class="badge">{{ MARKET_NAME[s.market] }}</span> {{ s.code }}</td>
+            <td class="l"><span class="ind" :title="s.industry">{{ s.industry || '-' }}</span></td>
+            <!-- 币种角标：港股/美股的现价与市值是本币（HKD/USD），跟 A 股人民币数值直接比大小会误读 -->
+            <td>{{ fmt(s.price) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :class="cls(s.change_pct)">{{ pct(s.change_pct) }}</td>
             <td>{{ fmt(s.pe_ttm) }}</td>
             <td>{{ fmt(s.pb) }}</td>
-            <td>{{ yi(s.market_cap) }}</td>
+            <td>{{ yi(s.market_cap) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td>{{ score(s.score_graham_agg) }}</td>
             <td>{{ score(s.score_graham_def) }}</td>
             <td>{{ score(s.score_schloss) }}</td>
@@ -188,11 +240,13 @@ const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / p
                 title="公允清算价值估算：(流动资产合计-负债合计)/股本">{{ fmt(s.fair_liq) }}</td>
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                 title="净现金/市值（最近一期财报），≥100% 表示扣除全部负债后的类现金仍高于市值">{{ score2(s.net_cash_ratio) }}</td>
-            <td v-for="c in COLS.filter(x => x.ref)" :key="c.key" class="c-ref" :title="refTitle(s, c.key)">
-              <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.key) != null && s.price != null && s.price <= refBuy(s, c.key) }">{{ fmt(refBuy(s, c.key)) }}</span>
+            <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :title="refTitle(s, c.school)">
+              <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}</span>
               <span class="rf-sell">
-                <span :class="{ 'r-hit-s': refCons(s, c.key) != null && s.price != null && s.price >= refCons(s, c.key) }">{{ fmt(refCons(s, c.key)) }}</span>
-                <span :class="{ 'r-hit-s': refFair(s, c.key) != null && s.price != null && s.price >= refFair(s, c.key) }">{{ refFair(s, c.key) == null ? '' : fmt(refFair(s, c.key)) }}</span>
+                <span class="sl-sort" :class="{ 'r-hit-s': refCons(s, c.school) != null && s.price != null && s.price >= refCons(s, c.school) }"
+                      title="按保守卖出价排序" @click.stop="setSort(refKey(c.school, 'sellCons'))">{{ fmt(refCons(s, c.school)) }}</span>
+                <span class="sl-sort" :class="{ 'r-hit-s': refFair(s, c.school) != null && s.price != null && s.price >= refFair(s, c.school) }"
+                      title="按公允卖出价排序" @click.stop="setSort(refKey(c.school, 'sellFair'))">{{ refFair(s, c.school) == null ? '' : fmt(refFair(s, c.school)) }}</span>
               </span>
             </td>
           </tr>
@@ -204,6 +258,13 @@ const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / p
       <button :disabled="page <= 1" @click="page--">上一页</button>
       <span>{{ page }} / {{ totalPages() }}</span>
       <button :disabled="page >= totalPages()" @click="page++">下一页</button>
+      <label class="psize">每页
+        <select v-model.number="pageSize" @change="page = 1">
+          <option :value="50">50</option><option :value="100">100</option><option :value="200">200</option>
+        </select></label>
+      <label class="psize">跳至
+        <input v-model.number="jump" type="number" min="1" :max="totalPages()" @keyup.enter="doJump">
+        <button @click="doJump">GO</button></label>
     </div>
   </div>
 </template>
@@ -221,6 +282,17 @@ const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / p
   color: var(--sub);
 }
 .flts .t { font-weight: 600; color: var(--txt); margin-left: 6px; }
+.flts select {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--txt);
+  max-width: 220px;
+}
+.pager .psize { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; color: var(--sub); }
+.pager .psize input { width: 62px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--txt); }
+.pager .psize select { padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--txt); }
 .flts .num { display: inline-flex; align-items: center; gap: 4px; }
 .flts .num input {
   width: 62px;
@@ -248,6 +320,26 @@ const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / p
 .c-ref { white-space: nowrap; }
 .c-ref .rf-buy { display: block; }
 .c-ref .rf-sell { display: flex; flex-direction: column; font-size: 11px; line-height: 1.3; opacity: 0.78; }
+/* 格内保/公允卖价：可点排序（不靠色块区分，靠下划线提示） */
+.c-ref .sl-sort { cursor: pointer; }
+.c-ref .sl-sort:hover { text-decoration: underline; }
+/* 币种角标：只在非 A 股出现，右上角小字，不参与排序也不撑宽列 */
+.ccy { font-style: normal; font-size: 9px; color: #999; vertical-align: super; margin-left: 1px; }
+table.grid th.unsort { cursor: default; }
+/* ---- 宽屏铺开 + 密集排版：21 列争取在 1440 视口下不横向滚动（装不下仍由 .tbl-wrap 滚动兜底） ---- */
+.tbl-wrap { overflow-x: auto; }
+/* 表头允许折行：列宽改由数值决定（“格进取 买/保/公”不再硬撑一行的宽度），CJK 可任意断字 */
+table.grid-list th { white-space: normal; line-height: 1.25; }
+table.grid-list th, table.grid-list td { padding: 6px 6px; }
+/* 行业名最长 20 字（“铁路、船舶、航空航天和其他运输设备制造业”），不约束会单列吃掉 260px；截断后完整名走 title */
+table.grid-list .ind {
+  display: inline-block;
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
 .r-hit { color: #0a7d3c; font-weight: 600; }
 .r-hit-s { color: #c0392b; }
 </style>

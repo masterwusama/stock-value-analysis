@@ -46,6 +46,28 @@ if ($jobs_.Count -gt 0) {
     Write-Host ("采集任务          : 正在运行 PID $($jobs_.ProcessId -join ', ')")
 }
 
+# 全市场深抓要跑数小时(且可脱离调度器独立启动),锁与产出状态单独看一眼
+$lock = Join-Path $Backend 'collector\data\.fetch.lock'
+if (Test-Path $lock) {
+    $item = Get-Item $lock
+    $holder = (Get-Content $lock -Raw).Trim()
+    $alive = $false
+    try { $alive = [bool](Get-Process -Id ([int]$holder) -ErrorAction Stop) } catch { }
+    $mins = [int]((Get-Date) - $item.LastWriteTime).TotalMinutes
+    Write-Host ("抓取锁            : 持锁 PID $holder {0}，{1} 分钟前刷新" -f `
+        $(if ($alive) { '存活' } else { '已死(可删后重跑)' }), $mins)
+}
+$idx = Join-Path $Backend 'collector\data\index.json'
+if (Test-Path $idx) {
+    $fs = [IO.File]::OpenRead($idx); $buf = New-Object byte[] 200
+    $n = $fs.Read($buf, 0, 200); $fs.Close()
+    $head = [Text.Encoding]::UTF8.GetString($buf, 0, $n)
+    $cnt = if ($head -match '"count":(\d+)') { $Matches[1] } else { '?' }
+    $upd = if ($head -match '"updated_at":"([^"]+)"') { $Matches[1] } else { '?' }
+    Write-Host ("index.json        : {0} 条 @ {1}（{2:N1} MB）" -f `
+        $cnt, $upd, ((Get-Item $idx).Length / 1MB))
+}
+
 Write-Host ("访问地址          : $AppUrl")
 
 if ($Jobs) {

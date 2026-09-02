@@ -21,5 +21,17 @@ _tmp/
 
 # 采集工作目录中可再生的大数据(fetch_data 全量重抓即可恢复,单只约 370KB)
 backend/collector/data/companies/
+# 全市场 5500 只下这些索引文件每次抓取都整文件重写(MB 级 churn),不适合入库：
+#   index.json   抓取产出 + import_legacy 回灌源(MySQL 才是服务层)
+#   universe.json 交易所/新浪全市场名单缓存
+#   .fetch.lock / crawl_failed.json / _index_backup_*  运行期状态
+backend/collector/data/index.json
+backend/collector/data/universe.json
+# 港股通名单缓存（东财 clist 一次请求可重生，621 只含行业）
+backend/collector/data/universe_hk.json
+backend/collector/data/.fetch.lock
+backend/collector/data/crawl_failed.json
+backend/collector/data/_index_backup_*
+backend/collector/data/*.err
 # 全市场扫描缓存(screen_stocks/auto_screen 副产物)
 _screen_cache.json

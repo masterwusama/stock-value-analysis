@@ -16,6 +16,9 @@ from app.config import LEGACY_DATA_DIR  # 对答案基线 = JSON 工作目录(�
 BASE = "http://127.0.0.1:8000/api"
 IDX = json.load(io.open(LEGACY_DATA_DIR / "data" / "index.json", encoding="utf-8"))
 COLS = {"grahamAgg": "grahamAgg", "grahamDef": "grahamDef", "schloss": "schloss", "buffett": "buffett"}
+# 板块前缀(与 app/api/securities.py BOARDS 一致)
+BOARDS = {"shMain": ("60",), "szMain": ("00",), "gem": ("30",),
+          "star": ("68",), "bj": ("92", "83", "87", "43")}
 
 
 def api(path):
@@ -23,12 +26,20 @@ def api(path):
         return json.load(r)
 
 
-def local_flt(fraud_max=None, mgmt_min=None, buys=None, sells=None, discount=None, market=None):
+def local_flt(fraud_max=None, mgmt_min=None, buys=None, sells=None, discount=None,
+              market=None, board=None, st=None):
     """复刻原 stock.js passFlt(base 分口径,windMode 关)。"""
     out = []
     for c in IDX["companies"]:
         if market and c.get("market", "A") != market:
             continue
+        if board:
+            # 板块仅限 A 股:港股代码 00700 也以 "00" 开头,不能混入深主
+            if c.get("market", "A") != "A" or not str(c["code"]).startswith(BOARDS[board]):
+                continue
+        if st is not None:
+            if ("ST" in str(c.get("name") or "").upper()) != st:
+                continue
         sc = c.get("scores") or {}
         refs = sc.get("priceRefs") or {}
         if fraud_max is not None:
@@ -59,24 +70,37 @@ def local_flt(fraud_max=None, mgmt_min=None, buys=None, sells=None, discount=Non
     return set(out)
 
 
-def api_flt(cases):
+def _api_pages(cases):
+    """逐页拉全(全市场 5500 只下单页 200 行装不下,不能只取首页对答案)。"""
     q = {k: v for k, v in cases.items() if v is not None}
     if q.get("buys"):
         q["buys"] = ",".join(q["buys"])
     if q.get("sells"):
         q["sells"] = ",".join(q["sells"])
     q["page_size"] = 200
-    d = api("/securities?" + urllib.parse.urlencode(q))
-    codes = {i["code"] for i in d["items"]}
-    assert d["total"] == len(codes), f"total={d['total']} != items={len(codes)}"
+    page, items, total = 1, [], None
+    while True:
+        d = api("/securities?" + urllib.parse.urlencode(dict(q, page=page)))
+        items.extend(d["items"])
+        total = d["total"] if total is None else total
+        if d["total"] != total:
+            raise AssertionError(f"翻页中 total 变了: {total} -> {d['total']}")
+        if not d["items"] or len(items) >= total or page > 60:
+            break
+        page += 1
+    return items, total
+
+
+def api_flt(cases):
+    items, total = _api_pages(cases)
+    codes = {i["code"] for i in items}
+    assert total == len(codes), f"total={total} != codes={len(codes)}(代码重复?)"
     return codes
 
 
 def api_flt_items(cases):
-    q = {k: v for k, v in cases.items() if v is not None}
-    q["page_size"] = 200
-    d = api("/securities?" + urllib.parse.urlencode(q))
-    return {i["code"]: i for i in d["items"]}
+    items, _ = _api_pages(cases)
+    return {i["code"]: i for i in items}
 
 
 fails = 0
@@ -97,6 +121,10 @@ cases_list = [
     {"buys": ["schloss", "buffett"]}, {"buys": ["schloss", "buffett"], "discount": 90},
     {"sells": ["buffett"]}, {"sells": ["grahamDef", "schloss"]},
     {"fraud_max": 40, "mgmt_min": 50, "buys": ["grahamDef"], "discount": 130},
+    # 全市场规模维度：板块 / ST
+    {"board": "bj"}, {"board": "gem"}, {"board": "star"}, {"board": "shMain"},
+    {"st": True}, {"st": False}, {"board": "szMain", "st": False},
+    {"board": "bj", "fraud_max": 40, "mgmt_min": 60},
 ]
 for cs in cases_list:
     label = "&".join(f"{k}={v}" for k, v in cs.items())
@@ -132,6 +160,29 @@ for c in IDX["companies"]:
         if (a is None) != (b is None) or (a is not None and b is not None and abs(a - b) > 1e-6):
             ref_bad.append((c["code"], a, b))
 check(f"价格参考字段一致({ref_n}项)", set(), set(f"{x}" for x in ref_bad) if ref_bad else set())
+
+# 表头排序：前端可发的每个 sort 键都要 200 + 单调有序 + NULL 不占首页。
+# 曾经的 bug：列表 COLS 拿流派驼峰键（grahamAgg）当排序键，而后端白名单只有列名，
+# 点四派参考价列头直接 400、整表变“加载失败”；前后端键名漂移无人拦截。
+sort_keys = (["code", "price", "pe_ttm", "pb", "market_cap", "fair_liq", "net_cash_ratio",
+              "fraud", "mgmt", "cycle"]
+             + [f"score_{c}" for c in SCHOOL_COLS.values()]
+             + [f"{p}_{c}" for c in SCHOOL_COLS.values()
+                for p in ("buy", "sell_cons", "sell_fair")])
+sort_bad = []
+for k in sort_keys:
+    for od in ("asc", "desc"):
+        url = "/securities?" + urllib.parse.urlencode(
+            {"sort": k, "order": od, "page_size": 50})
+        vals = [it.get(k) for it in api(url)["items"]]
+        nums = [v for v in vals if v is not None]
+        if nums != sorted(nums, reverse=(od == "desc")):
+            sort_bad.append(f"{k}/{od} 乱序:{nums[:4]}")
+        # NULL 必须整体沉底：首个 None 之后不得再出现有值
+        first_none = next((i for i, v in enumerate(vals) if v is None), None)
+        if first_none is not None and any(v is not None for v in vals[first_none + 1:]):
+            sort_bad.append(f"{k}/{od} NULL 排在有值之前")
+check(f"表头排序键可用({len(sort_keys)}键×升降)", set(), set(sort_bad) if sort_bad else set())
 
 # 详情透传
 d = api("/securities/601899")

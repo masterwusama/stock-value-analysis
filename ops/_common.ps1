@@ -30,10 +30,12 @@ function Find-SvcProc([string]$Name) {
         Where-Object { $_.CommandLine -and $_.CommandLine -match $match }
 }
 
-# 采集 job 子进程(stock/agro/events/import):调度器被杀后可能残留
+# 采集 job 子进程(stock/agro/deep/events/import):调度器被杀后可能残留
+# 含 multiprocessing spawn 工人（--workers>1 的子进程）：只杀父进程会留一堆
+# 孤儿 worker 继续打数据源（上一轮全量抓取就是这么断的）
 function Find-JobProc {
     Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match 'collector\.run\s|collector\\scripts|agro-price\\scripts' }
+        Where-Object { $_.CommandLine -and $_.CommandLine -match 'collector\.run\s|collector\\scripts|agro-price\\scripts|multiprocessing\.spawn|fetch_data\.py|portfolio_engine\.py' }
 }
 
 function Start-Svc([string]$Name, [string[]]$ArgList) {
