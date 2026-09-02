@@ -64,6 +64,12 @@ python -m collector.scheduler   # stock 周一~六 16:05/22:05 · agro 每天 09
 
 进程按命令行特征识别（不依赖 pid 文件），日志落在 `run/*.log`（已 gitignore）。环境变量 `VA_PORT` / `VA_PYTHON` 可覆盖端口与 python 解释器。
 
+若本机访问 GitHub 需走代理（直连 443 超时），推送时临时指定即可，不必改动全局配置：
+
+```powershell
+git -c http.proxy=http://127.0.0.1:1080 push origin main
+```
+
 ## 采集任务
 
 | job | 内容 | 用法 |
