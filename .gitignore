@@ -1,0 +1,25 @@
+# 环境与密钥(含数据库口令,绝不入库)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 前端
+node_modules/
+frontend/dist/
+
+# 运行期产物(启停脚本的日志/临时状态)
+/run/
+*.log
+
+# 临时文件
+_tmp/
+
+# 采集工作目录中可再生的大数据(fetch_data 全量重抓即可恢复,单只约 370KB)
+backend/collector/data/companies/
+# 全市场扫描缓存(screen_stocks/auto_screen 副产物)
+_screen_cache.json

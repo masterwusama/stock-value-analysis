@@ -1,0 +1,20 @@
+{
+ "generated_at": "2026-08-29T19:50:22+08:00",
+ "args": {
+  "school": [
+   "schloss"
+  ],
+  "mgmt_min": 55.0,
+  "fraud_max": 30.0,
+  "top": 30,
+  "pb_min": 0.01,
+  "pb_max": 1.4,
+  "mcap_min": 3000000000.0,
+  "max_attempts": 60,
+  "cache": "<项目目录>\\scripts\\_screen_cache.json",
+  "out": "<项目目录>\\scripts\\_screen_result.json",
+  "no_spot": false,
+  "ingest": null
+ },
+ "matches": []
+}

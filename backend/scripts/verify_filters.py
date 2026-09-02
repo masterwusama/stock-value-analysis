@@ -1,0 +1,151 @@
+# -*- coding: utf-8 -*-
+"""P4.5 回归:列表筛选参数 vs 原 index.json 本地语义对答案 + 详情透传字段。
+
+用法(需 API 服务在 :8000 运行): python -X utf8 scripts/verify_filters.py
+"""
+import io
+import json
+import sys
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.config import LEGACY_DATA_DIR  # 对答案基线 = JSON 工作目录(采集后为 collector/)
+
+BASE = "http://127.0.0.1:8000/api"
+IDX = json.load(io.open(LEGACY_DATA_DIR / "data" / "index.json", encoding="utf-8"))
+COLS = {"grahamAgg": "grahamAgg", "grahamDef": "grahamDef", "schloss": "schloss", "buffett": "buffett"}
+
+
+def api(path):
+    with urllib.request.urlopen(BASE + path, timeout=30) as r:
+        return json.load(r)
+
+
+def local_flt(fraud_max=None, mgmt_min=None, buys=None, sells=None, discount=None, market=None):
+    """复刻原 stock.js passFlt(base 分口径,windMode 关)。"""
+    out = []
+    for c in IDX["companies"]:
+        if market and c.get("market", "A") != market:
+            continue
+        sc = c.get("scores") or {}
+        refs = sc.get("priceRefs") or {}
+        if fraud_max is not None:
+            f = sc.get("fraud")
+            if f is None or f > fraud_max:
+                continue
+        if mgmt_min is not None:
+            m = sc.get("mgmt")
+            if m is None or m < mgmt_min:
+                continue
+        cur = c.get("price")
+        disc = (discount / 100) if (discount is not None and buys) else 1
+        ok = True
+        for k in buys or []:
+            r = refs.get(k) or {}
+            if r.get("buy") is None or cur is None or cur > r["buy"] * disc:
+                ok = False
+                break
+        if ok:
+            for k in sells or []:
+                r = refs.get(k) or {}
+                if (r.get("sellCons") is None or r.get("sellFair") is None
+                        or cur is None or cur < r["sellCons"] or cur < r["sellFair"]):
+                    ok = False
+                    break
+        if ok:
+            out.append(c["code"])
+    return set(out)
+
+
+def api_flt(cases):
+    q = {k: v for k, v in cases.items() if v is not None}
+    if q.get("buys"):
+        q["buys"] = ",".join(q["buys"])
+    if q.get("sells"):
+        q["sells"] = ",".join(q["sells"])
+    q["page_size"] = 200
+    d = api("/securities?" + urllib.parse.urlencode(q))
+    codes = {i["code"] for i in d["items"]}
+    assert d["total"] == len(codes), f"total={d['total']} != items={len(codes)}"
+    return codes
+
+
+def api_flt_items(cases):
+    q = {k: v for k, v in cases.items() if v is not None}
+    q["page_size"] = 200
+    d = api("/securities?" + urllib.parse.urlencode(q))
+    return {i["code"]: i for i in d["items"]}
+
+
+fails = 0
+
+
+def check(label, want, got):
+    global fails
+    ok = want == got
+    if not ok:
+        fails += 1
+    print(("OK  " if ok else "FAIL") + f" {label}: local={len(want)} api={len(got)}"
+          + ("" if ok else f" diff={sorted(want ^ got)}"))
+
+
+cases_list = [
+    {"fraud_max": 20}, {"fraud_max": 50}, {"mgmt_min": 70}, {"mgmt_min": 60, "market": "A"},
+    {"buys": ["grahamAgg"]}, {"buys": ["grahamAgg"], "discount": 120},
+    {"buys": ["schloss", "buffett"]}, {"buys": ["schloss", "buffett"], "discount": 90},
+    {"sells": ["buffett"]}, {"sells": ["grahamDef", "schloss"]},
+    {"fraud_max": 40, "mgmt_min": 50, "buys": ["grahamDef"], "discount": 130},
+]
+for cs in cases_list:
+    label = "&".join(f"{k}={v}" for k, v in cs.items())
+    check(label, local_flt(**cs), api_flt(cs))
+
+# 非法键 400
+try:
+    api_flt({"buys": ["badKey"]})
+    print("FAIL badkey no 400"); fails += 1
+except urllib.error.HTTPError as e:
+    print(("OK  " if e.code == 400 else "FAIL") + f" bad buys key -> {e.code}")
+    if e.code != 400:
+        fails += 1
+
+# 列表价格参考字段 vs index.json priceRefs(买/保/公 ×4流派 + 清算/净现金)
+SCHOOL_COLS = {"grahamAgg": "graham_agg", "grahamDef": "graham_def",
+               "schloss": "schloss", "buffett": "buffett"}
+ref_bad, ref_n = [], 0
+all_items = api_flt_items({})
+for c in IDX["companies"]:
+    it = all_items.get(c["code"])
+    if not it:
+        continue
+    refs = (c.get("scores") or {}).get("priceRefs") or {}
+    pairs = [(refs.get("fairLiq"), it.get("fair_liq")),
+             (refs.get("netCashRatio"), it.get("net_cash_ratio"))]
+    for k, col in SCHOOL_COLS.items():
+        r = refs.get(k) or {}
+        for skey, dk in (("buy", "buy_%s"), ("sellCons", "sell_cons_%s"), ("sellFair", "sell_fair_%s")):
+            pairs.append((r.get(skey), it.get(dk % col)))
+    for a, b in pairs:
+        ref_n += 1
+        if (a is None) != (b is None) or (a is not None and b is not None and abs(a - b) > 1e-6):
+            ref_bad.append((c["code"], a, b))
+check(f"价格参考字段一致({ref_n}项)", set(), set(f"{x}" for x in ref_bad) if ref_bad else set())
+
+# 详情透传
+d = api("/securities/601899")
+ev = d.get("events") or {}
+w = (d.get("scores") or {}).get("wind") or {}
+print("-- 601899 透传 --")
+print("events.name:", ev.get("name"), "| fetched_at:", ev.get("fetched_at"))
+print("holders groups:", sorted((ev.get("holders") or {}).keys()))
+print("wind keys:", sorted(w.keys()))
+src = json.load(io.open(LEGACY_DATA_DIR / "data" / "events" / "index.json", encoding="utf-8"))
+orig = src["byCode"]["601899"]
+missing = set(orig) - set(w)
+print(("OK  " if not missing else "FAIL") + f" wind overlay 字段完整: missing={sorted(missing)}")
+if missing:
+    fails += 1
+
+print("\nRESULT:", "ALL PASSED" if fails == 0 else f"{fails} FAILED")

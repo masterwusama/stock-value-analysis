@@ -1,0 +1,484 @@
+[
+ {
+  "code": "600861",
+  "name": "北京人力",
+  "price": 13.19,
+  "pe": 6.383,
+  "pb": 0.986,
+  "mcap": 0,
+  "mgmt": 96.1,
+  "fraud": 14.1,
+  "buffett": 40.26068965841003,
+  "schloss": 80.46376107744729,
+  "grahamDef": 66.75807699647285,
+  "marks": [
+   "BUF buy=22.57 disc=71%",
+   "GDEF buy=19.60 disc=49%"
+  ]
+ },
+ {
+  "code": "600873",
+  "name": "梅花生物",
+  "price": 7.89,
+  "pe": 6.744,
+  "pb": 1.412,
+  "mcap": 0,
+  "mgmt": 93.5,
+  "fraud": 2.4,
+  "buffett": 93.81633478810394,
+  "schloss": 47.909555335599556,
+  "grahamDef": 85.0,
+  "marks": [
+   "BUF buy=9.73 disc=23%",
+   "GDEF buy=9.97 disc=26%"
+  ]
+ },
+ {
+  "code": "600968",
+  "name": "海油发展",
+  "price": 3.94,
+  "pe": 10.311,
+  "pb": 1.343,
+  "mcap": 0,
+  "mgmt": 92.1,
+  "fraud": 2.6,
+  "buffett": 68.48931009978494,
+  "schloss": 62.59000026432152,
+  "grahamDef": 80.7937755523295,
+  "marks": [
+   "BUF buy=5.22 disc=32%",
+   "GDEF buy=5.04 disc=28%"
+  ]
+ },
+ {
+  "code": "002588",
+  "name": "史丹利",
+  "price": 8.16,
+  "pe": 9.067,
+  "pb": 1.205,
+  "mcap": 0,
+  "mgmt": 91.0,
+  "fraud": 0.0,
+  "buffett": 69.40069995709855,
+  "schloss": 61.1847621195814,
+  "grahamDef": 85.0,
+  "marks": [
+   "BUF buy=14.00 disc=72%",
+   "GDEF buy=11.31 disc=39%"
+  ]
+ },
+ {
+  "code": "002758",
+  "name": "浙农股份",
+  "price": 9.11,
+  "pe": 8.435,
+  "pb": 0.94,
+  "mcap": 0,
+  "mgmt": 90.9,
+  "fraud": 0.1,
+  "buffett": 58.02048138683915,
+  "schloss": 76.06940381164279,
+  "grahamDef": 70.0,
+  "marks": [
+   "BUF buy=19.50 disc=114%",
+   "GDEF buy=15.98 disc=75%"
+  ]
+ },
+ {
+  "code": "600690",
+  "name": "海尔智家",
+  "price": 21.12,
+  "pe": 9.962,
+  "pb": 1.655,
+  "mcap": 0,
+  "mgmt": 88.4,
+  "fraud": 1.0,
+  "buffett": 82.22899999999998,
+  "schloss": 47.84106017485931,
+  "grahamDef": 65.0,
+  "marks": [
+   "GDEF buy=23.60 disc=12%"
+  ]
+ },
+ {
+  "code": "000899",
+  "name": "赣能股份",
+  "price": 9.65,
+  "pe": 9.369,
+  "pb": 1.549,
+  "mcap": 0,
+  "mgmt": 88.3,
+  "fraud": 17.1,
+  "buffett": 51.415935176805135,
+  "schloss": 39.36,
+  "grahamDef": 11.0,
+  "marks": [
+   "BUF buy=14.17 disc=47%",
+   "GDEF buy=10.92 disc=13%"
+  ]
+ },
+ {
+  "code": "600710",
+  "name": "苏美达",
+  "price": 10.72,
+  "pe": 10.308,
+  "pb": 1.662,
+  "mcap": 0,
+  "mgmt": 87.8,
+  "fraud": 18.8,
+  "buffett": 64.3883252118859,
+  "schloss": 58.2623512694937,
+  "grahamDef": 85.0,
+  "marks": [
+   "BUF buy=12.04 disc=12%",
+   "GDEF buy=12.46 disc=16%"
+  ]
+ },
+ {
+  "code": "002011",
+  "name": "盾安环境",
+  "price": 10.15,
+  "pe": 9.951,
+  "pb": 1.557,
+  "mcap": 0,
+  "mgmt": 86.8,
+  "fraud": 5.3,
+  "buffett": 69.75245253571958,
+  "schloss": 56.977625203993725,
+  "grahamDef": 83.09575588006851,
+  "marks": [
+   "GDEF buy=11.81 disc=16%"
+  ]
+ },
+ {
+  "code": "600780",
+  "name": "通宝能源",
+  "price": 5.95,
+  "pe": 10.525,
+  "pb": 0.796,
+  "mcap": 0,
+  "mgmt": 86.2,
+  "fraud": 1.5,
+  "buffett": 47.77393267749223,
+  "schloss": 74.62937337805118,
+  "grahamDef": 68.06408383042852,
+  "marks": [
+   "BUF buy=6.91 disc=16%",
+   "GDEF buy=9.49 disc=60%"
+  ]
+ },
+ {
+  "code": "002116",
+  "name": "中国海诚",
+  "price": 7.27,
+  "pe": 9.824,
+  "pb": 1.454,
+  "mcap": 0,
+  "mgmt": 85.9,
+  "fraud": 25.1,
+  "buffett": 59.21546671620372,
+  "schloss": 59.02469459018951,
+  "grahamDef": 81.73129502829887,
+  "marks": [
+   "GDEF buy=8.68 disc=19%"
+  ]
+ },
+ {
+  "code": "600612",
+  "name": "老凤祥",
+  "price": 33.85,
+  "pe": 10.09,
+  "pb": 1.337,
+  "mcap": 0,
+  "mgmt": 85.9,
+  "fraud": 0.2,
+  "buffett": 70.40168631127081,
+  "schloss": 71.01333333333334,
+  "grahamDef": 85.0,
+  "marks": [
+   "GDEF buy=35.86 disc=6%"
+  ]
+ },
+ {
+  "code": "000786",
+  "name": "北新建材",
+  "price": 17.7,
+  "pe": 10.309,
+  "pb": 1.102,
+  "mcap": 0,
+  "mgmt": 85.2,
+  "fraud": 1.9,
+  "buffett": 85.76222859723298,
+  "schloss": 64.52384977634023,
+  "grahamDef": 77.33573892007836,
+  "marks": [
+   "GDEF buy=20.75 disc=17%"
+  ]
+ },
+ {
+  "code": "603611",
+  "name": "诺力股份",
+  "price": 16.45,
+  "pe": 9.85,
+  "pb": 1.369,
+  "mcap": 0,
+  "mgmt": 84.9,
+  "fraud": 1.9,
+  "buffett": 75.11949999999999,
+  "schloss": 49.67300243931399,
+  "grahamDef": 71.0,
+  "marks": [
+   "GDEF buy=18.53 disc=13%"
+  ]
+ },
+ {
+  "code": "601311",
+  "name": "骆驼股份",
+  "price": 7.47,
+  "pe": 10.521,
+  "pb": 0.883,
+  "mcap": 0,
+  "mgmt": 84.9,
+  "fraud": 1.3,
+  "buffett": 42.92255077980256,
+  "schloss": 77.78433090534779,
+  "grahamDef": 90.21853146853147,
+  "marks": [
+   "GDEF buy=7.50 disc=0%"
+  ]
+ },
+ {
+  "code": "600011",
+  "name": "华能国际",
+  "price": 6.78,
+  "pe": 9.162,
+  "pb": 1.65,
+  "mcap": 0,
+  "mgmt": 84.8,
+  "fraud": 3.3,
+  "buffett": 47.94427129582856,
+  "schloss": 50.36408135494597,
+  "grahamDef": 6.0,
+  "marks": [
+   "BUF buy=9.83 disc=45%",
+   "GDEF buy=7.39 disc=9%"
+  ]
+ },
+ {
+  "code": "000600",
+  "name": "建投能源",
+  "price": 8.0,
+  "pe": 7.7,
+  "pb": 1.156,
+  "mcap": 0,
+  "mgmt": 84.4,
+  "fraud": 10.0,
+  "buffett": 57.43951133216363,
+  "schloss": 54.64603548113742,
+  "grahamDef": 11.0,
+  "marks": [
+   "BUF buy=17.50 disc=119%",
+   "GDEF buy=13.22 disc=65%"
+  ]
+ },
+ {
+  "code": "600098",
+  "name": "广州发展",
+  "price": 6.25,
+  "pe": 9.433,
+  "pb": 0.789,
+  "mcap": 0,
+  "mgmt": 84.0,
+  "fraud": 1.3,
+  "buffett": 41.27846251746745,
+  "schloss": 71.61857130918338,
+  "grahamDef": 40.0,
+  "marks": [
+   "BUF buy=8.52 disc=36%",
+   "GDEF buy=10.29 disc=65%"
+  ]
+ },
+ {
+  "code": "000543",
+  "name": "皖能电力",
+  "price": 7.43,
+  "pe": 7.821,
+  "pb": 0.959,
+  "mcap": 0,
+  "mgmt": 83.9,
+  "fraud": 11.9,
+  "buffett": 53.80370772898772,
+  "schloss": 68.35275383564597,
+  "grahamDef": 11.0,
+  "marks": [
+   "BUF buy=13.50 disc=82%",
+   "GDEF buy=12.87 disc=73%"
+  ]
+ },
+ {
+  "code": "600023",
+  "name": "浙能电力",
+  "price": 4.94,
+  "pe": 8.821,
+  "pb": 0.858,
+  "mcap": 0,
+  "mgmt": 83.9,
+  "fraud": 3.9,
+  "buffett": 58.44669247626648,
+  "schloss": 57.23435496771813,
+  "grahamDef": 31.0,
+  "marks": [
+   "GDEF buy=6.15 disc=24%"
+  ]
+ },
+ {
+  "code": "301283",
+  "name": "聚胶股份",
+  "price": 25.4,
+  "pe": 10.539,
+  "pb": 1.827,
+  "mcap": 0,
+  "mgmt": 83.9,
+  "fraud": 8.1,
+  "buffett": 60.975386631433224,
+  "schloss": 55.329862822661696,
+  "grahamDef": 74.74853333333333,
+  "marks": [
+   "GDEF buy=26.95 disc=6%"
+  ]
+ },
+ {
+  "code": "600210",
+  "name": "紫江企业",
+  "price": 6.21,
+  "pe": 9.079,
+  "pb": 1.405,
+  "mcap": 0,
+  "mgmt": 83.6,
+  "fraud": 0.0,
+  "buffett": 77.75815398994563,
+  "schloss": 52.2925363703166,
+  "grahamDef": 78.35571636128472,
+  "marks": [
+   "BUF buy=6.48 disc=4%",
+   "GDEF buy=8.53 disc=37%"
+  ]
+ },
+ {
+  "code": "600273",
+  "name": "嘉化能源",
+  "price": 6.85,
+  "pe": 9.257,
+  "pb": 0.901,
+  "mcap": 0,
+  "mgmt": 83.4,
+  "fraud": 6.4,
+  "buffett": 67.41290232552097,
+  "schloss": 55.53807620254663,
+  "grahamDef": 76.66092606752593,
+  "marks": [
+   "GDEF buy=7.17 disc=5%"
+  ]
+ },
+ {
+  "code": "600507",
+  "name": "方大特钢",
+  "price": 4.29,
+  "pe": 10.541,
+  "pb": 1.002,
+  "mcap": 0,
+  "mgmt": 82.7,
+  "fraud": 11.8,
+  "buffett": 44.91260102544004,
+  "schloss": 61.073630793968135,
+  "grahamDef": 57.0,
+  "marks": [
+   "GDEF buy=4.83 disc=13%"
+  ]
+ },
+ {
+  "code": "301061",
+  "name": "匠心家居",
+  "price": 33.54,
+  "pe": 8.513,
+  "pb": 2.187,
+  "mcap": 0,
+  "mgmt": 81.9,
+  "fraud": 4.8,
+  "buffett": 94.06564659406342,
+  "schloss": 62.82835209117497,
+  "grahamDef": 85.27555555555556,
+  "marks": [
+   "BUF buy=59.00 disc=76%",
+   "GDEF buy=39.84 disc=19%"
+  ]
+ },
+ {
+  "code": "603889",
+  "name": "新澳股份",
+  "price": 6.08,
+  "pe": 9.212,
+  "pb": 1.536,
+  "mcap": 0,
+  "mgmt": 81.7,
+  "fraud": 8.2,
+  "buffett": 75.8414804164466,
+  "schloss": 57.31832989069513,
+  "grahamDef": 96.0,
+  "marks": [
+   "BUF buy=6.34 disc=4%",
+   "GDEF buy=10.65 disc=75%"
+  ]
+ },
+ {
+  "code": "600027",
+  "name": "华电国际",
+  "price": 4.7,
+  "pe": 9.592,
+  "pb": 1.097,
+  "mcap": 0,
+  "mgmt": 80.9,
+  "fraud": 2.7,
+  "buffett": 46.76439872964377,
+  "schloss": 57.94978084297953,
+  "grahamDef": 24.0,
+  "marks": [
+   "BUF buy=5.38 disc=14%",
+   "GDEF buy=6.15 disc=31%"
+  ]
+ },
+ {
+  "code": "000411",
+  "name": "英特集团",
+  "price": 9.89,
+  "pe": 10.302,
+  "pb": 1.012,
+  "mcap": 0,
+  "mgmt": 80.5,
+  "fraud": 5.1,
+  "buffett": 47.98273915692539,
+  "schloss": 71.13679856487848,
+  "grahamDef": 80.0,
+  "marks": [
+   "BUF buy=13.83 disc=40%",
+   "GDEF buy=12.45 disc=26%"
+  ]
+ },
+ {
+  "code": "601919",
+  "name": "中远海控",
+  "price": 16.88,
+  "pe": 8.482,
+  "pb": 1.093,
+  "mcap": 0,
+  "mgmt": 80.2,
+  "fraud": 0.2,
+  "buffett": 92.87919670253206,
+  "schloss": 62.129669124750926,
+  "grahamDef": 47.11747719139524,
+  "marks": [
+   "BUF buy=29.17 disc=73%",
+   "GDEF buy=24.55 disc=45%"
+  ]
+ }
+]

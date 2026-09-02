@@ -1,0 +1,408 @@
+# -*- coding: utf-8 -*-
+"""证券接口:分页列表 + 详情(响应结构与原 companies/*.json 对齐,降低前端移植成本)。"""
+from datetime import date, datetime
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import Session
+
+from app.db import get_session
+from app.fin_columns import restore_row
+from app.models import (
+    Dividend,
+    FinBalance,
+    FinCashflow,
+    FinIncome,
+    FinIndicator,
+    PeriodicReport,
+    QuoteDaily,
+    ScoreDaily,
+    Security,
+    WindEvent,
+    WindHolder,
+)
+
+router = APIRouter(prefix="/api/securities", tags=["securities"])
+
+# wind_event.etype(中文) → 原 events JSON 分组键
+EVENT_GROUPS = {
+    "增减持": "increase_hold", "并购": "ma", "违规": "penalty",
+    "诉讼": "lawsuit", "ST": "st_change",
+}
+# wind_holder.holder_type → 原 holders JSON 分组键
+HOLDER_GROUPS = {"top10": "top10", "top10_float": "top10_float",
+                 "institution": "institutions", "controller": "actual_controller",
+                 "unlock": "unlock"}
+# score_daily 列前缀 → 原 index.json scores 流派键
+SCHOOL_KEYS = {"graham_agg": "grahamAgg", "graham_def": "grahamDef", "schloss": "schloss", "buffett": "buffett"}
+
+
+def _f(v):
+    return float(v) if v is not None else None
+
+
+def _d(v):
+    return v.isoformat() if v is not None else None
+
+
+def _dt(v):
+    return v.isoformat(timespec="seconds") if v is not None else None
+
+
+# ---------- 列表 ----------
+
+class SecurityItem(BaseModel):
+    """列表行:主数据 + 最新快照日行情/评分(与原 index.json 字段对齐)。"""
+
+    sid: int
+    code: str
+    market: str
+    name: str
+    industry: str | None = None
+    currency: str
+    price: float | None = None
+    change_pct: float | None = None
+    pe_ttm: float | None = None
+    pb: float | None = None
+    market_cap: float | None = None
+    score_graham_agg: float | None = None
+    score_graham_def: float | None = None
+    score_schloss: float | None = None
+    score_buffett: float | None = None
+    fraud: float | None = None
+    mgmt: float | None = None
+    cycle: float | None = None
+    # 价格参考(原列表"买/保/公"四流派合并列 + 清算/净现金)
+    fair_liq: float | None = None
+    net_cash_ratio: float | None = None
+    buy_graham_agg: float | None = None
+    sell_cons_graham_agg: float | None = None
+    sell_fair_graham_agg: float | None = None
+    buy_graham_def: float | None = None
+    sell_cons_graham_def: float | None = None
+    sell_fair_graham_def: float | None = None
+    buy_schloss: float | None = None
+    sell_cons_schloss: float | None = None
+    sell_fair_schloss: float | None = None
+    buy_buffett: float | None = None
+    sell_cons_buffett: float | None = None
+    sell_fair_buffett: float | None = None
+
+
+class SecurityListOut(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    trade_date: date | None = None
+    items: list[SecurityItem]
+
+
+# 列表排序白名单(防注入)
+SORT_COLS = {
+    "code": Security.code,
+    "market_cap": QuoteDaily.market_cap,
+    "pe_ttm": QuoteDaily.pe_ttm,
+    "pb": QuoteDaily.pb,
+    "score_graham_agg": ScoreDaily.score_graham_agg,
+    "score_graham_def": ScoreDaily.score_graham_def,
+    "score_schloss": ScoreDaily.score_schloss,
+    "score_buffett": ScoreDaily.score_buffett,
+    "fraud": ScoreDaily.fraud,
+    "mgmt": ScoreDaily.mgmt,
+    "cycle": ScoreDaily.cycle,
+    # 价格参考列(原表头可排序)
+    "price": QuoteDaily.price,
+    "fair_liq": ScoreDaily.fair_liq,
+    "net_cash_ratio": ScoreDaily.net_cash_ratio,
+}
+
+
+# 列表筛选:买点/卖点复选键(与原页 data-flt-buy 一致) → score_daily 价格参考列
+FLT_BUY_COLS = {
+    "grahamAgg": ScoreDaily.buy_graham_agg,
+    "grahamDef": ScoreDaily.buy_graham_def,
+    "schloss": ScoreDaily.buy_schloss,
+    "buffett": ScoreDaily.buy_buffett,
+}
+FLT_SELL_COLS = {
+    "grahamAgg": (ScoreDaily.sell_cons_graham_agg, ScoreDaily.sell_fair_graham_agg),
+    "grahamDef": (ScoreDaily.sell_cons_graham_def, ScoreDaily.sell_fair_graham_def),
+    "schloss": (ScoreDaily.sell_cons_schloss, ScoreDaily.sell_fair_schloss),
+    "buffett": (ScoreDaily.sell_cons_buffett, ScoreDaily.sell_fair_buffett),
+}
+
+
+def _flt_keys(raw: str | None, valid: dict, name: str) -> list[str]:
+    """逗号分隔复选键解析 + 白名单校验(非法直接 400,不做静默丢弃)。"""
+    if not raw:
+        return []
+    keys = [k.strip() for k in raw.split(",") if k.strip()]
+    bad = [k for k in keys if k not in valid]
+    if bad:
+        raise HTTPException(status_code=400, detail=f"invalid {name}: {','.join(bad)}")
+    return keys
+
+
+@router.get("", response_model=SecurityListOut)
+def list_securities(
+    market: Literal["A", "HK", "US"] | None = Query(None),
+    keyword: str | None = Query(None, max_length=32, description="代码/名称模糊匹配"),
+    industry: str | None = Query(None, max_length=64),
+    fraud_max: float | None = Query(None, ge=0, le=100, description="造假风险≤(不含 Wind 增量)"),
+    mgmt_min: float | None = Query(None, ge=0, le=100, description="管理能力≥"),
+    buys: str | None = Query(None, max_length=64, description="买点复选(逗号分隔,同时满足)"),
+    sells: str | None = Query(None, max_length=64, description="卖点复选(须同时达保守与公允)"),
+    discount: float | None = Query(None, gt=0, le=500, description="买点折扣%,仅与 buys 配合"),
+    sort: str = Query("code", description=f"排序字段: {'/'.join(SORT_COLS)}"),
+    order: Literal["asc", "desc"] = Query("asc"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_session),
+):
+    """证券分页列表:join 各自最新一行行情与评分。
+
+    逐证券 max(trade_date)(对齐原 index.json"各市场各取最近收盘"语义:
+    美股在北京时间白天落后一天时仍显示昨收,不被全局快照日剔除);
+    筛选语义对齐原前端 passFlt:依赖的价格/参考价缺失(SQL NULL)自动排除。
+    """
+    latest_quote = (
+        select(QuoteDaily.sid, func.max(QuoteDaily.trade_date).label("qdate"))
+        .group_by(QuoteDaily.sid).subquery()
+    )
+    latest_score = (
+        select(ScoreDaily.sid, func.max(ScoreDaily.trade_date).label("sdate"))
+        .group_by(ScoreDaily.sid).subquery()
+    )
+
+    q = (
+        select(Security, QuoteDaily, ScoreDaily)
+        .join(
+            latest_quote, latest_quote.c.sid == Security.sid, isouter=True,
+        )
+        .join(
+            QuoteDaily,
+            and_(QuoteDaily.sid == Security.sid, QuoteDaily.trade_date == latest_quote.c.qdate),
+            isouter=True,
+        )
+        .join(
+            latest_score, latest_score.c.sid == Security.sid, isouter=True,
+        )
+        .join(
+            ScoreDaily,
+            and_(ScoreDaily.sid == Security.sid, ScoreDaily.trade_date == latest_score.c.sdate),
+            isouter=True,
+        )
+    )
+
+    conds = []
+    if market:
+        conds.append(Security.market == market)
+    if industry:
+        conds.append(Security.industry == industry)
+    if keyword:
+        kw = f"%{keyword}%"
+        conds.append(or_(Security.code.like(kw), Security.name.like(kw)))
+    if fraud_max is not None:
+        conds.append(ScoreDaily.fraud <= fraud_max)
+    if mgmt_min is not None:
+        conds.append(ScoreDaily.mgmt >= mgmt_min)
+    factor = (discount if discount is not None else 100.0) / 100.0
+    for k in _flt_keys(buys, FLT_BUY_COLS, "buys"):
+        conds.append(QuoteDaily.price <= FLT_BUY_COLS[k] * factor)
+    for k in _flt_keys(sells, FLT_SELL_COLS, "sells"):
+        cons, fair = FLT_SELL_COLS[k]
+        conds.append(QuoteDaily.price >= cons)
+        conds.append(QuoteDaily.price >= fair)
+    if conds:
+        q = q.where(*conds)
+
+    total = db.execute(select(func.count()).select_from(q.subquery())).scalar_one()
+
+    col = SORT_COLS.get(sort)
+    if col is None:
+        raise HTTPException(status_code=400, detail=f"invalid sort: {sort}")
+    prim = col.desc() if order == "desc" else col.asc()
+    q = q.order_by(prim, Security.code.asc())
+
+    rows = db.execute(q.limit(page_size).offset((page - 1) * page_size)).all()
+
+    items = [
+        SecurityItem(
+            sid=sec.sid, code=sec.code, market=sec.market, name=sec.name,
+            industry=sec.industry, currency=sec.currency,
+            # 行情/评分均 left join:当日抓取缺失的证券返回 NULL 字段而非 500
+            price=_f(quote.price) if quote else None,
+            change_pct=_f(quote.change_pct) if quote else None,
+            pe_ttm=_f(quote.pe_ttm) if quote else None,
+            pb=_f(quote.pb) if quote else None,
+            market_cap=_f(quote.market_cap) if quote else None,
+            score_graham_agg=score.score_graham_agg if score else None,
+            score_graham_def=score.score_graham_def if score else None,
+            score_schloss=score.score_schloss if score else None,
+            score_buffett=score.score_buffett if score else None,
+            fraud=score.fraud if score else None,
+            mgmt=score.mgmt if score else None,
+            cycle=score.cycle if score else None,
+            fair_liq=_f(score.fair_liq) if score else None,
+            net_cash_ratio=_f(score.net_cash_ratio) if score else None,
+            buy_graham_agg=_f(score.buy_graham_agg) if score else None,
+            sell_cons_graham_agg=_f(score.sell_cons_graham_agg) if score else None,
+            sell_fair_graham_agg=_f(score.sell_fair_graham_agg) if score else None,
+            buy_graham_def=_f(score.buy_graham_def) if score else None,
+            sell_cons_graham_def=_f(score.sell_cons_graham_def) if score else None,
+            sell_fair_graham_def=_f(score.sell_fair_graham_def) if score else None,
+            buy_schloss=_f(score.buy_schloss) if score else None,
+            sell_cons_schloss=_f(score.sell_cons_schloss) if score else None,
+            sell_fair_schloss=_f(score.sell_fair_schloss) if score else None,
+            buy_buffett=_f(score.buy_buffett) if score else None,
+            sell_cons_buffett=_f(score.sell_cons_buffett) if score else None,
+            sell_fair_buffett=_f(score.sell_fair_buffett) if score else None,
+        )
+        for sec, quote, score in rows
+    ]
+    return SecurityListOut(total=total, page=page, page_size=page_size,
+                           # 展示用全局最新评分日(行内数据已逐证券取各自最新)
+                           trade_date=db.execute(
+                               select(func.max(ScoreDaily.trade_date))).scalar_one(),
+                           items=items)
+
+
+# ---------- 详情 ----------
+
+def _load_scores(db: Session, sid: int) -> dict | None:
+    """score_daily 最新快照 → 原 index.json scores 结构(含价格参考/Wind 覆盖)。"""
+    s = db.execute(
+        select(ScoreDaily).where(ScoreDaily.sid == sid).order_by(ScoreDaily.trade_date.desc()).limit(1)
+    ).scalars().first()
+    if not s:
+        return None
+    refs = {"fairLiq": s.fair_liq, "netCashRatio": s.net_cash_ratio}
+    if s.net_cash_calc:
+        refs["netCashCalc"] = s.net_cash_calc
+    for col_prefix, json_key in SCHOOL_KEYS.items():
+        refs[json_key] = {
+            "buy": getattr(s, f"buy_{col_prefix}"),
+            "sellCons": getattr(s, f"sell_cons_{col_prefix}"),
+            "sellFair": getattr(s, f"sell_fair_{col_prefix}"),
+        }
+    out = {
+        "tradeDate": s.trade_date.isoformat(),
+        "reportDate": s.report_date.isoformat(),
+        "grahamAgg": s.score_graham_agg,
+        "grahamDef": s.score_graham_def,
+        "schloss": s.score_schloss,
+        "buffett": s.score_buffett,
+        "fraud": s.fraud,
+        "mgmt": s.mgmt,
+        "cycle": s.cycle,
+        "cyclical": s.cyclical,
+        "cycleTrend": s.cycle_trend,
+        "priceRefs": refs,
+    }
+    if s.wind_fraud_delta is not None or s.wind_mgmt_delta is not None or s.wind_flags:
+        # 优先透传原始覆盖层条目(含 st/penaltyCount/defendantLawsuit/instHold 等⑨总览字段)
+        if s.wind_overlay:
+            out["wind"] = s.wind_overlay
+        else:
+            out["wind"] = {
+                "fraudDelta": s.wind_fraud_delta,
+                "mgmtDelta": s.wind_mgmt_delta,
+                "flags": s.wind_flags,
+            }
+    return out
+
+
+def _load_events(db: Session, sid: int, sec_name: str) -> dict | None:
+    """wind_event / wind_holder → 原 events/{code}.json 分组结构(detail 列即原始行)。"""
+    events: dict[str, list] = {}
+    fetched: datetime | None = None
+    for etype, rows, fa in db.execute(
+        select(WindEvent.etype, WindEvent.detail, WindEvent.fetched_at)
+        .where(WindEvent.sid == sid).order_by(WindEvent.event_date)
+    ):
+        events.setdefault(EVENT_GROUPS.get(etype, etype), []).append(rows)
+        if fa and (fetched is None or fa > fetched):
+            fetched = fa
+    holders: dict[str, list] = {}
+    for htype, detail in db.execute(
+        select(WindHolder.holder_type, WindHolder.detail).where(WindHolder.sid == sid).order_by(WindHolder.id)
+    ):
+        holders.setdefault(HOLDER_GROUPS.get(htype, htype), []).append(detail)
+    if not events and not holders:
+        return None
+    # name 供 legacy 诉讼被告主体 substring 判断;fetched_at 供⑨"抓取于"脚注
+    return {"name": sec_name,
+            "fetched_at": fetched.isoformat(timespec="seconds") if fetched else None,
+            "events": events, "holders": holders}
+
+
+@router.get("/{code}")
+def get_security_detail(code: str, db: Session = Depends(get_session)):
+    """单证券详情:结构与原 companies/{code}.json 对齐 + scores/events 扩展。
+
+    财务行由 核心列 + extras JSON 还原为中文键原样行(见 app/fin_columns.py)。
+    """
+    sec = db.execute(
+        select(Security).where(Security.code == code).order_by(Security.sid)
+    ).scalars().first()
+    if not sec:
+        raise HTTPException(status_code=404, detail=f"security {code} not found")
+
+    quote = db.execute(
+        select(QuoteDaily).where(QuoteDaily.sid == sec.sid).order_by(QuoteDaily.trade_date.desc()).limit(1)
+    ).scalars().first()
+    snapshot = None
+    if quote:
+        snapshot = {
+            "name": sec.name,
+            "price": _f(quote.price), "change_pct": _f(quote.change_pct),
+            "pe_ttm": _f(quote.pe_ttm), "pb": _f(quote.pb),
+            "market_cap": _f(quote.market_cap), "float_market_cap": _f(quote.float_market_cap),
+            "turnover_rate": _f(quote.turnover_rate),
+            "time": _dt(quote.fetched_at),
+        }
+
+    def fin_rows(model):
+        rows = db.execute(
+            select(model).where(model.sid == sec.sid).order_by(model.report_date.desc())
+        ).scalars().all()
+        return [restore_row(r) for r in rows]
+
+    dividends = [
+        {
+            "year": r.div_year, "type": r.div_type, "description": r.description,
+            "bonus_per_10": _f(r.bonus_per_10), "transfer_per_10": _f(r.transfer_per_10),
+            "announce_date": _d(r.announce_date), "record_date": _d(r.record_date),
+            "ex_date": _d(r.ex_date), "pay_date": _d(r.pay_date),
+        }
+        for r in db.execute(
+            select(Dividend).where(Dividend.sid == sec.sid).order_by(Dividend.ex_date.desc())
+        ).scalars()
+    ]
+    reports = [
+        {
+            "title": r.title, "category": r.category, "date": _d(r.report_date),
+            "pdf_url": r.pdf_url, "detail_url": r.detail_url,
+            "audit_firm": r.audit_firm, "audit_opinion": r.audit_opinion,
+        }
+        for r in db.execute(
+            select(PeriodicReport).where(PeriodicReport.sid == sec.sid).order_by(PeriodicReport.report_date.desc())
+        ).scalars()
+    ]
+
+    return {
+        "code": sec.code, "name": sec.name, "market": sec.market, "currency": sec.currency,
+        "updated_at": _dt(sec.updated_at),
+        "info": {"行业": sec.industry, "股票简称": sec.name, "上市日期": _d(sec.list_date)},
+        "snapshot": snapshot,
+        "indicators": fin_rows(FinIndicator),
+        "income": fin_rows(FinIncome),
+        "balance": fin_rows(FinBalance),
+        "cashflow": fin_rows(FinCashflow),
+        "dividends": dividends,
+        "reports": reports,
+        "scores": _load_scores(db, sec.sid),
+        "events": _load_events(db, sec.sid, sec.name),
+    }

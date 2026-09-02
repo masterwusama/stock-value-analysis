@@ -1,0 +1,375 @@
+{
+ "generated_at": "2026-08-30T16:26:21+08:00",
+ "source": "tracked",
+ "meta": "2026-08-29T12:49:12+08:00",
+ "conditions": {
+  "fraud_max": 30,
+  "mgmt_min": 55,
+  "buy": [],
+  "discount": 100,
+  "sell": [],
+  "keyword": null,
+  "market": [
+   "A",
+   "HK",
+   "US"
+  ],
+  "cycle_max": null,
+  "sort": "mgmt"
+ },
+ "matches": 45,
+ "rows": [
+  {
+   "code": "06049",
+   "name": "保利物业",
+   "market": "HK",
+   "industry": null,
+   "price": 28.24,
+   "pb": null,
+   "mcap": null,
+   "fraud": 6.3,
+   "mgmt": 96.8,
+   "cycle": null,
+   "scores": {
+    "grahamAgg": 60.65484754962773,
+    "grahamDef": 95.0,
+    "schloss": 79.52036317670556,
+    "buffett": 89.59205048255357
+   },
+   "refs": {
+    "grahamAgg": {
+     "buy": 13.183459026180138,
+     "cons": 13.926189112162115,
+     "fair": 20.889283668243174
+    },
+    "grahamDef": {
+     "buy": 42.15,
+     "cons": 42.15,
+     "fair": 56.2
+    },
+    "schloss": {
+     "buy": 18.309504,
+     "cons": 19.0724,
+     "fair": 28.608599999999996
+    },
+    "buffett": {
+     "buy": 46.833333333333336,
+     "cons": 70.25,
+     "fair": 91.325
+    }
+   },
+   "src": "tracked",
+   "discount": null,
+   "buy_hits": [],
+   "sell_hits": []
+  },
+  {
+   "code": "000933",
+   "name": "神火股份",
+   "market": "A",
+   "industry": "有色金属冶炼和压延加工业",
+   "price": 27.59,
+   "pb": null,
+   "mcap": null,
+   "fraud": 9.6,
+   "mgmt": 95.9,
+   "cycle": 65.4,
+   "scores": {
+    "grahamAgg": 30.0,
+    "grahamDef": 37.189597551043335,
+    "schloss": 44.49800652410294,
+    "buffett": 95.84
+   },
+   "refs": {
+    "grahamAgg": {
+     "buy": null,
+     "cons": null,
+     "fair": null
+    },
+    "grahamDef": {
+     "buy": 29.349484663278172,
+     "cons": 46.650000000000006,
+     "fair": 62.2
+    },
+    "schloss": {
+     "buy": 5.23883788623039,
+     "cons": 12.31,
+     "fair": 18.465
+    },
+    "buffett": {
+     "buy": 51.83333333333334,
+     "cons": 77.75000000000001,
+     "fair": 101.07500000000002
+    }
+   },
+   "src": "tracked",
+   "discount": null,
+   "buy_hits": [],
+   "sell_hits": []
+  },
+  {
+   "code": "000807",
+   "name": "云铝股份",
+   "market": "A",
+   "industry": "有色金属冶炼和压延加工业",
+   "price": 27.23,
+   "pb": null,
+   "mcap": null,
+   "fraud": 3.6,
+   "mgmt": 94.0,
+   "cycle": null,
+   "scores": {
+    "grahamAgg": 50.0,
+    "grahamDef": 90.0,
+    "schloss": 62.83510833639369,
+    "buffett": 78.82109004667915
+   },
+   "refs": {
+    "grahamAgg": {
+     "buy": 1.8263537272966286,
+     "cons": 2.6070393865088426,
+     "fair": 3.9105590797632637
+    },
+    "grahamDef": {
+     "buy": 28.010265975174192,
+     "cons": 47.55,
+     "fair": 63.4
+    },
+    "schloss": {
+     "buy": 9.039505007604879,
+     "cons": 11.0,
+     "fair": 16.5
+    },
+    "buffett": {
+     "buy": 31.7,
+     "cons": 47.55,
+     "fair": 61.815
+    }
+   },
+   "src": "tracked",
+   "discount": null,
+   "buy_hits": [],
+   "sell_hits": []
+  },
+  {
+   "code": "01378",
+   "name": "中国宏桥",
+   "market": "HK",
+   "industry": null,
+   "price": 23.5,
+   "pb": null,
+   "mcap": null,
+   "fraud": 0.0,
+   "mgmt": 91.4,
+   "cycle": null,
+   "scores": {
+    "grahamAgg": 32.10257030378864,
+    "grahamDef": 100.0,
+    "schloss": 44.10257030378864,
+    "buffett": 93.42132321632587
+   },
+   "refs": {
+    "grahamAgg": {
+     "buy": 0.7985422164421213,
+     "cons": 1.1918540543912255,
+     "fair": 1.7877810815868382
+    },
+    "grahamDef": {
+     "buy": null,
+     "cons": 35.763,
+     "fair": 47.684
+    },
+    "schloss": {
+     "buy": 10.127400000000003,
+     "cons": 13.5032,
+     "fair": 20.2548
+    },
+    "buffett": {
+     "buy": 32.40677999979396,
+     "cons": 48.610169999690946,
+     "fair": 63.19322099959823
+    }
+   },
+   "src": "tracked",
+   "discount": null,
+   "buy_hits": [],
+   "sell_hits": []
+  },
+  {
+   "code": "02669",
+   "name": "中海物业",
+   "market": "HK",
+   "industry": null,
+   "price": 3.535,
+   "pb": null,
+   "mcap": null,
+   "fraud": 1.8,
+   "mgmt": 90.7,
+   "cycle": null,
+   "scores": {
+    "grahamAgg": 47.0802784677574,
+    "grahamDef": 89.83064239378704,
+    "schloss": 69.65615487113162,
+    "buffett": 85.54225861716807
+   },
+   "refs": {
+    "grahamAgg": {
+     "buy": 1.269241816090605,
+     "cons": 1.5888953251346996,
+     "fair": 2.3833429877020493
+    },
+    "grahamDef": {
+     "buy": 4.0858406907269424,
+     "cons": 6.243,
+     "fair": 8.324
+    },
+    "schloss": {
+     "buy": 1.5860408186629904,
+     "cons": 1.7827,
+     "fair": 2.67405
+    },
+    "buffett": {
+     "buy": 6.4554766733544175,
+     "cons": 9.683215010031626,
+     "fair": 12.588179513041114
+    }
+   },
+   "src": "tracked",
+   "discount": null,
+   "buy_hits": [],
+   "sell_hits": []
+  },
+  {
+   "code": "002379",
+   "name": "宏桥控股",
+   "market": "A",
+   "industry": "有色金属冶炼和压延加工业",
+   "price": 18.5,
+   "pb": null,
+   "mcap": null,
+   "fraud": 10.0,
+   "mgmt": 90.2,
+   "cycle": 93.2,
+   "scores": {
+    "grahamAgg": 27.5,
+    "grahamDef": 24.96817777777778,
+    "schloss": 31.756756756756758,
+    "buffett": 56.32890666312885
+   },
+   "refs": {
+    "grahamAgg": {
+     "buy": null,
+     "cons": null,
+     "fair": null
+    },
+    "grahamDef": {
+     "buy": 13.752479049247814,
+     "cons": 28.397999999999996,
+     "fair": 37.864
+    },
+    "schloss": {
+     "buy": 3.3300000000000014,
+     "cons": 4.44,
+     "fair": 6.66
+    },
+    "buffett": {
+     "buy": 31.553333333333327,
+     "cons": 47.32999999999999,
+     "fair": 61.52899999999999
+    }
+   },
+   "src": "tracked",
+   "discount": null,
+   "buy_hits": [],
+   "sell_hits": []
+  },
+  {
+   "code": "601899",
+   "name": "紫金矿业",
+   "market": "A",
+   "industry": "有色金属矿采选业",
+   "price": 34.65,
+   "pb": null,
+   "mcap": null,
+   "fraud": 17.3,
+   "mgmt": 88.6,
+   "cycle": null,
+   "scores": {
+    "grahamAgg": 30.0,
+    "grahamDef": 60.0,
+    "schloss": 32.47861471861472,
+    "buffett": 95.9965
+   },
+   "refs": {
+    "grahamAgg": {
+     "buy": null,
+     "cons": null,
+     "fair": null
+    },
+    "grahamDef": {
+     "buy": 20.86542594820438,
+     "cons": 38.190000000000005,
+     "fair": 50.92
+    },
+    "schloss": {
+     "buy": 5.700000000000001,
+     "cons": 7.6,
+     "fair": 11.399999999999999
+    },
+    "buffett": {
+     "buy": 42.43333333333334,
+     "cons": 63.650000000000006,
+     "fair": 82.745
+    }
+   },
+   "src": "tracked",
+   "discount": null,
+   "buy_hits": [],
+   "sell_hits": []
+  },
+  {
+   "code": "002120",
+   "name": "韵达股份",
+   "market": "A",
+   "industry": "邮政业",
+   "price": 6.75,
+   "pb": null,
+   "mcap": null,
+   "fraud": 0.1,
+   "mgmt": 86.2,
+   "cycle": 35.3,
+   "scores": {
+    "grahamAgg": 30.0,
+    "grahamDef": 55.6958690289089,
+    "schloss": 58.98611796317884,
+    "buffett": 36.34628571428571
+   },
+   "refs": {
+    "grahamAgg": {
+     "buy": null,
+     "cons": null,
+     "fair": null
+    },
+    "grahamDef": {
+     "buy": 8.5875,
+     "cons": 8.5875,
+     "fair": 11.45
+    },
+    "schloss": {
+     "buy": 4.825421229085221,
+     "cons": 7.29,
+     "fair": 10.935
+    },
+    "buffett": {
+     "buy": 3.0533333333333332,
+     "cons": 4.58,
+     "fair": 5.954000000000001
+    }
+   },
+   "src": "tracked",
+   "discount": null,
+   "buy_hits": [],
+   "sell_hits": []
+  }
+ ]
+}
