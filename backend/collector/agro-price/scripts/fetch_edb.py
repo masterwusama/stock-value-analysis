@@ -10,6 +10,10 @@
     周频、月频原生序列保持不变（月频无法由更少数据补出，原样保留）。
   - 只保留最近一年（--begin/--end，默认今天往前 365 天）；新分类单独 --only
     --begin 2025-01-01 抓取后合并写回，分类级 range 记录各自区间。
+  - 默认走增量窗口：起点取该分类各指标在现存 edb.json 里最旧的那个“最新点”，
+    并往后封顶 --max-span-days（周任务下就是“只补最近 1~2 个月”），比固定 365 天
+    窗口少要 5~30 倍数据量。人工回填历史用 --begin 显式指定，不受此限。
+    跑之前用 --dry-run 看本轮计划（几次调用、几个指标、多少天窗口），不碰 Wind。
 
 产物：../data/edb.json  结构：
   { "updated_at", "range":{begin,end}, "categories":[
@@ -237,10 +241,19 @@ MONTH_MEAN_CODES = {"S2707380"}
 # 统计局累计值口径序列：抓取后差分回当月值展示（分析看单月动能，累计锯齿不便读）
 CUM_TO_MONTHLY_CODES = {"S0029658", "S0029659", "S0029656", "S0029669", "S0029670"}
 
+# 需要“窗口外前值”才能算对的口径：累计差分要上月累计值，月均要整月日点。
+# 只对含这些指标的分类多拉一段前量（目前只有 realestate），其余分类不多花积分。
+DERIVED_NEED_PREV = CUM_TO_MONTHLY_CODES | MONTH_MEAN_CODES
+
 
 def monthly_from_cumulative(points):
-    """统计局累计值序列 -> 当月值差分：新年首点（1-2 月合并发布）原样保留=前两月合计；
-    同年且上月有点才差分；缺月时输出为跨月合并差值。"""
+    """统计局累计值序列 -> 当月值差分（仅同年且上月有点才差分，否则 `m = v` 原样输出）。
+
+    走 `m = v` 的两种含义要分清：
+      - 序列首点：统计局 1-2 月合并发布，原样保留 = 前两月合计，这是设计如此；
+      - 窗口首点 / 缺上月点：输出的其实是“1~本月累计”却被当成当月值，量级差 8~9 倍，
+        是要防的坑——main() 因此对含本口径的分类往前多拉 buffer 天算前值，算完再裁。
+    """
     out = []
     prev = None  # (date, 累计值)
     for ds, v in points:
@@ -256,24 +269,112 @@ def monthly_from_cumulative(points):
     return out
 
 
+def _point_keys(cats):
+    """(指标 code, 日期) 全集。判定“本轮是否会把历史洗掉”必须用它而不是原始点数：
+    import_edb 的撤点删除就是拿 edb.json 的点集与库里做差集，差多少删多少；
+    而旧文件里同一日期若存过重点，并集合并会让原始点数假性变少。
+    """
+    return {(i.get("code"), p[0]) for c in cats or [] for i in c.get("indicators") or []
+            for p in (i.get("points") or []) if p and p[0]}
+
+
+def load_existing(path=None):
+    """读现存 edb.json → (数据或 None, 能否安全对待)。
+
+    区分“文件不存在”（(None, True)：首轮抓取，直接写）与“文件在但读不动”
+    （(None, False)：必须拒写。把坏档当成空档就是拿一份增量数据洗掉全部历史）。
+    增量窗口与 --dry-run 计划都靠这个返回值。
+    """
+    p = os.path.abspath(path or OUT)
+    if not os.path.exists(p):
+        return None, True
+    try:
+        with io.open(p, encoding="utf-8") as f:
+            return json.load(f), True
+    except Exception as e:
+        print("[warn] 旧 edb.json 读不动（%r）：本轮不写盘，先人工看一下这个文件" % e)
+        return None, False
+
+
+def last_point_dates(existing):
+    """code -> 旧文件里该指标的最新点位日期（增量窗口起点依据）。"""
+    last = {}
+    for c in (existing or {}).get("categories") or []:
+        for i in c.get("indicators") or []:
+            ds = [p[0] for p in i.get("points") or [] if p and p[0]]
+            code = i.get("code")
+            if code and ds:
+                hi = max(ds)
+                if code not in last or hi > last[code]:
+                    last[code] = hi
+    return last
+
+
+def cat_begin(codes, last, default_begin, end, max_span_days):
+    """增量窗口起点：已有数据的指标里最“落后”的那个点，封顶 max_span_days 天。
+
+    取 min 而不是 max 是为了不漏掉断更中的序列（它落后才需要多回溯一段）；
+    封顶是为了让无人值守的周任务不可能因为某条序列断更半年就去拉一大份历史——
+    真要点历史是人工决定，用 --begin 显式指定（本函数直接让位给显式窗口）。
+    """
+    known = [last[c] for c in codes if c in last]
+    if not known:
+        return default_begin
+    floor = (dt.date.fromisoformat(end) - dt.timedelta(days=max_span_days)).isoformat()
+    return max(min(known), floor, default_begin)
+
+
+def real_range(indicators):
+    """分类 range 按真实点位回写，不能写本轮抓取窗口（会把“这份数据回溯到哪年”抹掉）。"""
+    ds = [p[0] for i in indicators or [] for p in (i.get("points") or []) if p and p[0]]
+    return {"begin": min(ds), "end": max(ds)} if ds else None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", help="仅抓取指定分类 id（auto/alu/shipping）")
     ap.add_argument("--begin", default=None)
     ap.add_argument("--end", default=None)
+    ap.add_argument("--buffer-days", type=int, default=45,
+                    help="含差分/月均口径的分类往前多拉的天数（只用于算首点，不写进产物）")
+    ap.add_argument("--max-span-days", type=int, default=120,
+                    help="增量模式下单次往前多拉的天数上限（人工回填历史请用 --begin 越过此限）")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="只打印本轮抓取计划（几次调用/几个指标/多少天窗口），不调 Wind")
     args = ap.parse_args()
 
     end = args.end or dt.date.today().strftime("%Y-%m-%d")
     begin = args.begin or (dt.date.today() - dt.timedelta(days=365)).strftime("%Y-%m-%d")
+    # 旧文件只读一次：它既是“不能洗掉的历史”（写盘前防线），也是增量窗口的起点依据
+    old_file, old_ok = load_existing()
+    last_pts = last_point_dates(old_file)
 
     cats_out = []
     total_pts = 0
+    plan = []
     for cat in CATEGORIES:
         if args.only and cat["id"] != args.only:
             continue
         codes = [c for c, _n, _g in cat["indicators"]]
-        print("[fetch] %s: %d codes %s" % (cat["id"], len(codes), codes))
-        data = call_wind(codes, begin, end)
+        # 窗口起点：显式 --begin 尊人工；否则增量（只补旧文件落后的那段）
+        begin_cat = begin if args.begin else cat_begin(
+            codes, last_pts, begin, end, args.max_span_days)
+        # 窗口首点没有前值可差分，monthly_from_cumulative 会走 `m = v` 把“1~本月累计”
+        # 当成当月值输出（2026-09-03 实测：地产链 5 条序列在 2025-09-30 = 窗口内首个
+        # 月尾，值是同序列中位数的 8.8~9.3 倍，已经跟着回灌进了 edb_value），而窗口只会
+        # 往后滑、再也不会回头修正这个点。所以含累计/月均口径的分类多拉 buffer 天做前值，
+        # 算完再按 begin_cat 裁掉（不多写点，只多读一点数据）。
+        need_prev = any(c in DERIVED_NEED_PREV for c in codes)
+        q_begin = ((dt.date.fromisoformat(begin_cat) - dt.timedelta(days=args.buffer_days))
+                   .isoformat() if need_prev else begin_cat)
+        span = (dt.date.fromisoformat(end) - dt.date.fromisoformat(q_begin)).days + 1
+        plan.append((cat["id"], len(codes), q_begin, end, span))
+        if args.dry_run:
+            continue
+        print("[fetch] %s: %d codes %s~%s（%d 天）%s" % (
+            cat["id"], len(codes), q_begin, end, span,
+            "" if not need_prev else "，含前量缓冲 %d 天" % args.buffer_days))
+        data = call_wind(codes, q_begin, end)
         inds = []
         for code, disp, group in cat["indicators"]:
             mt = data.get(code)
@@ -286,6 +387,8 @@ def main():
                 pts = collapse_weekly(mt["date"], mt["value"])
             if code in CUM_TO_MONTHLY_CODES:
                 pts = monthly_from_cumulative(pts)
+            if need_prev:
+                pts = [p for p in pts if p[0] >= begin_cat]  # 缓冲段只用于算前值，不入库
             if not pts:
                 continue
             meta = mt["meta"]
@@ -304,8 +407,19 @@ def main():
                 code, disp, meta.get("freq", "?"), len(pts)))
         if inds:
             cats_out.append({"id": cat["id"], "name": cat["name"],
-                             "range": {"begin": begin, "end": end},
+                             "range": real_range(inds) or {"begin": begin_cat, "end": end},
                              "indicators": inds})
+
+    if args.dry_run:
+        # 不花积分的成本账：Wind 侧不回报余额，能控制的只有“调用次数 × 时间窗口”，
+        # 这两个量就是本输出（一行一分类，一次调用）
+        print("[dry-run] 计划 %d 次 wind 调用 / %d 个指标 / 共 %d 天数据区间：" % (
+            len(plan), sum(p[1] for p in plan), sum(p[4] for p in plan)))
+        for cid, nc, b, e, sp in plan:
+            print("  %-12s %2d 指标  %s~%s  %3d 天" % (cid, nc, b, e, sp))
+        print("[dry-run] 未调 Wind；旧文件里 %d 个指标、%d 个点不受影响" % (
+            len(last_pts), len(_point_keys((old_file or {}).get("categories")))))
+        return 0
 
     out = {
         "updated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -313,13 +427,23 @@ def main():
         "categories": cats_out,
     }
 
-    # [collector 改造] 点级合并写盘:每日调度窗口仅 365 天,与现存 edb.json 按日期并集合并——
-    # 窗口外历史点不丢;同日期值以本次抓取为准;本次失败(空返回)的指标/分类保留旧数据。
+    # [collector 改造] 点级合并写盘:与现存 edb.json 按日期并集合并——窗口外历史点不丢;
+    # 同日期值以本次抓取为准;本次失败(空返回)的指标/分类保留旧数据。
     # (取代原 --only 分类级合并,两种模式统一走此路径)
-    if os.path.exists(os.path.abspath(OUT)):
+    #
+    # 2026-09-03 加了两条硬防线，因为 Wind 余额只剩约 1000 分而 edb_value 里 2116 个点
+    # 删了就基本补不回来（Wind 侧不回报余额、单次调用到底扣多少本地测不出来，能控制的
+    # 只有调用次数与时间窗口，所以配了增量窗口 + --dry-run）：
+    #   1) 合并异常不再“退回整份覆盖”——增量窗口只有一二十天，一旦覆盖写就是拿这点
+    #      数据抹掉几年的历史，下一轮回灌再按差集把库里窗口外的点一起删了；现在改成直接
+    #      退出、不碰旧文件（宁可不更新，也不能把历史洗了）。
+    #   2) 合并“成功”但点集变小同样不写：能兜住将来改坏合并逻辑、或旧文件被人手工删过。
+    if not old_ok:
+        return 4
+    if old_file is not None:
         try:
-            with io.open(os.path.abspath(OUT), encoding="utf-8") as f:
-                existing = json.load(f)
+            existing = old_file
+            old_keys = _point_keys(existing.get("categories"))
             new_by_cat = {c["id"]: {i["code"]: i for i in c["indicators"]}
                           for c in out["categories"]}
             done, final_cats = set(), []
@@ -344,23 +468,44 @@ def main():
                         inds.append(oi)
                 nc = dict(c)
                 nc["indicators"] = inds
-                nc["range"] = {"begin": begin, "end": end}
                 final_cats.append(nc)
             for c in out["categories"]:  # 旧文件没有的新分类追加
                 if c["id"] not in done:
                     final_cats.append(c)
             out["categories"] = final_cats
-            print("[merge] 点级合并旧 edb.json: 分类=%d" % len(final_cats))
+            # 合并后区间按真实点位回写。原来这里写的是本次抓取窗口，
+            # 会把“这份数据其实回溯到哪一年”抹掉——下游想拿 range 做删除防线就会被误导。
+            for c in final_cats:
+                rr = real_range(c.get("indicators"))
+                if rr:
+                    c["range"] = rr
+            lost = old_keys - _point_keys(final_cats)
+            if lost:
+                codes = sorted({k[0] for k in lost})
+                raise RuntimeError(
+                    "合并后丢了 %d 个点（指标 %s）" % (len(lost), ",".join(codes[:8])))
+            print("[merge] 点级合并旧 edb.json: 分类=%d 点数=%d（旧 %d，无回撤）" % (
+                len(final_cats), sum(len(i.get("points") or []) for c in final_cats
+                                     for i in c.get("indicators") or []),
+                sum(len(i.get("points") or []) for c in existing.get("categories") or []
+                    for i in c.get("indicators") or [])))
         except Exception as e:
-            print("[merge] 合并失败，退回整份覆盖：%s" % e)
+            # 不写盘直接退出：edb.json 保持上一轮的原样，run.py 会把 edb 记成 failed
+            print("[merge] 与旧 edb.json 合并按失败处理，本轮不写盘（历史点数只进不删）：%r" % e)
+            return 4
 
     ofull = os.path.abspath(OUT)
     os.makedirs(os.path.dirname(ofull), exist_ok=True)
     with io.open(ofull, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
-    print("[done] 写入 %s  分类=%d 序列=%d 总点数=%d" % (
-        ofull, len(cats_out),
-        sum(len(c["indicators"]) for c in cats_out), total_pts))
+    # 统计口径用合并后的 out["categories"]：写 cats_out（本次抓取窗口内的）会让人以为
+    # 文件里只剩这么多点；本轮新抓的点数单独标在窗口后面
+    print("[done] 写入 %s  分类=%d 序列=%d 文件总点数=%d（本轮 %s~%s 抓到 %d 点）" % (
+        ofull, len(out["categories"]),
+        sum(len(c["indicators"]) for c in out["categories"]),
+        sum(len(i.get("points") or []) for c in out["categories"]
+            for i in c["indicators"]), begin, end, total_pts))
+    return 0
 
 
 if __name__ == "__main__":
