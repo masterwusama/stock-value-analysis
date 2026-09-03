@@ -46,7 +46,7 @@ npm run build                               # 产物 dist/ 由 FastAPI 托管(�
 
 # 4. 采集调度(独立进程, 替代 GitHub Actions cron)
 pip install -r collector/requirements.txt
-python -m collector.scheduler   # stock 周一~六 16:05/22:05 · deep 周六 09:05 · agro 每天 09:05/21:05
+python -m collector.scheduler   # stock 周一~六 16:05/22:05 · deep 周六 09:05 · agro 每天 09:05/21:05（只跑生意社价格，不碰 Wind）
 ```
 
 配置在 `backend/.env`（参考 `backend/.env.example`）：`DATABASE_URL` / `BOND_10Y` / `LEGACY_DATA_DIR` / `WIND_SKILL_DIR`。
@@ -82,7 +82,8 @@ git -c http.proxy=http://127.0.0.1:1080 push origin main
 |---|---|---|---|
 | stock | 周一~六 16:05/22:05 | 腾讯批量刷全市场估值快照 → 调仓 → 回灌（≈1~2 分钟） | `python -m collector.run stock` |
 | deep | 周六 09:05 | 全市场财务/定期报告重抓（`--resume --max-age 6`，≈5 小时） | `python -m collector.run deep` |
-| agro | 每天 09:05/21:05 | 农化价格（生意社/中农立华）+ 行业 EDB（约 20~30 分钟） | `python -m collector.run agro` |
+| agro | 每天 09:05/21:05 | 农化价格（生意社/中农立华）→ 回灌，不碰 Wind | `python -m collector.run agro` |
+| edb | 手动 | 行业 EDB 量价 44 指标（依赖本机 Wind 客户端，2026-09-03 起从 agro 链移出） | `python -m collector.run edb` |
 | events | 手动 | Wind 一次性事件/股东抓取（依赖博客仓 wind-mcp-skill） | `python -m collector.run events` |
 | import | 手动 | 仅把 JSON 工作目录回灌 MySQL | `python -m collector.run import` |
 

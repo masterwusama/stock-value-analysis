@@ -9,8 +9,11 @@
              不重抓财务; 引擎按交易日幂等跳重
     全市场深抓: 周六 09:05——财报/定期报告重抓(--resume --max-age 6, 约 4.5h),
              财务数据按季更新,周频足够; 新上市标的也在这一步进池
-    农价+EDB : 每天 09:05 / 21:05(生意社每周 2~4 次,一天 2 次足够)
-    Wind 事件: 不进调度(一次性抓取,手动 python -m collector.run events)
+    农价     : 每天 09:05 / 21:05(生意社每周 2~4 次,一天 2 次足够)
+    Wind 侧 : 不进调度——EDB 量价(edb job)与事件/股东(events job)都靠本机 Wind 客户端
+             CLI,要客户端登录、按量耗积分,是自动链管不到的外部依赖(2026-09-03
+             09:05 的 agro 就被 fetch_edb 带成过 failed)。要抓时手动:
+             python -m collector.run edb / events
 
 全量抓取期间持 data/.fetch.lock,同时段的 stock job 会自动跳过(不互盖 index.json)。
 
@@ -48,7 +51,7 @@ def main():
     # 原 cron "0 1,13 * * *" = 北京 09:00/21:00
     s.add_job(run_job, "cron", args=["agro"], hour="9,21", minute=5, id="agro")
     print("[scheduler] 已注册: stock(周一~六 16:05/22:05 估值快照) "
-          "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05)。Ctrl+C 退出",
+          "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农价,不碰 Wind)。Ctrl+C 退出",
           flush=True)
     s.start()
 

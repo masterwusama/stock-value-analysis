@@ -4,7 +4,8 @@
 用法(在 backend/ 目录):
     python -m collector.run stock     # 日更：腾讯批量刷全市场估值 → 调仓 → 回灌（分钟级）
     python -m collector.run deep      # 深抓：全市场财务/报告重抓（--resume 增量，数小时）
-    python -m collector.run agro      # fetch_prices → fetch_edb → 回灌
+    python -m collector.run agro      # fetch_prices → 回灌（生意社/中农立华价格，不碰 Wind）
+    python -m collector.run edb       # Wind 行业 EDB 量价（手动，不进调度，理由见 JOBS 注）
     python -m collector.run events    # Wind 事件(一次性/手动,不进每日调度) → 回灌
     python -m collector.run import    # 跳过抓取,仅手动触发一次回灌
 尾部参数透传给该 job 首个采集脚本(传了就整体替代该 job 的默认参数),
@@ -48,7 +49,14 @@ JOBS = {
     "stock": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "portfolio_engine.py")],
     # deep  ：全市场财务重抓（季报到账后/周末跑一次，数小时）
     "deep": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "portfolio_engine.py")],
-    "agro": [(AGRO_SCRIPTS, "fetch_prices.py"), (AGRO_SCRIPTS, "fetch_edb.py")],
+    # agro 只跑生意社价格：行业 EDB 的唯一数据源是本机 Wind 客户端 CLI（要客户端登录、按
+    # 指标耗积分），属于自动链管不到的外部依赖。2026-09-03 09:05 那轮已经碰到：
+    # etl_job_log 里 agro 至今唯一一条记录就是 failed / `fetch_edb.py exit=1`（价格数据
+    # 09:14:32 已落盘、回灌 09:14:38 起照样成功——驱动是 break 后仍回灌，没丢数据，但日更
+    # 状态被 Wind 侧带红，红了也分不出是链路坏还是 Wind 坏）。EDB 本身是周/月聚合的低频
+    # 序列，一天两跑无意义 → Wind 侧要抓时手动跑下面的 edb / events。
+    "agro": [(AGRO_SCRIPTS, "fetch_prices.py")],
+    "edb": [(AGRO_SCRIPTS, "fetch_edb.py")],
     "events": [(SCRIPTS, "fetch_events.py")],
     "import": [],
 }

@@ -18,6 +18,12 @@
 
 用法：python fetch_edb.py            # 抓取全部分类
       python fetch_edb.py --only alu # 只抓某一类（id）
+
+调度：2026-09-03 起不进自动链（原先挂在 agro job 里每天跟生意社价格跑两轮）。上面策略写的就是
+      “周/月聚合、省积分”的低频序列，放进日更链本无意义，却要把一个自动链管不到的外部
+      依赖（本机 Wind 客户端）掺进来：2026-09-03 09:05 那轮 `fetch_edb.py exit=1` 直接把
+      agro 记成 failed（etl_job_log 里 agro 至今唯一一条记录），而价格数据本身已落盘、
+      回灌也成功了。要更新跑 python -m collector.run edb（带回灌）。
 """
 import argparse
 import datetime as dt
