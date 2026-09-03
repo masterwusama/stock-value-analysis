@@ -26,7 +26,7 @@ def api(path):
         return json.load(r)
 
 
-def local_flt(fraud_max=None, mgmt_min=None, buys=None, sells=None, discount=None,
+def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, buys=None, sells=None, discount=None,
               market=None, board=None, st=None):
     """复刻原 stock.js passFlt(base 分口径,windMode 关)。"""
     out = []
@@ -50,6 +50,12 @@ def local_flt(fraud_max=None, mgmt_min=None, buys=None, sells=None, discount=Non
             m = sc.get("mgmt")
             if m is None or m < mgmt_min:
                 continue
+        cap = (c.get("quote") or {}).get("market_cap")
+        # 市值门槛：本币元、含边界（与后端 >=/<= 一致），无行情行(NULL)不参与
+        if cap_min is not None and (cap is None or cap < cap_min):
+            continue
+        if cap_max is not None and (cap is None or cap > cap_max):
+            continue
         cur = c.get("price")
         disc = (discount / 100) if (discount is not None and buys) else 1
         ok = True
@@ -115,6 +121,12 @@ def check(label, want, got):
           + ("" if ok else f" diff={sorted(want ^ got)}"))
 
 
+# 市值门槛：阈值拿实测市值的中位数/最大值，写死数字会随行情漂移退成空集或全市场
+_capped = sorted((c for c in IDX["companies"] if (c.get("quote") or {}).get("market_cap")),
+                 key=lambda c: c["quote"]["market_cap"])
+CAP_MID = _capped[len(_capped) // 2]["quote"]["market_cap"] if _capped else 1e12
+CAP_TOP = _capped[-1]["quote"]["market_cap"] if _capped else 1e12
+
 cases_list = [
     {"fraud_max": 20}, {"fraud_max": 50}, {"mgmt_min": 70}, {"mgmt_min": 60, "market": "A"},
     {"buys": ["grahamAgg"]}, {"buys": ["grahamAgg"], "discount": 120},
@@ -125,10 +137,29 @@ cases_list = [
     {"board": "bj"}, {"board": "gem"}, {"board": "star"}, {"board": "shMain"},
     {"st": True}, {"st": False}, {"board": "szMain", "st": False},
     {"board": "bj", "fraud_max": 40, "mgmt_min": 60},
+    # 市值区间：单侧 + 双侧 + 与规模维度叠加（A 股专用阈值，不跟港美本币值混比）
+    {"cap_min": CAP_MID}, {"cap_max": CAP_MID}, {"cap_min": CAP_MID, "cap_max": CAP_TOP},
+    {"cap_min": 5e11, "market": "A"}, {"cap_max": 5e9, "market": "A"},
+    {"cap_min": 1e11, "cap_max": 5e11, "st": False, "fraud_max": 40},
 ]
 for cs in cases_list:
     label = "&".join(f"{k}={v}" for k, v in cs.items())
     check(label, local_flt(**cs), api_flt(cs))
+
+# 门槛边界得闭合（后端把 >= 写成 > 就会掉边界那只，上面按集对比未必命中相等情形）：
+# 阈值直接用该券 API 返回的 market_cap 原值，拿库对库，不因 index.json 与库微差误报
+if _capped:
+    _probe = _capped[len(_capped) // 2]
+    _pc, _pm = _probe["code"], _probe.get("market", "A")
+    _pv = (api_flt_items({"keyword": _pc, "market": _pm}).get(_pc) or {}).get("market_cap")
+    if not _pv:
+        print("FAIL 市值边界探针拿不到 market_cap"); fails += 1
+    else:
+        for _k in ("cap_min", "cap_max"):
+            _ok = _pc in api_flt({_k: _pv, "market": _pm})
+            print(("OK  " if _ok else "FAIL") + f" 市值边界含等号 {_k}={_pv / 1e8:.2f}亿({_pc})")
+            if not _ok:
+                fails += 1
 
 # ---------- Wind 事件增强分档（wind=true）----------
 # 同一口径有三处独立实现：后端 _wind_score()(SQL) / 列表页 dispScore()(JS) / 本地基线(Python)，

@@ -221,6 +221,8 @@ def list_securities(
     industry: str | None = Query(None, max_length=64),
     fraud_max: float | None = Query(None, ge=0, le=100, description="造假风险≤(wind=1 时按增强分)"),
     mgmt_min: float | None = Query(None, ge=0, le=100, description="管理能力≥(wind=1 时按增强分)"),
+    cap_min: float | None = Query(None, ge=0, description="总市值≥(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
+    cap_max: float | None = Query(None, ge=0, description="总市值≤(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
     wind: bool = Query(False, description="事件增强分档：造假/管理两列的筛选与排序改用基础分+Wind 事件增量（响应里两列仍为基础分，显示值由前端叠 wind_* 字段换算）"),
     buys: str | None = Query(None, max_length=64, description="买点复选(逗号分隔,同时满足)"),
     sells: str | None = Query(None, max_length=64, description="卖点复选(须同时达保守与公允)"),
@@ -283,6 +285,14 @@ def list_securities(
         conds.append(fraud_col <= fraud_max)
     if mgmt_min is not None:
         conds.append(mgmt_col >= mgmt_min)
+    # 市值门槛走 quote_daily.market_cap（本币元）：无行情行的公司在 outer join 下是 NULL,
+    # SQL 比较不为真→自动排除,与 buys/sells 那类价格门槛同一语义,不用额外兼容。
+    # 也不做“折成人民币再比”：汇率源未落地,拿估算汇率折算会污染与 index.json 对答案的基线;
+    # 跨市场比体量请分市场 tab 各自筛（前端已注明单位是本币亿）。
+    if cap_min is not None:
+        conds.append(QuoteDaily.market_cap >= cap_min)
+    if cap_max is not None:
+        conds.append(QuoteDaily.market_cap <= cap_max)
     factor = (discount if discount is not None else 100.0) / 100.0
     for k in _flt_keys(buys, FLT_BUY_COLS, "buys"):
         conds.append(QuoteDaily.price <= FLT_BUY_COLS[k] * factor)

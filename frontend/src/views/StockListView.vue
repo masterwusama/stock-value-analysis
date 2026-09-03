@@ -51,9 +51,17 @@ const loading = ref(false)
 const error = ref('')
 
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(须同时达保守与公允);空值=不限
-// 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)
+// 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
-const flt = reactive({ fraudMax: '', mgmtMin: '', buys: [], discount: '', sells: [] })
+const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', buys: [], discount: '', sells: [] })
+// 市值框让用户填“亿”(与列头 市值(亿) 同口径),发请求时转回接口单位元：
+// 接口接受本币元、响应 market_cap 也是本币元,两处同一单位才能拿着返回值直接核对边界。
+// Math.round 而非直乘：1.1 * 1e8 = 110000000.00000001 这种尾差会把恰好在边上的票顶出筛选。
+const capYiToYuan = (v) => Math.round(Number(v) * 1e8)
+// 不折成人民币：汇率源未落地,拿估算值折算只会让人误以为是可比口径
+const CAP_TIP = '总市值区间（单位：亿，按各市场本币计价——A股人民币、港股港元、美股美元，不折算）：'
+  + '“全部”tab 下三个市场混在一起比数值没有意义，要跨市场比体量请切到对应市场 tab 分开筛；'
+  + '无最新行情的公司（市值列显示 -）不进区间，设任一门槛即被排除'
 
 // Wind 事件增强分档：造假/管理两列在“基础财报分”与“基础分 + 一次性 Wind 事件增量”之间切换，
 // 显示值在本页算（dispScore），筛选与排序把 wind=1 透给后端用同一公式的 SQL 表达式，
@@ -98,7 +106,7 @@ function toggleFlt(arr, key, on) {
   if (!on && i >= 0) arr.splice(i, 1)
 }
 function resetFlt() {
-  Object.assign(flt, { fraudMax: '', mgmtMin: '', buys: [], discount: '', sells: [] })
+  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', buys: [], discount: '', sells: [] })
   industry.value = ''
   noSt.value = false
   applyFlt()
@@ -109,29 +117,40 @@ function applyFlt() {
 }
 const fltCount = () =>
   (flt.fraudMax !== '' ? 1 : 0) + (flt.mgmtMin !== '' ? 1 : 0) +
+  (flt.capMin !== '' ? 1 : 0) + (flt.capMax !== '' ? 1 : 0) +
   (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) +
   (industry.value ? 1 : 0) + (noSt.value ? 1 : 0)
 
+// 请求序号守卫：同一轮连改两个相邻筛选框（典型如把市值≥ 清空同时填市值≤）会并发两条请求，
+// 而后发的那条不保证先返回；没守卫时旧结果会后落地把新结果盖掉（实测：表格短暂回到未过滤的
+// 全量只数）。只认最后发出的那条，晚到的旧响应直接丢弃。
+let loadSeq = 0
+
 async function load() {
+  const seq = ++loadSeq
   loading.value = true
   error.value = ''
   try {
-    data.value = await get('/securities', {
+    const d = await get('/securities', {
       market: market.value, board: board.value, industry: industry.value,
       st: noSt.value ? false : null,
       keyword: kwDebounced.value,
       fraud_max: flt.fraudMax === '' ? null : flt.fraudMax,
       mgmt_min: flt.mgmtMin === '' ? null : flt.mgmtMin,
+      cap_min: flt.capMin === '' ? null : capYiToYuan(flt.capMin),
+      cap_max: flt.capMax === '' ? null : capYiToYuan(flt.capMax),
       buys: flt.buys.length ? flt.buys.join(',') : null,
       sells: flt.sells.length ? flt.sells.join(',') : null,
       discount: (flt.discount !== '' && flt.buys.length) ? flt.discount : null,
       wind: windMode.value || null,
       sort: sort.value, order: order.value, page: page.value, page_size: pageSize.value,
     })
+    if (seq !== loadSeq) return
+    data.value = d
   } catch (e) {
-    error.value = `加载失败：${e.message}`
+    if (seq === loadSeq) error.value = `加载失败：${e.message}`
   } finally {
-    loading.value = false
+    if (seq === loadSeq) loading.value = false
   }
 }
 
@@ -239,6 +258,10 @@ function doJump() {
         <input v-model="flt.fraudMax" type="number" min="0" max="100" step="1" placeholder="不限" @change="applyFlt"></label>
       <label class="num" title="管理层水平(0-100,越高越好),只保留 ≥ 该分的公司">管理≥
         <input v-model="flt.mgmtMin" type="number" min="0" max="100" step="1" placeholder="不限" @change="applyFlt"></label>
+      <label class="num" :title="CAP_TIP">市值≥
+        <input v-model="flt.capMin" type="number" min="0" step="0.5" placeholder="不限" @change="applyFlt"></label>
+      <label class="num" :title="CAP_TIP">市值≤
+        <input v-model="flt.capMax" type="number" min="0" step="0.5" placeholder="不限" @change="applyFlt"></label>
       <span class="t" title="多选需同时满足:现价 ≤ 买价 × 折扣%">买点</span>
       <label v-for="[k, lab] in SCHOOLS" :key="'b' + k" class="cb">
         <input type="checkbox" :checked="flt.buys.includes(k)"
