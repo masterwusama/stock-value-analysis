@@ -450,9 +450,10 @@ def merge_prices(existing, fresh, primary, exclude_sources=(), merge_all_traders
                    作主序列，旧文件中的同源数据视为历史版本不再合并，避免旧解析
                    bug 产生的错误值残留）；其余源只填主序列时间范围之外。
       'sunsirs'  : 生意社按交易商分组取样本最多的交易商作主序列（增量抓取，
-                   existing+fresh 累积），同一天多条再取中位数；其余源只填主序列
-                   时间范围之外。merge_all_traders=True 时不做交易商分组，全部
-                   报价按日取中位数（多交易商口径差异小于离群阈值时更稳健）。
+                   fresh 覆盖到的日期以本轮为准、未覆盖的日期沿用 existing），同一天
+                   多条再取中位数；其余源只填主序列时间范围之外。merge_all_traders=
+                   True 时不做交易商分组，全部报价按日取中位数（多交易商口径差异
+                   小于离群阈值时更稳健）。
     其他源（3456.tv 等）仅在主序列时间范围外做历史/近期补充，避免不同口径
     来源在同一时间段交错造成假突变。3456.tv 行情 2025 年已停更，晚于
     2025-12-31 的日期为页面误提取，一律剔除。exclude_sources 中的源直接弃用
@@ -463,13 +464,16 @@ def merge_prices(existing, fresh, primary, exclude_sources=(), merge_all_traders
     if primary == 'sino-agri':
         main_items = [p for p in (fresh or []) if p.get('source') == main_src]
     else:
-        # 主序列以本轮 fresh 为准（防旧聚合值重复参与聚合），
-        # existing 只补 fresh 未覆盖的更早历史（增量翻页限页时靠旧文件积累）
+        # 主序列以本轮 fresh 为准（existing 存的已是聚合值，同一天再进来会让该日期样本
+        # 翻倍计权），但 existing 只按「本轮没抓到这个日期」补回，不能按时间轴切一刀：
+        # 增量模式只翻 SUNSIRS_MAX_PAGES 页，落在本轮窗口内却没被重新解析到的日期
+        # （翻页够不着、单篇文章抓取失败）会被整段抹掉——2026-09-03 实测对硝基氯化苯
+        # 2026-08-03 那条 8800 元/吨就是这么丢的，序列只减不增会慢慢蚀空历史。
         fresh_items = [p for p in (fresh or []) if p.get('source') == main_src]
         if fresh_items:
-            lo = min(p['date'] for p in fresh_items)
+            fresh_dates = {p['date'] for p in fresh_items}
             existing_main = [p for p in (existing or [])
-                             if p.get('source') == main_src and p.get('date', '') < lo]
+                             if p.get('source') == main_src and p.get('date') not in fresh_dates]
             main_items = fresh_items + existing_main
         else:
             main_items = [p for p in all_p if p.get('source') == main_src]

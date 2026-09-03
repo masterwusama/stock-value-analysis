@@ -586,7 +586,7 @@ def import_portfolio(db, stats):
 
 
 def import_agro(db, stats):
-    """products.json → agro_product / agro_price。"""
+    """products.json → agro_product / agro_price（JSON 为唯一权威，源里删掉的点同步删）。"""
     src = json.loads((AGRO_DIR / "products.json").read_text(encoding="utf-8"))
     for p in src.get("products", []):
         stmt = mysql_insert(AgroProduct).values(
@@ -599,13 +599,37 @@ def import_agro(db, stats):
         )
         db.execute(stmt)
         stats["agro_product"] += 1
+        keep = set()
         for pr in p.get("prices", []):
+            d = parse_date(pr["date"])
             stmt = mysql_insert(AgroPrice).values(
-                product_id=p["id"], price_date=parse_date(pr["date"]),
+                product_id=p["id"], price_date=d,
                 source=pr.get("source", ""), price=pr["price"], note=pr.get("note"),
             ).on_duplicate_key_update(price=pr["price"], note=pr.get("note"))
             db.execute(stmt)
             stats["agro_price"] += 1
+            keep.add((d, pr.get("source", "")))
+        # 只 upsert 不删会让库里残留源里已消失的行：采集端 merge_prices 明确会丢弃
+        # 「本轮窗口内却没重新解析到」的日期（2026-09-03 对硝基氯化苯 08-03 那条），
+        # 丢弃即 products.json 删点，DB 不跟着删就与唯一真源永久背离、verify_api 常红。
+        # 按 (price_date, source) 差集删，不能只按日期——同一天可能有多个交易商来源。
+        for row in db.execute(text(
+                "SELECT price_date, source FROM agro_price WHERE product_id = :p"),
+                {"p": p["id"]}).fetchall():
+            if (row[0], row[1]) not in keep:
+                db.execute(text("DELETE FROM agro_price WHERE product_id = :p"
+                                " AND price_date = :d AND source = :s"),
+                           {"p": p["id"], "d": row[0], "s": row[1]})
+                stats["agro_price_stale_deleted"] += 1
+
+    live = {p["id"] for p in src.get("products", [])}
+    for row in db.execute(select(AgroProduct.product_id)).fetchall():
+        # 产品整体从源里撤掉时同理：两表间无外键约束，不跟着删就留下孤儿明细行，
+        # 从此再没有一轮回灌能命中它（差集只按源里现存产品算）
+        if row[0] not in live:
+            db.execute(text("DELETE FROM agro_price WHERE product_id = :p"), {"p": row[0]})
+            db.execute(text("DELETE FROM agro_product WHERE product_id = :p"), {"p": row[0]})
+            stats["agro_product_stale_deleted"] += 1
 
 
 def import_edb(db, stats):
@@ -627,14 +651,25 @@ def import_edb(db, stats):
             db.execute(mysql_insert(EdbIndicator)
                        .values(**ival).on_duplicate_key_update(**iupd))
             stats["edb_indicator"] += 1
+            keep = set()
             for pt in ind.get("points", []):
                 if len(pt) != 2 or not pt[0]:
                     continue
+                d = parse_date(pt[0])
                 stmt = mysql_insert(EdbValue).values(
-                    edb_code=ind["code"], data_date=parse_date(pt[0]), val=pt[1],
+                    edb_code=ind["code"], data_date=d, val=pt[1],
                 ).on_duplicate_key_update(val=pt[1])
                 db.execute(stmt)
                 stats["edb_value"] += 1
+                keep.add(d)
+            # 与 import_agro 同理：--no-clean 下只 upsert 不删，指标撤点会永久残留
+            for row in db.execute(text(
+                    "SELECT data_date FROM edb_value WHERE edb_code = :c"),
+                    {"c": ind["code"]}).fetchall():
+                if row[0] not in keep:
+                    db.execute(text("DELETE FROM edb_value WHERE edb_code = :c"
+                                    " AND data_date = :d"), {"c": ind["code"], "d": row[0]})
+                    stats["edb_value_stale_deleted"] += 1
 
 
 TABLES = [
