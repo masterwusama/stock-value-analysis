@@ -34,8 +34,19 @@ $Dist = Join-Path $Frontend 'dist'
 if ($Rebuild) {
     Write-Host "  [构建] npm run build ..."
     Push-Location $Frontend
-    try { & npm run build 2>&1 | Select-Object -Last 3 | ForEach-Object { Write-Host "  $_" } }
-    finally { Pop-Location }
+    try {
+        # 走 cmd /c 而不是 PowerShell 管道接管 stderr:rollup 的 "chunks are larger than 500 kB"
+        # 提示写在 stderr,而 _common.ps1 设了 $ErrorActionPreference='Stop'——原生程序的 stderr
+        # 会被转成 ErrorRecord 直接抛断脚本,结果是构建看着跑完了、服务却再也没启动
+        # (2026-09-03 实踩)。cmd 层面先 2>&1 并流,PowerShell 只看到 stdout。
+        $build = & cmd.exe /c 'npm run build 2>&1'
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [失败] npm run build 退出码 $LASTEXITCODE,不启动旧产物" -ForegroundColor Red
+            $build | Select-Object -Last 12 | ForEach-Object { Write-Host "  $_" }
+            exit 1
+        }
+        $build | Select-Object -Last 3 | ForEach-Object { Write-Host "  $_" }
+    } finally { Pop-Location }
 }
 if (Test-Path (Join-Path $Dist 'index.html')) {
     $built = (Get-Item (Join-Path $Dist 'index.html')).LastWriteTime
