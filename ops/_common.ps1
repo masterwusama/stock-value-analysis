@@ -38,7 +38,7 @@ function Find-SvcProc([string]$Name) {
 # 孤儿 worker 继续打数据源（上一轮全量抓取就是这么断的）
 function Find-JobProc {
     Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-        Where-Object { $_.CommandLine -and $_.CommandLine -match 'collector\.run\s|collector\\scripts|agro-price\\scripts|multiprocessing\.spawn|fetch_data\.py|portfolio_engine\.py' }
+        Where-Object { $_.CommandLine -and $_.CommandLine -match 'collector\.run\s|collector\\scripts|agro-price\\scripts|multiprocessing\.spawn|fetch_data\.py' }
 }
 
 # 服务日志轮转:启动前把上一轮现场改名留存。

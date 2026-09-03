@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ORM 模型:db_va 全部 20 张表。
+"""ORM 模型:db_va 全部 16 张表。
 
 约定:
 - security.sid 为内键,子表以 sid 外联(避免重复 (code, market) 复合键);
@@ -293,68 +293,6 @@ class WindHolder(Base):
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     __table_args__ = (Index("idx_holder_sid", "sid", "holder_type", "report_date"),)
-
-
-class PfStrategy(Base):
-    """模拟组合策略定义(档位/上限/门槛参数)。"""
-
-    __tablename__ = "pf_strategy"
-
-    strat_key: Mapped[str] = mapped_column(String(16), primary_key=True)
-    label: Mapped[str] = mapped_column(String(32), nullable=False)
-    init_cap: Mapped[float] = mapped_column(Numeric(16, 2), nullable=False)
-    params: Mapped[dict] = mapped_column(JSON, nullable=False)
-
-
-class PfNav(Base):
-    """策略每日净值(兼作引擎幂等判定)。"""
-
-    __tablename__ = "pf_nav"
-
-    strat_key: Mapped[str] = mapped_column(String(16), primary_key=True)
-    nav_date: Mapped[date] = mapped_column(primary_key=True)
-    cash: Mapped[float | None] = mapped_column(Numeric(18, 2))
-    nav: Mapped[float | None] = mapped_column(Numeric(18, 2))
-    position_pct: Mapped[float | None] = mapped_column(Double)
-    day_pnl: Mapped[float | None] = mapped_column(Numeric(18, 2))
-    day_pnl_pct: Mapped[float | None] = mapped_column(Double)
-    total_pnl: Mapped[float | None] = mapped_column(Numeric(18, 2))
-    total_pnl_pct: Mapped[float | None] = mapped_column(Double)
-
-
-class PfPosition(Base):
-    """策略持仓(含引擎内部档位状态,替代 _state.json)。"""
-
-    __tablename__ = "pf_position"
-
-    strat_key: Mapped[str] = mapped_column(String(16), primary_key=True)
-    sid: Mapped[int] = mapped_column(primary_key=True)
-    bought_at: Mapped[date] = mapped_column(nullable=False)
-    shares: Mapped[int] = mapped_column(nullable=False)
-    cost: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False)
-    tranches: Mapped[dict] = mapped_column(JSON, nullable=False)
-    div_last: Mapped[date | None] = mapped_column(Date)
-
-
-class PfTrade(Base):
-    """调仓流水(买/卖/分红)。
-
-    注意:无自然唯一键,导入按 strat_key 先删后插(trades.json 即全量权威)。
-    """
-
-    __tablename__ = "pf_trade"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    strat_key: Mapped[str] = mapped_column(String(16), nullable=False)
-    trade_date: Mapped[date] = mapped_column(nullable=False)
-    sid: Mapped[int] = mapped_column(nullable=False)
-    side: Mapped[str] = mapped_column(Enum("buy", "sell", "dividend"), nullable=False)
-    price: Mapped[float | None] = mapped_column(Numeric(12, 6))
-    shares: Mapped[int | None] = mapped_column(BigInteger)
-    amount: Mapped[float | None] = mapped_column(Numeric(18, 2))
-    reason: Mapped[str | None] = mapped_column(String(256))
-
-    __table_args__ = (Index("idx_pftrade_strat", "strat_key", "trade_date"),)
 
 
 class AgroProduct(Base):

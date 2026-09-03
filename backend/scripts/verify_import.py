@@ -12,8 +12,8 @@ from sqlalchemy import func, select
 from app.config import LEGACY_DATA_DIR
 from app.db import SessionLocal
 from app.models import (
-    AgroPrice, Dividend, FinBalance, FinIndicator, PeriodicReport, PfNav,
-    PfPosition, PfTrade, QuoteDaily, ScoreDaily, Security, WindEvent,
+    AgroPrice, Dividend, FinBalance, FinIndicator, PeriodicReport,
+    QuoteDaily, ScoreDaily, Security, WindEvent,
 )
 
 DATA = Path(LEGACY_DATA_DIR) / "data"
@@ -22,7 +22,7 @@ db = SessionLocal()
 
 print("== 1. 各表行数 ==")
 for m in (Security, QuoteDaily, ScoreDaily, FinIndicator, FinBalance,
-          Dividend, PeriodicReport, WindEvent, PfNav, PfPosition, PfTrade, AgroPrice):
+          Dividend, PeriodicReport, WindEvent, AgroPrice):
     print(f"  {m.__tablename__}: {db.execute(select(func.count()).select_from(m)).scalar_one()}")
 
 print("== 2. security 按市场 ==")
@@ -70,26 +70,12 @@ print(f"  DB:   cash={b.cash} fin={b.trading_fin_assets} tl={b.total_liabilities
 print(f"  JSON: cash={src_b['货币资金']} fin={src_b.get('交易性金融资产')} tl={src_b['负债合计']}")
 assert float(b.cash) == src_b["货币资金"] and float(b.total_liabilities) == src_b["负债合计"]
 
-print("== 6. pf_nav 三策略 ==")
-for k, n in db.execute(select(PfNav.strat_key, func.count()).group_by(PfNav.strat_key)):
-    print(f"  {k}: {n} 天")
-for r in db.scalars(select(PfNav).where(PfNav.strat_key == "buffett").order_by(PfNav.nav_date)):
-    print(f"  buffett {r.nav_date}: nav={r.nav} day_pnl={r.day_pnl} total_pnl={r.total_pnl}")
-
-print("== 7. 指标期数最多的公司(top3)==")
+print("== 6. 指标期数最多的公司(top3)==")
 rows = db.execute(select(FinIndicator.sid, func.count()).group_by(FinIndicator.sid)
                   .order_by(func.count().desc()).limit(3))
 for sid_, n in rows:
     code = db.execute(select(Security.code).where(Security.sid == sid_)).scalar_one()
     print(f"  {code}: {n} 期")
-
-print("== 8. 持仓与流水核对 ==")
-n_pos = db.execute(select(func.count()).select_from(PfPosition)).scalar_one()
-n_tr = db.execute(select(func.count()).select_from(PfTrade)).scalar_one()
-src_trades = json.loads((Path(LEGACY_DATA_DIR) / "portfolio" / "data" / "trades.json")
-                        .read_text(encoding="utf-8"))
-assert n_tr == sum(len(v) for v in src_trades.values()), f"trade count {n_tr}"
-print(f"  pf_position={n_pos}, pf_trade={n_tr} == 源 {sum(len(v) for v in src_trades.values())}")
 
 print("ALL CHECKS PASSED")
 db.close()

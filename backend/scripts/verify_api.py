@@ -16,7 +16,6 @@ from app.config import LEGACY_DATA_DIR  # 对比基线 = JSON 工作目录(采�
 
 BASE = "http://127.0.0.1:8000"
 DATA = LEGACY_DATA_DIR / "data"
-PF = LEGACY_DATA_DIR / "portfolio" / "data"
 AGRO = LEGACY_DATA_DIR / "agro-price" / "data"
 
 EVENT_KEYS = ("increase_hold", "ma", "penalty", "lawsuit", "st_change")
@@ -136,58 +135,6 @@ def check_company(code):
     print("   OK")
 
 
-def check_portfolio():
-    src = load(PF / "portfolio.json")
-    api = get("/api/portfolio")
-    assert set(api["strategies"]) == set(src["strategies"]), "strategy keys"
-    assert api["as_of"] == src["as_of"], "as_of"
-    for k, s in src["strategies"].items():
-        a = api["strategies"][k]
-        for f in ("label", "init_cap", "cash", "nav", "prev_nav",
-                  "day_pnl", "day_pnl_pct", "total_pnl", "total_pnl_pct", "position_pct", "as_of"):
-            assert same_val(a[f], s[f]), f"{k}.{f}: {a.get(f)!r} != {s.get(f)!r}"
-        sp = {p["code"]: p for p in s["positions"]}
-        ap = {p["code"]: p for p in a["positions"]}
-        assert set(sp) == set(ap), f"{k} position codes"
-        for code, p in sp.items():
-            q = ap[code]
-            for f in ("shares", "cost", "bought_at", "tranches", "days"):
-                assert same_val(q[f], p[f]), f"{k}/{code}.{f}: {q.get(f)!r} != {p.get(f)!r}"
-            # 现价：API 按 DB 最新行情重算，基准取 index.json（与 check_company 同一口径）。
-            # 不拿账本 price 当基准：那是入账时点的标记，同日重跑被“已入账，跳过”挡住，
-            # 而行情快照一天刷多次——实测 600551 盘中入账 8.52、收盘那轮 8.62，
-            # 账本永远追不上，卡容差只会掩盖真问题（如取不到行情时回退成本价）。
-            assert same_val(q["price"], idx_entry(code).get("price")), \
-                f"{k}/{code}.price: {q.get('price')!r} != index {idx_entry(code).get('price')!r}"
-            # 市值/盈亏只各查自洽：value = shares×price，pnl = value−shares×cost
-            for row, tag in ((p, "账本"), (q, "API")):
-                v = round(row["shares"] * row["price"], 2)
-                assert close_val(row["value"], v), \
-                    f"{k}/{code}.{tag}.value: {row['value']!r} != {v!r}"
-                pl = round(row["value"] - row["shares"] * row["cost"], 2)
-                assert close_val(row["pnl"], pl), \
-                    f"{k}/{code}.{tag}.pnl: {row['pnl']!r} != {pl!r}"
-                if row["cost"] and row["shares"]:
-                    pp = round(row["pnl"] / (row["shares"] * row["cost"]) * 100, 2)
-                    assert close_val(row["pnl_pct"], pp), \
-                        f"{k}/{code}.{tag}.pnl_pct: {row['pnl_pct']!r} != {pp!r}"
-    print("-- portfolio 三策略 + 持仓实时计算 OK")
-
-
-def check_trades():
-    src = load(PF / "trades.json")
-    api = get("/api/portfolio/trades")
-    for k, rows in src.items():
-        arows = api.get(k, [])
-        assert len(arows) == len(rows), f"{k}: {len(arows)} != {len(rows)}"
-        for s, a in zip(rows, arows):
-            for f in ("date", "code", "side"):
-                assert a[f] == s[f], f"{k}.{f}: {a.get(f)} != {s.get(f)}"
-            for f in ("price", "shares", "amount"):
-                assert same_val(a[f], s.get(f)), f"{k}/{s['date']}.{f}: {a[f]!r} != {s.get(f)!r}"
-    print(f"-- trades 全策略 {sum(len(v) for v in src.values())} 笔逐行 OK")
-
-
 def check_products():
     src = load(AGRO / "products.json")
     api = get("/api/agro/products")
@@ -239,9 +186,7 @@ except urllib.error.HTTPError as e:
     assert e.code == 404, e.code
 print("   404 OK")
 
-print("== P3 组合/农价/EDB 接口 vs 源 JSON ==")
-check_portfolio()
-check_trades()
+print("== P3 农价/EDB 接口 vs 源 JSON ==")
 check_products()
 check_edb()
 

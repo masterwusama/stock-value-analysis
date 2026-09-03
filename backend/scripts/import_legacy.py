@@ -7,7 +7,6 @@
                                  fin_balance / fin_cashflow / dividend / periodic_report
     data/events/*.json         → wind_event / wind_holder
     data/events/index.json     → score_daily.wind_*(事件增量覆盖层)
-    portfolio/data/*.json      → pf_strategy / pf_nav / pf_position / pf_trade
     agro-price/data/products.json → agro_product / agro_price
     agro-price/data/edb.json   → edb_indicator / edb_value
 
@@ -15,7 +14,7 @@
 用法(在 backend 目录下):
     python -m scripts.import_legacy             # 清空后全量导入
     python -m scripts.import_legacy --no-clean  # 不清空,按唯一键 upsert;
-        wind_event/wind_holder/pf_trade 无自然唯一键,按 sid/strat_key 先删后插(整文件权威)
+        wind_event/wind_holder 无自然唯一键,按 sid 先删后插(整文件权威)
 
 2026-09-03:fin_*/dividend/periodic_report 从 INSERT IGNORE 改成按唯一键 upsert。
     旧写法下“源 JSON 是唯一权威”只对第一次入库成立:东财修订过的数字、以及后来新增的
@@ -54,10 +53,6 @@ from app.models import (
     FinIncome,
     FinIndicator,
     PeriodicReport,
-    PfNav,
-    PfPosition,
-    PfStrategy,
-    PfTrade,
     QuoteDaily,
     ScoreDaily,
     Security,
@@ -66,24 +61,7 @@ from app.models import (
 )
 
 DATA_DIR = LEGACY_DATA_DIR / "data"
-PF_DIR = LEGACY_DATA_DIR / "portfolio" / "data"
 AGRO_DIR = LEGACY_DATA_DIR / "agro-price" / "data"
-
-# pf_strategy 参数(原 portfolio_engine.py STRATEGIES 常量)
-PF_STRATEGIES = {
-    "schloss": {"label": "施洛斯烟蒂", "school": "schloss",
-                "target_w": 0.08, "buy_bands": (0.03, 0.08, 0.15),
-                "sell_bands": (("sellCons", 1.0), ("sellFair", 1.0), ("sellFair", 1.05)),
-                "min_mgmt": 55, "max_fraud": 30, "min_score": 0},
-    "grahamDef": {"label": "格雷厄姆防御", "school": "grahamDef",
-                  "target_w": 0.06, "buy_bands": (0.05, 0.10, 0.15),
-                  "sell_bands": (("sellCons", 1.0), ("sellFair", 1.0), ("sellFair", 1.10)),
-                  "min_mgmt": 70, "max_fraud": 30, "min_score": 75},
-    "buffett": {"label": "巴菲特芒格", "school": "buffett",
-                "target_w": 0.15, "buy_bands": (0.02, 0.05, 0.10),
-                "sell_bands": (("sellFair", 1.0), ("sellFair", 1.25), ("sellFair", 1.50)),
-                "min_mgmt": 80, "max_fraud": 30, "min_score": 70},
-}
 
 # Wind 事件类型 → etype
 EVENT_TYPE_MAP = {
@@ -590,74 +568,6 @@ def import_events(db, stats):
                 stats["wind_holder"] += 1
 
 
-def import_portfolio(db, stats):
-    """portfolio/data/*.json → pf_strategy / pf_nav / pf_position / pf_trade。"""
-    pf = json.loads((PF_DIR / "portfolio.json").read_text(encoding="utf-8"))
-    navs = json.loads((PF_DIR / "nav.json").read_text(encoding="utf-8"))
-    states = json.loads((PF_DIR / "_state.json").read_text(encoding="utf-8"))
-    trades = json.loads((PF_DIR / "trades.json").read_text(encoding="utf-8"))
-
-    for key, cfg in PF_STRATEGIES.items():
-        init_cap = pf["strategies"].get(key, {}).get("init_cap", 200000)
-        stmt = mysql_insert(PfStrategy).values(
-            strat_key=key, label=cfg["label"], init_cap=init_cap, params=cfg,
-        ).on_duplicate_key_update(label=cfg["label"], init_cap=init_cap, params=cfg)
-        db.execute(stmt)
-        stats["pf_strategy"] += 1
-
-    for key, rows in navs.items():
-        strat = pf["strategies"].get(key, {})
-        prev_nav = None
-        for r in rows:
-            nav = r.get("nav")
-            # 当日完整盈亏来自 portfolio.json;历史行由相邻 nav 差补(当日盈亏=今-上一入账日)
-            if strat.get("as_of") == r["date"]:
-                extra = {k: strat.get(k) for k in
-                         ("day_pnl", "day_pnl_pct", "total_pnl", "total_pnl_pct")}
-            else:
-                day = (float(nav) - prev_nav) if (nav is not None and prev_nav is not None) else None
-                extra = {"day_pnl": day}
-            nvals = dict(
-                strat_key=key, nav_date=parse_date(r["date"]),
-                cash=r.get("cash"), nav=nav, position_pct=r.get("position_pct"),
-                **extra,
-            )
-            nupd = {k: v for k, v in nvals.items() if k != "nav_date"}
-            db.execute(mysql_insert(PfNav)
-                       .values(**nvals).on_duplicate_key_update(**nupd))
-            stats["pf_nav"] += 1
-            prev_nav = float(nav) if nav is not None else prev_nav
-
-    for key, s in states.items():
-        for pos in s.get("positions", []):
-            sid = db.execute(select(Security.sid).where(
-                Security.code == pos["code"], Security.market == "A")).scalar_one()
-            tr = pos.get("tranches")
-            tr_store = {"count": tr} if isinstance(tr, int) else (tr or {})
-            pvals = dict(
-                strat_key=key, sid=sid, bought_at=parse_date(pos["bought_at"]),
-                shares=pos["shares"], cost=pos["cost"], tranches=tr_store,
-                div_last=parse_date(pos.get("div_last")),
-            )
-            pupd = {k: v for k, v in pvals.items() if k not in ("strat_key", "sid")}
-            db.execute(mysql_insert(PfPosition)
-                       .values(**pvals).on_duplicate_key_update(**pupd))
-            stats["pf_position"] += 1
-
-    for key, rows in trades.items():
-        # [P5 修复] pf_trade 无自然唯一键,trades.json 即该策略全量权威 → 先删后插
-        db.execute(text("DELETE FROM pf_trade WHERE strat_key = :k"), {"k": key})
-        for t in rows:
-            sid = db.execute(select(Security.sid).where(
-                Security.code == t["code"], Security.market == "A")).scalar_one()
-            db.execute(mysql_insert(PfTrade).values(
-                strat_key=key, trade_date=parse_date(t["date"]), sid=sid,
-                side=t["side"], price=t.get("price"), shares=t.get("shares"),
-                amount=t.get("amount"), reason=t.get("reason"),
-            ))
-            stats["pf_trade"] += 1
-
-
 def import_agro(db, stats):
     """products.json → agro_product / agro_price（JSON 为唯一权威，源里删掉的点同步删）。"""
     src = json.loads((AGRO_DIR / "products.json").read_text(encoding="utf-8"))
@@ -760,7 +670,6 @@ def import_edb(db, stats):
 
 
 TABLES = [
-    "pf_trade", "pf_position", "pf_nav", "pf_strategy",
     "wind_holder", "wind_event", "score_daily", "periodic_report", "dividend",
     "fin_cashflow", "fin_balance", "fin_income", "fin_indicator", "quote_daily",
     "security", "agro_price", "agro_product", "edb_value", "edb_indicator", "etl_job_log",
@@ -812,7 +721,6 @@ def main():
         else:
             import_companies(db, stats, quiet=args.quiet)
         import_events(db, stats)
-        import_portfolio(db, stats)
         import_agro(db, stats)
         import_edb(db, stats)
         db.add(EtlJobLog(

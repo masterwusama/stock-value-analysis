@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api import agro, portfolio, securities
+from app.api import agro, securities
 from app.db import get_session
 
 app = FastAPI(title="stock-value-analysis API", version="0.1.0")
@@ -28,7 +28,6 @@ app.add_middleware(
 )
 
 app.include_router(securities.router)
-app.include_router(portfolio.router)
 app.include_router(agro.router)
 
 

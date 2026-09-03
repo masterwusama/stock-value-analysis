@@ -3,8 +3,8 @@
 A股/港股/美股 价值分析数据服务 —— `masterwusama.github.io/stock-data/` 纯前端静态站的本地化重构：
 FastAPI + MySQL 提供结构化查询接口，Vue 3 前端，采集层沿用经年验证的 Python 抓取脚本。
 
-> **部署与使用请看 [docs/使用说明书.md](docs/使用说明书.md)**（首次部署七步、四个页面与筛选项、采集任务与调度节奏、
-> 20 张表逐列口径、运维症状表、已知边界）。本文只留架构速览。
+> **部署与使用请看 [docs/使用说明书.md](docs/使用说明书.md)**（首次部署七步、三个页面与筛选项、采集任务与调度节奏、
+> 16 张表逐列口径、运维症状表、已知边界）。本文只留架构速览。
 
 ## 架构
 
@@ -12,18 +12,18 @@ FastAPI + MySQL 提供结构化查询接口，Vue 3 前端，采集层沿用经�
 ┌─ 采集层 collector/ ──────────────┐   ┌─ 服务层 ───────────────────────────┐
 │ fetch_data.py   AKShare/腾讯/巨潮 │   │ FastAPI :8000                      │
 │ scoring.py      四流派评分物化    │→JSON→│  /api/*      REST 接口           │
-│ portfolio_engine.py 三策略调仓    │ 工作 │  /            托管 frontend/dist │
-│ fetch_prices/fetch_edb 农价/EDB   │ 目录 │ MySQL db_va (20 表, localhost)   │
-│ fetch_events.py Wind 事件(手动)   │   │ collector/scheduler.py 定时进程    │
+│ fetch_prices/fetch_edb 农价/EDB   │ 工作 │  /            托管 frontend/dist │
+│ fetch_events.py Wind 事件(手动)   │ 目录 │ MySQL db_va (16 表, localhost)   │
+│                                  │      │ collector/scheduler.py 定时进程  │
 └──────────────────────────────────┘   └────────────────────────────────────┘
                                         ┌─ 前端 frontend/ (Vue3+Vite) ──────┐
                                         │ 列表/筛选 → #/ · 详情九模块 #/stock/:code
-                                        │ 组合 #/portfolio · 农价EDB #/agro │
+                                        │ 农价·EDB → #/agro                │
                                         └───────────────────────────────────┘
 ```
 
-- 采集脚本以 **JSON 工作目录**（`collector/{data,portfolio,agro-price}`）为产物，与 GitHub Pages 原结构逐字段一致，作为唯一中间层；`import_legacy` 增量 upsert 回灌 MySQL。
-  有唯一键的表走 upsert；`wind_event`/`wind_holder`/`pf_trade` 无自然唯一键(INSERT IGNORE 不生效)，按 sid/strat_key 先删后插，重跑幂等。
+- 采集脚本以 **JSON 工作目录**（`collector/{data,agro-price}`）为产物，与 GitHub Pages 原结构逐字段一致，作为唯一中间层；`import_legacy` 增量 upsert 回灌 MySQL。
+  有唯一键的表走 upsert；`wind_event`/`wind_holder` 无自然唯一键(INSERT IGNORE 不生效)，按 sid 先删后插，重跑幂等。
 - 数据库是查询层：列表筛选/排序/分页全部 SQL 完成（`score_daily` + `quote_daily`），10000 证券规模可支撑。
 - GitHub Pages 静态版保留在博客仓库，作为回退。
 
@@ -80,10 +80,10 @@ git -c http.proxy=http://127.0.0.1:1080 push origin main
 
 | job | 调度 | 内容 | 用法 |
 |---|---|---|---|
-| stock | 周一~六 16:05/22:05 | 腾讯批量刷全市场估值快照 → 调仓 → 回灌（≈1~2 分钟） | `python -m collector.run stock` |
+| stock | 周一~六 16:05/22:05 | 腾讯批量刷全市场估值快照 → 回灌（≈1~2 分钟） | `python -m collector.run stock` |
 | deep | 周六 09:05 | 全市场财务/定期报告重抓（`--resume --max-age 6`，≈5 小时） | `python -m collector.run deep` |
 | agro | 每天 09:05/21:05 | 农化价格（生意社/中农立华）→ 回灌，不碰 Wind | `python -m collector.run agro` |
-| edb | 手动 | 行业 EDB 量价 44 指标（依赖本机 Wind 客户端，2026-09-03 起从 agro 链移出） | `python -m collector.run edb` |
+| edb | 周日 20:00 | 行业 EDB 量价 44 指标（唯一自动碰 Wind 的任务，依赖本机 Wind 客户端；2026-09-03 起从 agro 链移出） | `python -m collector.run edb` |
 | events | 手动 | Wind 一次性事件/股东抓取（依赖博客仓 wind-mcp-skill） | `python -m collector.run events` |
 | import | 手动 | 仅把 JSON 工作目录回灌 MySQL | `python -m collector.run import` |
 
@@ -113,7 +113,7 @@ python -m scripts.verify_filters  # 列表筛选与排序 23 组用例 vs 原前
 backend/
   app/            FastAPI(接口/模型/DB)     scripts/  建表·导入·验证
   collector/      采集脚本+JSON 工作目录+调度(run.py/scheduler.py)
-  docs/schema.sql 20 表 DDL 存档
+  docs/schema.sql 16 表 DDL 存档
 frontend/         Vue3+Vite(hash 路由, echarts)
 ops/              启停脚本 start/stop/status(.ps1 + .bat 包装)
 ```

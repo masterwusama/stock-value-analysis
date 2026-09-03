@@ -213,53 +213,6 @@ CREATE TABLE wind_holder (
 
 CREATE INDEX idx_holder_sid ON wind_holder (sid, holder_type, report_date);
 
-CREATE TABLE pf_strategy (
-	strat_key VARCHAR(16) NOT NULL, 
-	label VARCHAR(32) NOT NULL, 
-	init_cap NUMERIC(16, 2) NOT NULL, 
-	params JSON NOT NULL, 
-	PRIMARY KEY (strat_key)
-);
-
-CREATE TABLE pf_nav (
-	strat_key VARCHAR(16) NOT NULL, 
-	nav_date DATE NOT NULL, 
-	cash NUMERIC(18, 2), 
-	nav NUMERIC(18, 2), 
-	position_pct DOUBLE, 
-	day_pnl NUMERIC(18, 2), 
-	day_pnl_pct DOUBLE, 
-	total_pnl NUMERIC(18, 2), 
-	total_pnl_pct DOUBLE, 
-	PRIMARY KEY (strat_key, nav_date)
-);
-
-CREATE TABLE pf_position (
-	strat_key VARCHAR(16) NOT NULL, 
-	sid INTEGER NOT NULL, 
-	bought_at DATE NOT NULL, 
-	shares INTEGER NOT NULL, 
-	cost NUMERIC(12, 6) NOT NULL, 
-	tranches JSON NOT NULL, 
-	div_last DATE, 
-	PRIMARY KEY (strat_key, sid)
-);
-
-CREATE TABLE pf_trade (
-	id BIGINT NOT NULL AUTO_INCREMENT, 
-	strat_key VARCHAR(16) NOT NULL, 
-	trade_date DATE NOT NULL, 
-	sid INTEGER NOT NULL, 
-	side ENUM('buy','sell','dividend') NOT NULL, 
-	price NUMERIC(12, 6), 
-	shares BIGINT, 
-	amount NUMERIC(18, 2), 
-	reason VARCHAR(256), 
-	PRIMARY KEY (id)
-);
-
-CREATE INDEX idx_pftrade_strat ON pf_trade (strat_key, trade_date);
-
 CREATE TABLE agro_product (
 	product_id VARCHAR(64) NOT NULL, 
 	name VARCHAR(64) NOT NULL, 

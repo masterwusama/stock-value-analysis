@@ -65,9 +65,9 @@ def _stale_note(code):
 # job → 采集步骤序列(每项 cwd/脚本);全部步骤跑完后统一回灌
 JOBS = {
     # stock ：每日分钟级（只刷腾讯批量行情→估值/价格，不重抓财务）
-    "stock": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "portfolio_engine.py")],
+    "stock": [(SCRIPTS, "fetch_data.py")],
     # deep  ：全市场财务重抓（季报到账后/周末跑一次，数小时）
-    "deep": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "portfolio_engine.py")],
+    "deep": [(SCRIPTS, "fetch_data.py")],
     # agro 只跑生意社价格：行业 EDB 的唯一数据源是本机 Wind 客户端 CLI（要客户端登录、按
     # 指标耗积分），属于自动链管不到的外部依赖。2026-09-03 09:05 那轮已经碰到：
     # etl_job_log 里 agro 至今唯一一条记录就是 failed / `fetch_edb.py exit=1`（价格数据
@@ -200,7 +200,7 @@ def main():
         return 0
     for i, (cwd, script) in enumerate(steps):
         try:
-            # 仅首个脚本吃参数(后续步骤如 portfolio_engine 无自定义参数)
+            # 仅首个脚本吃参数（多步 job 里后续脚本无自定义参数）
             _run_script(cwd, script, (extra if i == 0 else []) or JOB_DEFAULTS.get(args.job, []))
         except subprocess.CalledProcessError as e:
             status = "failed"

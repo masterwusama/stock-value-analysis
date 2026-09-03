@@ -1535,7 +1535,7 @@ def backfill_index(by_code):
     → 从 JSON 重建条目，避免部分完成的抓取在索引里默默丢股。"""
     pool = {c[0]: c[2] for c in DEFAULT_COMPANIES if len(c) >= 3}
     # 只把“已有且带行情块”的条目视为完整：早期抓取写的条目没有 quote，
-    # 回读明细补齐后 portfolio_engine 才能拿到真实交易快照日期
+    # 回读明细补齐后 import_legacy 才能拿到真实交易快照日期
     have = {k.split("|")[0] for k, v in by_code.items() if v.get("quote")}
     added = 0
     for path in sorted(COMPANIES_DIR.glob("*.json")):
