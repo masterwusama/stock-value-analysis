@@ -17,6 +17,7 @@
     - 每次运行写 etl_job_log(替代 Actions 运行记录页)
 """
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -29,6 +30,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 COLLECTOR = BACKEND / "collector"
 SCRIPTS = COLLECTOR / "scripts"
 AGRO_SCRIPTS = COLLECTOR / "agro-price" / "scripts"
+AGRO_DATA = COLLECTOR / "agro-price" / "data"
 
 # 独立进程入口(调度器直接调本模块),需自行加载 backend/.env
 try:
@@ -42,6 +44,23 @@ WIND_SKILL_DIR = os.getenv(
     "WIND_SKILL_DIR",
     r"<wind-mcp-skill 目录>",
 )
+
+
+def _stale_note(code):
+    """fetch_prices 用 exit=3 专指“发现新增断档品种”，把名单一起写进 etl_job_log。
+
+    不加这一句，job 日志里就只有 `fetch_prices.py exit=3`，想知道红了的是哪几个
+    品种还得去翻 products.json 或 scheduler.out.log —— 而“谁断了”恰恰是要人看的部分。
+    """
+    if code != 3:
+        return None
+    try:
+        ids = json.loads((AGRO_DATA / "products.json")
+                         .read_text(encoding="utf-8")).get("stale_reported") or []
+    except Exception:  # noqa: BLE001 名单读不到不该影响失败记录本身
+        return "stale=?"
+    return "stale=" + ",".join(ids) if ids else None
+
 
 # job → 采集步骤序列(每项 cwd/脚本);全部步骤跑完后统一回灌
 JOBS = {
@@ -186,6 +205,9 @@ def main():
         except subprocess.CalledProcessError as e:
             status = "failed"
             messages.append(f"{script} exit={e.returncode}")
+            note = _stale_note(e.returncode)
+            if note:
+                messages.append(note)
             traceback.print_exc()
             break  # 抓取失败不再跑链上后续脚本,但仍回灌已落盘数据
         except Exception:

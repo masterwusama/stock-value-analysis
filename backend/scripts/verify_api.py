@@ -8,6 +8,7 @@
 import json
 import sys
 import urllib.request
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -198,7 +199,14 @@ def check_products():
         smap = {(r["date"], r.get("source", "")): r["price"] for r in sp["prices"]}
         amap = {(r["date"], r["source"]): r["price"] for r in ap["prices"]}
         assert smap == amap, f"{sp['id']} prices 不一致"
-    print("-- agro products 全量价格序列 OK")
+        # 新鲜度字段：顶层的 updated_at 取全局最大日期，断档只能靠每条序列自己报（2026-09-03
+        # 草甘膦断了 53 天而整份数据看着是新的）。阈值与 fetch_prices.STALE_MAX_DAYS 同值
+        exp_last = max((r["date"] for r in sp["prices"]), default=None)
+        assert ap["latest"] == exp_last, f"{sp['id']}.latest: {ap['latest']} != {exp_last}"
+        exp_days = (date.today() - date.fromisoformat(exp_last)).days if exp_last else None
+        assert ap["stale_days"] == exp_days, f"{sp['id']}.stale_days: {ap['stale_days']} != {exp_days}"
+        assert ap["stale"] is (exp_days is None or exp_days > 21), f"{sp['id']}.stale"
+    print("-- agro products 全量价格序列 + 逐序列新鲜度 OK")
 
 
 def check_edb():

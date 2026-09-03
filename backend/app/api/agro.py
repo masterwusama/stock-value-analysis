@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """农价/EDB 接口:结构与原 agro-price/data/{products,edb}.json 对齐。"""
+import datetime as dt
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends
@@ -13,6 +14,11 @@ router = APIRouter(prefix="/api/agro", tags=["agro"])
 
 # edb_indicator.freq(枚举) → 原 edb.json 中文值
 _FREQ_BACK = {"day": "日", "week": "周", "month": "月"}
+
+# 断档阈值，与 collector/agro-price/scripts/fetch_prices.py 的 STALE_MAX_DAYS 同值（那边是告警
+# 口径的唯一权威）。两个目录不同包、agro-price 带连字符不能 import，只能靠注释互指；改一处
+# 忘改另一处的后果只是前端徽章颜色早/晚几天亮，不影响作业告警本身。
+STALE_MAX_DAYS = 21
 
 
 def _f(v):
@@ -34,16 +40,26 @@ def agro_products(db: Session = Depends(get_session)):
             "date": pdate.isoformat(), "price": _f(price), "source": source, "note": note,
         })
     updated = db.execute(select(func.max(AgroPrice.price_date))).scalar_one()
+    today = dt.date.today()
+    items = []
+    for a in products:
+        pl = by_prod.get(a.product_id, [])
+        # 每条序列单独报新鲜度：顶层 updated_at 取的是全局最大日期，只要还有一个品种在
+        # 更新它就永远是“今天”，看不出草甘膦/甲基硫菌灵这种已断档 50 天的序列（2026-09-03 实测）
+        latest = pl[-1]["date"] if pl else None
+        stale_days = (today - dt.date.fromisoformat(latest)).days if latest else None
+        items.append({
+            "id": a.product_id, "name": a.name, "category": a.category,
+            "spec": a.spec, "unit": a.unit,
+            "prices": pl,
+            "latest": latest,
+            "stale_days": stale_days,
+            # 阈值判断放在服务端，免得前端再抄一个 21
+            "stale": bool(stale_days is None or stale_days > STALE_MAX_DAYS),
+        })
     return {
         "updated_at": updated.isoformat() if updated else None,
-        "products": [
-            {
-                "id": a.product_id, "name": a.name, "category": a.category,
-                "spec": a.spec, "unit": a.unit,
-                "prices": by_prod.get(a.product_id, []),
-            }
-            for a in products
-        ],
+        "products": items,
     }
 
 

@@ -227,6 +227,17 @@
   color: #aaa;
 }
 
+/* 断档徽章：上游停更时序列会静默断掉，而页顶“更新于”取全局最大日期仍显示今天
+   （2026-09-03 草甘膦/甲基硫菌灵停在 07-12 共 53 天无人察觉），所以单独标出来 */
+.agro-card-foot .agro-card-stale {
+  font-style: normal;
+  color: #b9770e;
+  background: #fdf3e0;
+  border-radius: 4px;
+  padding: 0 5px;
+  margin-left: 4px;
+}
+
 /* ---------- 走势图 ---------- */
 
 .agro-chart-wrap {

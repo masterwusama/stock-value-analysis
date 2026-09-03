@@ -91,6 +91,12 @@ SUNSIRS_MAX_PAGES = 5
 # 3456.tv 行情文章聚合页
 T3456_PAGES = ['http://www.3456.tv/jiage/nongyao/']
 
+# 断档阈值（天）。不是拍脑袋定的：2026-09-03 实测各品种近 180 天内相邻报价的最大正常
+# 间隔——中农立华周报系（多菌灵/甲基硫菌灵/草甘膦）14 天、生意社日频系（敌草隆/邻苯二胺/
+# 对硝基氯化苯）1~6 天；取 14 的一倍余量 = 21，只抓真断供的、不误报历史上整年无点的
+# 对硝基氯化苯（那些空档都在 180 天窗口外，不影响按“最新日期”判新鲜度）。
+STALE_MAX_DAYS = 21
+
 
 def fetch(url, encoding=None, referer=None):
     """抓取网页（重试 + UA + 可选 Referer），返回解码后的文本"""
@@ -506,13 +512,46 @@ def merge_prices(existing, fresh, primary, exclude_sources=(), merge_all_traders
     return sorted(by_date.values(), key=lambda x: x['date'])
 
 
+def audit_freshness(products):
+    """逐品种打印最新报价日期与断档天数，返回超 STALE_MAX_DAYS 的品种 id 列表。
+
+    为什么需要这一步：2026-09-03 盘库发现草甘膦/甲基硫菌灵序列停在 2026-07-12（53 天），
+    而 agro job 一天两跑全记 success。链路与解析都没坏——是中农立华《原药市场行情》周报
+    自身停更（站内 cid=29 最大文章 id=4504，列表发布时间止于 2026-07-21；另一个含报价的
+    cid=28 早在 2023-11 就停了）。上游拿不到新数据不是我们的错误，但“序列断了 7 周没人
+    知道”是：products.json 与 /api/agro/products 的 updated_at 都取全局最大日期，只要还有
+    一个品种在更新，整份数据就看起来是新的。
+    """
+    from datetime import date, datetime
+    today = date.today()
+    stale = []
+    print('-- 新鲜度核对（阈值 %d 天）' % STALE_MAX_DAYS)
+    for p in products:
+        ds = [x['date'] for x in p['prices'] if x.get('date')]
+        if not ds:
+            print('   [stale] %-21s %-6s 一个报价点都没有' % (p['id'], p['name']))
+            stale.append(p['id'])
+            continue
+        last = max(ds)
+        gap = (today - datetime.strptime(last, '%Y-%m-%d').date()).days
+        if gap > STALE_MAX_DAYS:
+            stale.append(p['id'])
+            print('   [stale] %-21s %-6s 最新=%s 断档=%d 天' % (p['id'], p['name'], last, gap))
+        else:
+            print('   [ok]    %-21s %-6s 最新=%s 断档=%d 天' % (p['id'], p['name'], last, gap))
+    return stale
+
+
 def main():
     old = {}
+    reported = set()
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, encoding='utf-8') as f:
             old_data = json.load(f)
         for p in old_data.get('products', []):
             old[p['id']] = p
+        # 上一轮已经告过警的断档品种，免得上游长期停更时一轮红一次刷屏
+        reported = set(old_data.get('stale_reported') or [])
 
     names = [p['name'] for p in PRODUCTS]
     all_sino = fetch_sino_agri(names)
@@ -553,13 +592,25 @@ def main():
 
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone(timedelta(hours=8))).isoformat(timespec='seconds')
-    data = {'updated_at': now, 'products': result_products}
+    stale = audit_freshness(result_products)
+    new_stale = [p for p in stale if p not in reported]
+    data = {'updated_at': now, 'products': result_products,
+            'stale_reported': sorted(set(stale))}
 
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
     total = sum(len(p['prices']) for p in result_products)
     print('已写入 %s（共 %d 条价格记录）' % (DATA_FILE, total))
+    if new_stale:
+        # 退出码 3 → run.py 把 agro 记成 failed / `fetch_prices.py exit=3`。故意为“只在
+        # 新增断档当天翻红”：上游停更可能持续数月，天天红等于把告警刷成噪音（2026-09-03
+        # 把 Wind 移出自动链就是同一个理由）。名单已随 stale_reported 落盘，恢复后再断
+        # 会重新告警一次。
+        print('[stale] 新增断档品种（本轮记失败）: %s' % ', '.join(new_stale), flush=True)
+        return 3
+    if stale:
+        print('[stale] %s 仍在上轮已告警的断档中，本轮不重复翻红' % ', '.join(stale))
 
 
 if __name__ == '__main__':

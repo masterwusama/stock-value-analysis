@@ -154,7 +154,11 @@
         '<span class="agro-card-chg ' + cls(s.chgYtd) + '">年初 ' + pct(s.chgYtd) + '</span>' +
         '</div>' +
         '<div class="agro-card-foot">共 ' + p.prices.length + ' 期 · 最新 ' +
-        (s.last ? s.last.date + '（' + (s.last.note || s.last.source) + '）' : '无') + '</div>' +
+        (s.last ? s.last.date + '（' + (s.last.note || s.last.source) + '）' : '无') +
+        // 上游停更时序列会静默断掉（2026-09-03：草甘膦/甲基硫菌灵停在 07-12 共 53 天，
+        // 而 agro job 一天两跑全记 success）；断档判断由 /api/agro/products 的 stale 给定
+        (p.stale ? ' <em class="agro-card-stale">断档 ' +
+          (p.stale_days == null ? '?' : p.stale_days) + ' 天</em>' : '') + '</div>' +
         '</div>';
     });
     box.innerHTML = html;
@@ -282,8 +286,14 @@
         renderCards();
         state.chart = echarts.init($('agro-chart'));
         renderChart();
+        var staleList = data.products.filter(function (p) { return p.stale; });
         $('agro-foot').textContent =
           '数据来源：生意社商品报价动态 / 3456.tv 行情历史 · 更新于 ' + fmtFullDate(data.updated_at) +
+          // “更新于”取的是全局最大日期，只要还有一个品种在动就永远显示今天，所以断档的
+          // 品种要在页面上点名，不能只靠卡片上一个小徽章
+          (staleList.length ? ' · 已断档：' + staleList.map(function (p) {
+            return p.name + '（停在 ' + (p.latest || '无数据') + '）';
+          }).join('、') : '') +
           ' · 价格为市场报价，仅供个人学习研究';
       })
       .catch(function (e) {
