@@ -130,6 +130,58 @@ for cs in cases_list:
     label = "&".join(f"{k}={v}" for k, v in cs.items())
     check(label, local_flt(**cs), api_flt(cs))
 
+# ---------- Wind 事件增强分档（wind=true）----------
+# 同一口径有三处独立实现：后端 _wind_score()(SQL) / 列表页 dispScore()(JS) / 本地基线(Python)，
+# 三边必须一致，否则“按增强分排序 + 按门槛筛选”与列面显示会互相打脸。基线读 events/index.json，
+# 不抄后端的 SQL，否则这道防线就成了自证。
+def _wind_disp(base, delta):
+    if base is None:
+        return None
+    return max(0.0, min(100.0, base + (delta or 0)))
+
+
+OV_PATH = Path(LEGACY_DATA_DIR) / "data" / "events" / "index.json"
+if OV_PATH.exists():
+    OVERLAY = json.load(io.open(OV_PATH, encoding="utf-8")).get("byCode", {})
+
+    def local_wind(fraud_max=None, mgmt_min=None):
+        out = set()
+        for c in IDX["companies"]:
+            e = OVERLAY.get(str(c["code"]))
+            if not e:
+                continue  # 无事件条目 → Wind 档不给分，有门槛时必被排除
+            sc = c.get("scores") or {}
+            f = _wind_disp(sc.get("fraud"), e.get("fraudDelta"))
+            m = _wind_disp(sc.get("mgmt"), e.get("mgmtDelta"))
+            if fraud_max is not None and (f is None or f > fraud_max):
+                continue
+            if mgmt_min is not None and (m is None or m < mgmt_min):
+                continue
+            out.add(str(c["code"]))
+        return out
+
+    for cs in ({"fraud_max": 40}, {"mgmt_min": 60}, {"fraud_max": 40, "mgmt_min": 50}):
+        label = "wind&" + "&".join(f"{k}={v}" for k, v in cs.items())
+        check(label, local_wind(**cs), api_flt(dict(cs, wind="true")))
+    # 溯源字段必须能复原前端显示值，且 fraud 仍是基础分（防“wind 默认开”这种静默口径切换）
+    _sample = api_flt_items({"wind": "true", "fraud_max": 60})
+    _hit = next((v for v in _sample.values() if v.get("wind_hit") and v.get("fraud") is not None), None)
+    if _hit is None:
+        print("FAIL wind 样本为空（一条有事件数据且带基础分的公司都没拉到）"); fails += 1
+    else:
+        _e = OVERLAY.get(str(_hit["code"])) or {}
+        _want = _wind_disp(_hit["fraud"], _e.get("fraudDelta"))
+        _api_disp = max(0.0, min(100.0, _hit["fraud"] + (_hit["wind_fraud_delta"] or 0)))
+        # delta 用容差比而非 ==：0.0 与 None 在两侧语义相同（无增量），不能因类型差异报红
+        ok = (abs((_hit["wind_fraud_delta"] or 0) - (_e.get("fraudDelta") or 0)) < 1e-6
+              and abs(_api_disp - _want) < 1e-6)
+        print(("OK  " if ok else "FAIL") + " wind 档 fraud 仍为基础分且溯源字段可复原显示值"
+              + f"({_hit['code']}: {_hit['fraud']} +{_hit['wind_fraud_delta']} → {_want})")
+        if not ok:
+            fails += 1
+else:
+    print("SKIP events/index.json 不在，未校验 wind 档")
+
 # 非法键 400
 try:
     api_flt({"buys": ["badKey"]})

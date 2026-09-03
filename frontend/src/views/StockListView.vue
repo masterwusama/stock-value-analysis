@@ -55,6 +55,43 @@ const error = ref('')
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
 const flt = reactive({ fraudMax: '', mgmtMin: '', buys: [], discount: '', sells: [] })
 
+// Wind 事件增强分档：造假/管理两列在“基础财报分”与“基础分 + 一次性 Wind 事件增量”之间切换，
+// 显示值在本页算（dispScore），筛选与排序把 wind=1 透给后端用同一公式的 SQL 表达式，
+// 故不会出现“表头按增强分排、格子里是另一套分”。localStorage 记忆同旧内嵌页的 va_wind。
+const windMode = ref((() => {
+  try { return localStorage.getItem('va_wind') === '1' } catch (e) { return false }
+})())
+// 旧内嵌页靠 ./data/events/index.json 能否加载来决定这个按钮出不出现；本机列表全走 /api，
+// 覆盖层已在 score_daily.wind_* 列里，没有“加载失败”这个信号可判，改按市场显示：
+// Wind 事件是一次性抓取、只覆盖部分 A 股，切到港股/美股 tab 时整列都是“-”，摆出来只会误导
+const windVisible = () => market.value === '' || market.value === 'A'
+function toggleWind() {
+  windMode.value = !windMode.value
+  try { localStorage.setItem('va_wind', windMode.value ? '1' : '0') } catch (e) { /* 无痕模式下写不进，切换照样生效 */ }
+  page.value = 1
+}
+// Wind 档下的列显示值：无事件条目不给分（“-”），有则基础分叠 delta 钉 0~100；
+// 基础分本身缺失时同样“-”（无基可加），与后端 _wind_score 的三条分支一一对应
+function dispScore(s, kind) {
+  if (!windMode.value) return s[kind]
+  if (!s.wind_hit || s[kind] == null) return null
+  const d = (kind === 'fraud' ? s.wind_fraud_delta : s.wind_mgmt_delta) || 0
+  return Math.max(0, Math.min(100, s[kind] + d))
+}
+const FRAUD_TIP = '财报造假可能性（0-100，越高越可疑）：净现背离/高应计/应收存货增速背离/毛利率逆势上升/其他应收占用等量化红旗加权'
+const MGMT_TIP = '管理层水平（0-100，越高越好）：分红连续性与规模、回购、股权激励、机构持股等治理口径加权'
+function windTip(s, kind, baseTip) {
+  if (!windMode.value) return baseTip
+  if (!s.wind_hit) {
+    return '无 Wind 事件数据（一次性抓取仅覆盖部分 A 股），“事件增强分”档下不给分；切回“基础”档可看财报基础分'
+  }
+  const base = s[kind]
+  const disp = dispScore(s, kind)
+  const d = (kind === 'fraud' ? s.wind_fraud_delta : s.wind_mgmt_delta) || 0
+  const flags = s.wind_flags?.length ? '；事件：' + s.wind_flags.join('、') : ''
+  return `Wind 事件增强：基础财报 ${base == null ? '-' : base.toFixed(1)} 分 ${d >= 0 ? '+' : ''}${d.toFixed(1)} → ${disp == null ? '-' : disp.toFixed(1)}${flags}`
+}
+
 function toggleFlt(arr, key, on) {
   const i = arr.indexOf(key)
   if (on && i < 0) arr.push(key)
@@ -88,6 +125,7 @@ async function load() {
       buys: flt.buys.length ? flt.buys.join(',') : null,
       sells: flt.sells.length ? flt.sells.join(',') : null,
       discount: (flt.discount !== '' && flt.buys.length) ? flt.discount : null,
+      wind: windMode.value || null,
       sort: sort.value, order: order.value, page: page.value, page_size: pageSize.value,
     })
   } catch (e) {
@@ -121,7 +159,8 @@ watch(market, () => { industry.value = ''; loadIndustries() })
 
 // kwDebounced 必须在依赖里：搜索框原本只靠下面防抖回调里的 page=1 间接触发刷新，
 // 而搜索时通常已在第一页，页码不变 → watch 不触发 → 输入了也没发请求（applyFlt 同坑）。
-watch([market, board, sort, order, page, kwDebounced], load)
+// windMode 同理：它是整列口径的开关，不在依赖里就会看到“点了没反应”的老毛病。
+watch([market, board, sort, order, page, kwDebounced, windMode], load)
 watch(pageSize, load)
 watch(keyword, (v) => {
   clearTimeout(setSort._t)
@@ -187,6 +226,9 @@ function doJump() {
     </div>
 
     <div class="flts">
+      <button v-if="windVisible()" type="button" class="wind" :class="{ on: windMode }"
+              title="切换造假/管理两列口径：基础财报分 ↔ Wind 事件增强分（基础分 + 一次性 Wind 事件增量，排序与造假≤/管理≥筛选同步跟随；Wind 档下无事件数据的公司不给分显示 -，切回基础档可看全部）"
+              @click="toggleWind">事件增强分 <b>{{ windMode ? 'Wind' : '基础' }}</b></button>
       <label class="t">行业
         <select v-model="industry" @change="applyFlt">
           <option value="">全部</option>
@@ -241,8 +283,8 @@ function doJump() {
             <td>{{ score(s.score_graham_def) }}</td>
             <td>{{ score(s.score_schloss) }}</td>
             <td>{{ score(s.score_buffett) }}</td>
-            <td>{{ score(s.fraud) }}</td>
-            <td>{{ score(s.mgmt) }}</td>
+            <td :title="windTip(s, 'fraud', FRAUD_TIP)">{{ score(dispScore(s, 'fraud')) }}</td>
+            <td :title="windTip(s, 'mgmt', MGMT_TIP)">{{ score(dispScore(s, 'mgmt')) }}</td>
             <td>{{ score(s.cycle) }}</td>
             <td :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
                 title="公允清算价值估算：(流动资产合计-负债合计)/股本">{{ fmt(s.fair_liq) }}</td>
@@ -312,6 +354,21 @@ function doJump() {
 }
 .flts .num input:disabled { opacity: 0.45; }
 .flts .cb { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+/* Wind 事件增强分切换档：选中时边框与文字走主题色（不加底色，与筛选栏其它控件一致） */
+.flts .wind {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--txt);
+  cursor: pointer;
+  font-size: 13px;
+}
+.flts .wind b { font-weight: 600; }
+.flts .wind.on { border-color: var(--accent); color: var(--accent); }
 .flts .disc { margin-left: 2px; }
 .flts .rst {
   margin-left: auto;

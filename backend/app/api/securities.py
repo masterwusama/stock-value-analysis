@@ -5,7 +5,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, func, not_, or_, select
+from sqlalchemy import and_, case, func, not_, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -74,6 +74,14 @@ class SecurityItem(BaseModel):
     fraud: float | None = None
     mgmt: float | None = None
     cycle: float | None = None
+    # Wind 事件档的溯源三元组（前端算显示值 + 悬停提示用）：fraud/mgmt 本身恒为
+    # 财报基础分，不随 wind 参数变化
+    # wind_hit 单独给一个硬布尔：事件条目存在但 delta 全空时，前端不能拿“delta 为空”
+    # 误判成“无事件数据”，也不能与“基础分本身缺失”的 NULL 混为一谈
+    wind_hit: bool = False
+    wind_fraud_delta: float | None = None
+    wind_mgmt_delta: float | None = None
+    wind_flags: list | None = None
     # 价格参考(原列表"买/保/公"四流派合并列 + 清算/净现金)
     fair_liq: float | None = None
     net_cash_ratio: float | None = None
@@ -149,6 +157,30 @@ BOARDS = {
     "bj": ("92", "83", "87", "43"),  # 北交所
 }
 
+# ---------- Wind 事件增强分（列表“事件增强分”切换档）----------
+# 语义 1:1 对齐旧内嵌页 stockLegacy.js 的 dispFraudCode/dispMgmtCode：
+#   有事件条目 → 基础分 + delta 钉到 0~100；无条目 → 不给分(NULL，前端显示“-”)；
+#   基础分本身缺失 → 无基可加，同样 NULL（排序/筛选随之排除）。
+# 命中判据用 wind_overlay 非空：import_legacy 只在 events/index.json byCode 有条目时
+# 写这三个 wind_* 列，故它等价于旧前端判的 eventOverlay[code] 存在（目前仅 A 股 21 家）。
+WIND_HIT = ScoreDaily.wind_overlay.is_not(None)
+
+
+def _wind_score(base, delta):
+    """基础分列 + 事件 delta 列 → Wind 档的 SQL 表达式
+
+    只用在筛选与排序上；响应里的 fraud/mgmt 恒为基础分（Wind 档下前端拿 wind_*
+    三字段自己算显示值，同一 clip 规则），详情页等消费方不会因传了 wind=1 而拿到
+    两套口径的 fraud。旧内嵌页本就是全量前端算（dispFraudCode + sortVal/passFlt），
+    搬到后端后“算法在 SQL、显示在 JS”两处各存一份，改坏一边就会排序与展示错位，
+    故两个口径的钉边界行为都在此注明：无条目/无基→NULL，有则夹 0~100。
+    """
+    return case(
+        (not_(WIND_HIT), None),
+        (base.is_(None), None),
+        else_=func.least(func.greatest(base + func.coalesce(delta, 0.0), 0.0), 100.0),
+    )
+
 
 def _flt_keys(raw: str | None, valid: dict, name: str) -> list[str]:
     """逗号分隔复选键解析 + 白名单校验(非法直接 400,不做静默丢弃)。"""
@@ -187,8 +219,9 @@ def list_securities(
     st: bool | None = Query(None, description="True 仅 ST/*ST,False 排除"),
     keyword: str | None = Query(None, max_length=32, description="代码/名称模糊匹配"),
     industry: str | None = Query(None, max_length=64),
-    fraud_max: float | None = Query(None, ge=0, le=100, description="造假风险≤(不含 Wind 增量)"),
-    mgmt_min: float | None = Query(None, ge=0, le=100, description="管理能力≥"),
+    fraud_max: float | None = Query(None, ge=0, le=100, description="造假风险≤(wind=1 时按增强分)"),
+    mgmt_min: float | None = Query(None, ge=0, le=100, description="管理能力≥(wind=1 时按增强分)"),
+    wind: bool = Query(False, description="事件增强分档：造假/管理两列的筛选与排序改用基础分+Wind 事件增量（响应里两列仍为基础分，显示值由前端叠 wind_* 字段换算）"),
     buys: str | None = Query(None, max_length=64, description="买点复选(逗号分隔,同时满足)"),
     sells: str | None = Query(None, max_length=64, description="卖点复选(须同时达保守与公允)"),
     discount: float | None = Query(None, gt=0, le=500, description="买点折扣%,仅与 buys 配合"),
@@ -206,6 +239,10 @@ def list_securities(
     """
     latest_quote = _latest_sub(db, QuoteDaily, "qdate")
     latest_score = _latest_sub(db, ScoreDaily, "sdate")
+    # 造假/管理两列的口径跟着 wind 档切（旧内嵌页的“排序/筛选跟随”）：无事件数据公司在
+    # Wind 档下表达式出 NULL，既排到末尾也被 fraud_max/mgmt_min 自动排除，与列页显示“-”一致
+    fraud_col = _wind_score(ScoreDaily.fraud, ScoreDaily.wind_fraud_delta) if wind else ScoreDaily.fraud
+    mgmt_col = _wind_score(ScoreDaily.mgmt, ScoreDaily.wind_mgmt_delta) if wind else ScoreDaily.mgmt
 
     q = (
         select(Security, QuoteDaily, ScoreDaily)
@@ -243,9 +280,9 @@ def list_securities(
         kw = f"%{keyword}%"
         conds.append(or_(Security.code.like(kw), Security.name.like(kw)))
     if fraud_max is not None:
-        conds.append(ScoreDaily.fraud <= fraud_max)
+        conds.append(fraud_col <= fraud_max)
     if mgmt_min is not None:
-        conds.append(ScoreDaily.mgmt >= mgmt_min)
+        conds.append(mgmt_col >= mgmt_min)
     factor = (discount if discount is not None else 100.0) / 100.0
     for k in _flt_keys(buys, FLT_BUY_COLS, "buys"):
         conds.append(QuoteDaily.price <= FLT_BUY_COLS[k] * factor)
@@ -261,6 +298,8 @@ def list_securities(
     col = SORT_COLS.get(sort)
     if col is None:
         raise HTTPException(status_code=400, detail=f"invalid sort: {sort}")
+    if wind and sort in ("fraud", "mgmt"):
+        col = fraud_col if sort == "fraud" else mgmt_col
     prim = col.desc() if order == "desc" else col.asc()
     # 参考价/评分列允许 NULL(未抓财务、科目缺失、无评分行)：MySQL 升序把 NULL 排最前,
     # 按买入价升序会先看一屏"-",故升序补一个 NULL 沉底键;降序本就把 NULL 放最后,
@@ -286,6 +325,10 @@ def list_securities(
             fraud=score.fraud if score else None,
             mgmt=score.mgmt if score else None,
             cycle=score.cycle if score else None,
+            wind_fraud_delta=_f(score.wind_fraud_delta) if score else None,
+            wind_mgmt_delta=_f(score.wind_mgmt_delta) if score else None,
+            wind_flags=score.wind_flags if score else None,
+            wind_hit=bool(score is not None and score.wind_overlay is not None),
             fair_liq=_f(score.fair_liq) if score else None,
             net_cash_ratio=_f(score.net_cash_ratio) if score else None,
             buy_graham_agg=_f(score.buy_graham_agg) if score else None,
