@@ -59,9 +59,11 @@ JOB_DEFAULTS = {
     "stock": ["--all-market", "--snapshot-only", "--quiet"],
     # --hk-connect：港股通名单（≈621 只）跟着深抓一起刷，否则只有今天这一次手动跑，
     # 下周港股财务数据就开始变旧。名单拉不到时 hk_connect_targets 空列表降级，不阻断 A 股
-    "deep": ["--all-market", "--hk-connect", "--workers", "4", "--resume", "--max-age", "6",
-             "--chunk", "400", "--flush-every", "200", "--audit-scope", "annual",
-             "--quiet"],
+    # --us-indexes：美股五大指数成分并集（≈765 只），降级行为同上；
+    # 2026-09-03 实测 --workers 6 --chunk 60 走 13 分钟，下面默认参数按半小时估
+    "deep": ["--all-market", "--hk-connect", "--us-indexes", "--workers", "4",
+             "--resume", "--max-age", "6", "--chunk", "400", "--flush-every", "200",
+             "--audit-scope", "annual", "--quiet"],
 }
 
 # 回灌面：日更只动了 index.json（行情/评分），财务文件按 mtime 增量；

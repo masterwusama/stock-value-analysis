@@ -19,6 +19,7 @@
     python fetch_data.py --codes 600028,920000       # 指定代码增量补抓
     python fetch_data.py --codes HK.00700            # 港股代码带前缀（不补零到 6 位，不会砸 A 股同名文件）
     python fetch_data.py --hk-connect --workers 6    # 只跑港股通名单（≈621 只）
+    python fetch_data.py --us-indexes --workers 6    # 只跑美股五大指数成分（≈765 只）
     python fetch_data.py --snapshot-only      # 仅用腾讯批量行情刷全市场估值（约 1 分钟）
 
 index.json 采用“合并写”：每次只覆盖本次跑到的条目，其余保留，
@@ -598,19 +599,28 @@ def fetch_company_hk(code: str, name: str):
 # （美股财年统一映射 12-31，与 A 股 schema 对齐）。金额单位为美元；
 # 无分红/定期报告接口（前端已容错空列表）。
 
-# 财务指标映射：东财英文列 → 前端字段；比率类为百分数数值需 /100
+# 财务指标映射：前端字段 → 东财列名候选（取第一个非空）；比率类为百分数数值需 /100
+# 候选列名为何不止一个：东财美股指标分三张表，叫法不一样——通用表 G 给
+# OPERATE_INCOME/ROE_AVG/DEBT_ASSET_RATIO，银行表 B（券商也算）与保险表 I
+# （REIT 也算）给 TOTAL_INCOME/ROE/DEBT_RATIO
 US_IND_MAP = {
-    "OPERATE_INCOME": "营业总收入",
-    "PARENT_HOLDER_NETPROFIT": "净利润",
-    "BASIC_EPS": "基本每股收益",
+    "营业总收入": ("OPERATE_INCOME", "TOTAL_INCOME"),
+    "净利润": ("PARENT_HOLDER_NETPROFIT",),
+    "基本每股收益": ("BASIC_EPS",),   # 不取 B/I 表的 BASIC_EPS_CS：它按 A 类股本算（BRK_B 给出 46563），
+    # 而快照价是 B 类，两相除就差 1500 倍；美股 EPS 只喂派息率（美股无分红接口），留空无损
 }
 US_IND_PCT = {
-    "GROSS_PROFIT_RATIO": "销售毛利率",
-    "NET_PROFIT_RATIO": "销售净利率",
-    "ROE_AVG": "净资产收益率",
-    "ROA": "总资产净利率",
-    "DEBT_ASSET_RATIO": "资产负债率",
+    "销售毛利率": ("GROSS_PROFIT_RATIO",),
+    "销售净利率": ("NET_PROFIT_RATIO",),
+    "净资产收益率": ("ROE_AVG", "ROE"),
+    "总资产净利率": ("ROA",),
+    "资产负债率": ("DEBT_ASSET_RATIO", "DEBT_RATIO"),
 }
+
+# akshare 查不到时补查的三张表（自己拼请求，除表名外其余参数照 akshare 同构）
+US_IND_TABLES = ("RPT_USF10_FN_GMAININDICATOR",
+                 "RPT_USF10_FN_BMAININDICATOR", "RPT_USF10_FN_IMAININDICATOR")
+US_IND_TABLE_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
 
 # 资产负债表科目映射：东财美股科目名 → 前端字段（未列出的科目保留原名）
 US_BALANCE_MAP = {
@@ -681,26 +691,92 @@ def fetch_us_report(code: str, kind: str, item_map: dict):
     return records[:MAX_PERIODS]
 
 
+def _us_ind_row(r):
+    """东财美股指标行（pandas Series 或自拼请求的 dict 都行）→ 前端字段行
+
+    列名按候选逐个试、缺失不报错：三张表叫法不同，且同属保险表的
+    BRK_B（37 列）与 AAPL（49 列）给的列也不齐。
+    """
+    def pick(cols, conv):
+        # 不能停在“第一个列名存在”上：东财有空串/"-" 占位，解析出 None 还得往下个候选试
+        for c in cols:
+            if r.get(c) is not None:
+                v = conv(r[c])
+                if v is not None:
+                    return v
+        return None
+
+    rec = {"报告期": fiscal_year_end(to_iso(str(r.get("REPORT_DATE") or "")[:10]))}
+    for zh, cols in US_IND_MAP.items():
+        rec[zh] = pick(cols, parse_number)
+    for zh, cols in US_IND_PCT.items():
+        rec[zh] = pick(cols, _pct)
+    rec["流动比率"] = parse_number(r.get("CURRENT_RATIO"))   # 银行/保险两张表不给
+    # 美股仅年报（无单季口径），单季字段留空，前端季视图退化为报告期序列
+    rec["营业总收入_单季"] = None
+    rec["净利润_单季"] = None
+    return rec
+
+
+def _us_indicators_fallback(code: str):
+    """指标兜底：直接请求东财通用 G / 银行 B / 保险 I 三张表，返回按报告期升序
+
+    为何连通用表也要自己再查一遍：akshare 靠“代码含下划线 = 保险”这个粗规则选表，
+    BF_B（百富门 B 类，酒类）因此被送去保险表、拿回空（实测三张表里只有通用表有它）。
+    filter 用裸 ticker（SECURITY_CODE="JPM"）即可，不必像 akshare 那样先换成
+    带交易所后缀的 SECUCODE（实测两种写法行数一致）。
+    """
+    for rpt in US_IND_TABLES:
+        params = {
+            "reportName": rpt, "columns": "ALL", "quoteColumns": "",
+            "pageNumber": "", "pageSize": "", "sortTypes": "-1",
+            "sortColumns": "REPORT_DATE", "source": "SECURITIES", "client": "PC",
+            "filter": f'(SECURITY_CODE="{code}")(DATE_TYPE_CODE="001")',
+        }
+        try:
+            data = (requests.get(US_IND_TABLE_URL, params=params, timeout=25)
+                    .json().get("result") or {}).get("data") or []
+        except Exception:
+            continue
+        if data:
+            return sorted((_us_ind_row(d) for d in data), key=lambda r: r["报告期"])
+    return []
+
+
 def fetch_us_indicators(code: str):
-    """东财美股财务指标：仅年报口径（无季报），映射前端字段，按报告期倒序"""
-    df = ak.stock_financial_us_analysis_indicator_em(symbol=code)
-    if df is None or df.empty:
-        return []
-    df = df.sort_values("REPORT_DATE", ascending=True).reset_index(drop=True)
+    """东财美股财务指标：仅年报口径（无季报），映射前端字段，按报告期倒序
+
+    为何要兼容三张表：东财把美股指标拆成通用 G / 银行 B（券商也算）/ 保险 I（REIT 也算），
+    而 akshare 只按“代码含下划线”切到保险表，其余一律走通用表——金融/地产类在通用表
+    返回 result=None，akshare 直接下标炸 TypeError（实测 765 只里 75 只中招，
+    全是 JPM/BAC/GS/O 这种权重股）。通用表拿不到就补查 B/I。
+    """
+    err = None
+    try:
+        df = ak.stock_financial_us_analysis_indicator_em(symbol=code)
+    except Exception as e:
+        df, err = None, e        # 通用表无此股（金融/REIT），走兜底表
     rows = []
-    for _, r in df.iterrows():
-        rec = {"报告期": fiscal_year_end(to_iso(str(r["REPORT_DATE"])[:10]))}
-        for en, zh in US_IND_MAP.items():
-            rec[zh] = parse_number(r[en])
-        for en, zh in US_IND_PCT.items():
-            rec[zh] = _pct(r[en])
-        rec["流动比率"] = parse_number(r["CURRENT_RATIO"])
-        # 美股仅年报（无单季口径），单季字段留空，前端季视图退化为报告期序列
-        rec["营业总收入_单季"] = None
-        rec["净利润_单季"] = None
-        rows.append(rec)
+    if df is not None and not df.empty:
+        df = df.sort_values("REPORT_DATE", ascending=True).reset_index(drop=True)
+        rows = [_us_ind_row(r) for _, r in df.iterrows()]
+    if not rows:
+        rows = _us_indicators_fallback(code)
+    if not rows:
+        if err:
+            raise err           # 三张表都没有：保留原异常，不让它静默成“指标为空”
+        return []
     rows = rows[-MAX_PERIODS:]
     return rows[::-1]
+
+
+def us_code_variants(code: str):
+    """带级股票的写法变体（去重保序）：BRK_B ↔ BRK.B。
+
+    东财把伯克希尔 B 写成 BRK_B，标普名单与腾讯行情写 BRK.B，两边互不认账。
+    落盘统一用东财形态（五个数据项里四个走东财），只有腾讯快照一处需要反过来试。
+    """
+    return list(dict.fromkeys((code, code.replace("_", "."), code.replace(".", "_"))))
 
 
 def fetch_us_snapshot(code: str):
@@ -708,11 +784,16 @@ def fetch_us_snapshot(code: str):
 
     腾讯美股字段：3=最新价、30=时间、32=涨跌幅%、39=PE(TTM)、44=流通市值(亿美元)、45=总市值(亿美元)；
     无 PB 与换手率，留空。
+
+    写法变体都得试：名单里存的是东财形态 BRK_B，而腾讯 usBRK_B 返回空、只认 usBRK.B。
     """
-    url = f"http://qt.gtimg.cn/q=us{code}"
-    r = requests.get(url, timeout=10)
-    r.encoding = "gbk"
-    parts = r.text.strip().split(";")[0].split("~")
+    parts = []
+    for cand in us_code_variants(code):
+        r = requests.get(f"http://qt.gtimg.cn/q=us{cand}", timeout=10)
+        r.encoding = "gbk"
+        parts = r.text.strip().split(";")[0].split("~")
+        if len(parts) >= 40 and parts[3]:
+            break
     if len(parts) < 40:
         return {}
 
@@ -735,12 +816,33 @@ def fetch_us_snapshot(code: str):
     }
 
 
+_US_INDUSTRY_CACHE = None
+
+
+def us_industry(code: str):
+    """美股行业名（东财 f100，跟着指数成分名单一次带全，见 universe.load_universe_us）。
+
+    与港股同一套路：东财美股个股接口不给行业，逐只加请求不划算，改成查名单缓存。
+    名单缓存缺失/损坏时返回 None，只丢行业列，不阻断抓取。
+    """
+    global _US_INDUSTRY_CACHE
+    if _US_INDUSTRY_CACHE is None:
+        try:
+            import universe as uni
+            _US_INDUSTRY_CACHE = {r[0]: r[2] for r in uni.load_universe_us(quiet=True)}
+        except Exception:
+            _US_INDUSTRY_CACHE = {}
+    return _US_INDUSTRY_CACHE.get(code)
+
+
 def fetch_company_us(code: str, name: str):
     """抓取美股公司：指标/三大报表/快照（东财 + 腾讯）；无分红与定期报告"""
     result = {"code": code, "name": name, "market": "US"}
     result["updated_at"] = datetime.now(CN_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
     errors = []
-    result["info"] = {}  # 东财美股无行业信息，留空
+    industry = us_industry(code)
+    # 行业来自五大指数成分名单；不在名单里的美股（自选代码）留空
+    result["info"] = {"行业": industry} if industry else {}
 
     try:
         result["indicators"] = fetch_us_indicators(code)
@@ -1450,7 +1552,7 @@ def resolve_codes(spec, default_market="A"):
     """
     import universe as uni
 
-    a_names = hk_names = None
+    a_names = hk_names = us_names = None
     out = []
     for raw in str(spec).split(","):
         raw = raw.strip()
@@ -1474,6 +1576,15 @@ def resolve_codes(spec, default_market="A"):
                     if hk_names is None:
                         hk_names = {c: n for c, n, _ in uni.load_universe_hk(quiet=True)}
                     name = hk_names.get(code)
+                elif market == "US":
+                    if us_names is None:
+                        us_names = {c: n for c, n, _, _ in uni.load_universe_us(quiet=True)}
+                    # 手写 US.BRK.B 时归位到名单里的东财形态 BRK_B，
+                    # 否则会另存一份 companies/BRK.B.json，同一家公司两份数据
+                    for cand in us_code_variants(code):
+                        if cand in us_names:
+                            code, name = cand, us_names[cand]
+                            break
                 else:
                     if a_names is None:
                         a_names = dict(uni.load_universe(quiet=True))
@@ -1482,6 +1593,17 @@ def resolve_codes(spec, default_market="A"):
                 print(f"[universe] 名单不可用: {e!r}", flush=True)
         out.append((code, name or code, market))
     return out
+
+
+def us_index_targets(quiet=False):
+    """美股五大指数成分并集（≈765 只）→ (code, name, "US")；行业由 fetch_company_us 查名单缓存补齐。"""
+    import universe as uni
+    try:
+        rows = uni.load_universe_us(quiet=quiet)
+    except Exception as e:
+        print(f"[universe] 美股成分名单不可用: {e!r}", flush=True)
+        return []
+    return [(c, n, "US") for c, n, _, _ in rows]
 
 
 def hk_connect_targets(quiet=False):
@@ -1496,9 +1618,9 @@ def hk_connect_targets(quiet=False):
 
 
 def resolve_targets(args):
-    """目标准：--codes > --hk-connect(港股通) / --all-market(全 A + 非 A 精选) > config 精选池。
+    """目标准：--codes > --hk-connect(港股通) / --us-indexes(美股成分) / --all-market(全 A) > config 精选池。
 
-    --hk-connect 与 --all-market 可同给，合为一轮跑完（A 股 + 港股通），省一次 index.json 全量重写。
+    --hk-connect / --us-indexes 与 --all-market 可同给，合为一轮跑完，省一次 index.json 全量重写。
     """
     if args.codes:
         return resolve_codes(args.codes, args.codes_market)
@@ -1506,6 +1628,8 @@ def resolve_targets(args):
     targets = []
     if args.hk_connect:
         targets += hk_connect_targets(quiet=args.quiet)
+    if args.us_indexes:
+        targets += us_index_targets(quiet=args.quiet)
     if args.all_market:
         try:
             import universe as uni
@@ -1635,6 +1759,9 @@ def main():
                         help="全 A 股（沪深京）名单，来自 universe.py")
     parser.add_argument("--hk-connect", action="store_true",
                         help="港股通标的（≈621 只，名单来自 universe.load_universe_hk，可与 --all-market 同给）")
+    parser.add_argument("--us-indexes", action="store_true",
+                        help="美股五大指数成分并集（≈765 只：标普500/纳指100/道指/费半/NBI，"
+                             "名单来自 universe.load_universe_us，可与 --all-market/--hk-connect 同给）")
     parser.add_argument("--codes", help="逗号分隔代码，只抓这些（增量补抓）")
     parser.add_argument("--codes-market", choices=list(_CODE_MARKETS), default="A",
                         help="--codes 的市场；代码写成 HK.00700 时可免填")

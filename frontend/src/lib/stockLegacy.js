@@ -32,6 +32,19 @@
     return v.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
   }
 
+  // 金额单位随市场：行情快照（现价/市值）是本币（A 人民币 / 港 HKD / 美 USD），
+  // 而财报金额是原报表币种——美股美元，港股大多以人民币披露（如腾讯 2017 营收 2377.6 亿元），
+  // 所以只有美股要把「亿元」改成「亿美元」、「元」改成「美元」，港股维持人民币口径不动。
+  // 图表/对比表拿不到 d，统一从 renderDetail 开头挂上的 state.current 反查市场
+  function detailMarket() { return (state.current && state.current.market) || 'A'; }
+  function yiUnit() { return detailMarket() === 'US' ? '亿美元' : '亿元'; }
+  function yuanUnit() { return detailMarket() === 'US' ? '美元' : '元'; }
+  // 市值本币后缀（拼在 fmtMoney 的「亿」后面）：A 股留空，与列表页 USD/HKD 角标同一套语义
+  function fmtCap(v) {
+    if (v == null || isNaN(v)) return '-';
+    return fmtMoney(v) + (detailMarket() === 'US' ? '美元' : detailMarket() === 'HK' ? '港元' : '');
+  }
+
   // 小数 → "12.34"
   function fmtNum(v) {
     if (v == null || isNaN(v)) return '-';
@@ -1257,8 +1270,8 @@
     html += '<div class="stock-section"><div class="stock-snapshot">' +
       kv('市盈率(TTM)', fmtNum(s.pe_ttm)) +
       kv('市净率', fmtNum(s.pb)) +
-      kv('总市值', fmtMoney(s.market_cap)) +
-      kv('流通市值', fmtMoney(s.float_market_cap)) +
+      kv('总市值', fmtCap(s.market_cap)) +
+      kv('流通市值', fmtCap(s.float_market_cap)) +
       kv('公允清算价值', '<span title="(流动资产合计-负债合计)/财报股本，格雷厄姆清算口径，随财报更新">' +
         (sc.priceRefs && sc.priceRefs.fairLiq != null ? fmtNum(sc.priceRefs.fairLiq) : '-') + '</span>') +
       kv('当前股息率', fmtPct(va.divYield)) +
@@ -1275,7 +1288,7 @@
       '<button data-view="quarter">季</button>' +
       '<button data-view="year" class="active">年</button>' +
       '</div></div>' +
-      '<div class="stock-chart-block"><h4 id="stock-chart-revenue-title">营业总收入 & 净利润（单季，亿元）</h4><div class="stock-chart" id="stock-chart-revenue"></div></div>' +
+      '<div class="stock-chart-block"><h4 id="stock-chart-revenue-title">营业总收入 & 净利润（单季，' + yiUnit() + '）</h4><div class="stock-chart" id="stock-chart-revenue"></div></div>' +
       '<div class="stock-chart-block"><h4 id="stock-chart-margin-title">销售毛利率 & 销售净利率（报告期口径）</h4><div class="stock-chart" id="stock-chart-margin"></div></div>' +
       '<div class="stock-chart-block"><h4 id="stock-chart-roe-title">净资产收益率（各期累计）</h4><div class="stock-chart" id="stock-chart-roe"></div></div>' +
       '<p class="stock-chart-note" id="stock-chart-note">季度口径：单季值 = 本期累计 - 上期累计（一季报为当季值）；ROE 为报告期累计值</p></div>';
@@ -3046,7 +3059,7 @@
     $('stock-chart-title').textContent = isYear
       ? '关键指标趋势（年度口径）'
       : '关键指标趋势（近 ' + indicators.length + ' 期）';
-    $('stock-chart-revenue-title').textContent = '营业总收入 & 净利润（' + (isYear ? '全年' : '单季') + '，亿元）';
+    $('stock-chart-revenue-title').textContent = '营业总收入 & 净利润（' + (isYear ? '全年' : '单季') + '，' + yiUnit() + '）';
     $('stock-chart-margin-title').textContent = '销售毛利率 & 销售净利率（' + (isYear ? '年度' : '报告期') + '口径）';
     $('stock-chart-roe-title').textContent = '净资产收益率（' + (isYear ? '年度' : '各期累计') + '）';
     $('stock-chart-note').textContent = isYear
@@ -3137,7 +3150,7 @@
     var opt1Legend = isYear
       ? ['营业总收入', '净利润', '营收同比', '净利同比']
       : ['营业总收入', '净利润', '营收同比', '净利同比', '营收环比', '净利环比'];
-    var opt1 = baseOption(opt1Legend, '亿元');
+    var opt1 = baseOption(opt1Legend, yiUnit());
     opt1.series = [
       barYiSeries('营业总收入', revKey, '#5b8ff9'),
       barYiSeries('净利润', netKey, '#61c0a8'),
@@ -3373,7 +3386,7 @@
       txt = (d >= 0 ? '+' : '') + d.toFixed(1) + '天';
     } else if (m.type === 'yuan') {
       d = va - vb;
-      txt = (d >= 0 ? '+' : '') + d.toFixed(2) + '元';
+      txt = (d >= 0 ? '+' : '') + d.toFixed(2) + yuanUnit();
     } else {
       d = va - vb;
       txt = (d >= 0 ? '+' : '') + d.toFixed(2);

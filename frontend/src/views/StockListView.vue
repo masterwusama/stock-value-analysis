@@ -108,6 +108,17 @@ function setSort(key) {
   page.value = 1
 }
 
+// 行业字典跟着市场走：A 股是国标行业（100+ 类）、港股是恒生行业、美股是东财中文行业（11 类），
+// 混在一个下拉里切到美股根本找不到目标行业，计数也是全市场口径（原来整市场一次拉全、不随 tab 变）
+async function loadIndustries() {
+  try {
+    industries.value = await get('/securities/industries', { market: market.value })
+  } catch (e) { /* 下拉缺失不影响列表主体 */ }
+}
+
+// 必须注册在下面 load 的 watch 之前：切市场先把已选行业清掉，同一轮里触发的 load 才带着空行业去请求
+watch(market, () => { industry.value = ''; loadIndustries() })
+
 // kwDebounced 必须在依赖里：搜索框原本只靠下面防抖回调里的 page=1 间接触发刷新，
 // 而搜索时通常已在第一页，页码不变 → watch 不触发 → 输入了也没发请求（applyFlt 同坑）。
 watch([market, board, sort, order, page, kwDebounced], load)
@@ -117,12 +128,9 @@ watch(keyword, (v) => {
   setSort._t = setTimeout(() => { kwDebounced.value = v.trim(); page.value = 1 }, 300)
 })
 
-onMounted(async () => {
+onMounted(() => {
   load()
-  try {
-    // 行业选项整市场一次拉取(几百个字),不随当页数据变化
-    industries.value = await get('/securities/industries')
-  } catch (e) { /* 下拉缺失不影响列表主体 */ }
+  loadIndustries()
 })
 
 const fmt = (n, d = 2) => n == null ? '-' : Number(n).toLocaleString('zh-CN', { minimumFractionDigits: d, maximumFractionDigits: d })

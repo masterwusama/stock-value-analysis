@@ -51,6 +51,14 @@ def same_val(a, b):
         return str(a) == str(b)
 
 
+def close_val(a, b, eps=0.02):
+    """金额比对：两边都只精确到分，允许两分钱以内的舍入差。"""
+    try:
+        return abs(float(a) - float(b)) <= eps
+    except (TypeError, ValueError):
+        return a == b
+
+
 def check_company(code):
     src = load(DATA / "companies" / f"{code}.json")
     api = get(f"/api/securities/{code}")
@@ -144,8 +152,24 @@ def check_portfolio():
             q = ap[code]
             for f in ("shares", "cost", "bought_at", "tranches", "days"):
                 assert same_val(q[f], p[f]), f"{k}/{code}.{f}: {q.get(f)!r} != {p.get(f)!r}"
-            for f in ("price", "value", "pnl", "pnl_pct"):
-                assert abs(q[f] - p[f]) < 0.01, f"{k}/{code}.{f}: {q[f]} != {p[f]}"
+            # 现价：API 按 DB 最新行情重算，基准取 index.json（与 check_company 同一口径）。
+            # 不拿账本 price 当基准：那是入账时点的标记，同日重跑被“已入账，跳过”挡住，
+            # 而行情快照一天刷多次——实测 600551 盘中入账 8.52、收盘那轮 8.62，
+            # 账本永远追不上，卡容差只会掩盖真问题（如取不到行情时回退成本价）。
+            assert same_val(q["price"], idx_entry(code).get("price")), \
+                f"{k}/{code}.price: {q.get('price')!r} != index {idx_entry(code).get('price')!r}"
+            # 市值/盈亏只各查自洽：value = shares×price，pnl = value−shares×cost
+            for row, tag in ((p, "账本"), (q, "API")):
+                v = round(row["shares"] * row["price"], 2)
+                assert close_val(row["value"], v), \
+                    f"{k}/{code}.{tag}.value: {row['value']!r} != {v!r}"
+                pl = round(row["value"] - row["shares"] * row["cost"], 2)
+                assert close_val(row["pnl"], pl), \
+                    f"{k}/{code}.{tag}.pnl: {row['pnl']!r} != {pl!r}"
+                if row["cost"] and row["shares"]:
+                    pp = round(row["pnl"] / (row["shares"] * row["cost"]) * 100, 2)
+                    assert close_val(row["pnl_pct"], pp), \
+                        f"{k}/{code}.{tag}.pnl_pct: {row['pnl_pct']!r} != {pp!r}"
     print("-- portfolio 三策略 + 持仓实时计算 OK")
 
 

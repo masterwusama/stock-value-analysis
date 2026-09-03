@@ -29,6 +29,8 @@ backend/collector/data/index.json
 backend/collector/data/universe.json
 # 港股通名单缓存（东财 clist 一次请求可重生，621 只含行业）
 backend/collector/data/universe_hk.json
+# 美股五大指数成分缓存（标普 CSV + Nasdaq WeightingData + 道指维基模板 + 东财全美股表，一次 --dump-us 可重生）
+backend/collector/data/universe_us.json
 backend/collector/data/.fetch.lock
 backend/collector/data/crawl_failed.json
 backend/collector/data/_index_backup_*
