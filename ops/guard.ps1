@@ -42,6 +42,10 @@ if ($apiUp -gt 0 -and $schUp -gt 0) {
 # 等不到管道关闭而挂死；任务设了 IgnoreNew，挂住的 guard 会吃掉后续所有 tick，
 # 守护反而比被守护的对象先失聪。拉起结果由下一个 tick 的快路径复检，现场看日志。
 $startOut = Join-Path $RunDir 'guard.start.out'
+# 上一轮 start.ps1 到底卡在哪一步,只存在这两个文件里;它们同样被 Start-Process 覆盖式
+# 打开,所以拉起前先轮转（guard 每 10 分钟一个 tick,不轮转就只能看到最后一次）
+Rotate-SvcLog $startOut
+Rotate-SvcLog (Join-Path $RunDir 'guard.start.err')
 try {
     $null = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
@@ -59,8 +63,15 @@ try {
         -RedirectStandardOutput $startOut `
         -RedirectStandardError (Join-Path $RunDir 'guard.start.err')
 }
+# 兜底命名的历史副本也一起回收（与 Rotate-SvcLog 同口径，留最近 10 份），
+# 否则反复拉起失败时每 10 分钟多一个文件，永远没人清
+foreach ($f in @(Get-ChildItem -Path $RunDir -File -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -match '^guard\.start\.\d{8}-\d{6}\.(out|err)$' } |
+                 Sort-Object LastWriteTime -Descending | Select-Object -Skip 10)) {
+    Remove-Item $f.FullName -Force -ErrorAction SilentlyContinue
+}
 Add-Content -Path $log -Encoding UTF8 -Value `
-    "[$stamp] guard 缺失(api=$apiUp scheduler=$schUp) → 已触发 start.ps1 拉起,现场见 run/guard.start.out"
+    "[$stamp] guard 缺失(api=$apiUp scheduler=$schUp) → 已触发 start.ps1 拉起,现场见 run/$(Split-Path $startOut -Leaf)(上一轮已轮转留档)"
 
 if (@(Get-Content $log -Encoding UTF8).Count -gt 400) {
     Get-Content $log -Tail 400 -Encoding UTF8 | Set-Content $log -Encoding UTF8
