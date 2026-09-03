@@ -14,6 +14,11 @@ param(
 
 Write-Host "=== stock-value-analysis 关闭 ===" -ForegroundColor Cyan
 
+# 先写停机标记再杀进程:计划任务 va-guard 每 10 分钟跑一次 guard.ps1,
+# 不立这个牌子就会在下一轮把服务重新拉起(等于关不掉)
+if (-not (Test-Path $RunDir)) { New-Item -ItemType Directory -Path $RunDir | Out-Null }
+Set-Content -Path $PausedFile -Encoding UTF8 -Value (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+
 $onlyOne = $Api.IsPresent -or $Scheduler.IsPresent
 $doApi       = -not $onlyOne -or $Api.IsPresent
 $doScheduler = -not $onlyOne -or $Scheduler.IsPresent   # 不带参数 = 全关

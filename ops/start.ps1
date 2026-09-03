@@ -14,6 +14,12 @@ param(
 
 Write-Host "=== stock-value-analysis 启动 ===" -ForegroundColor Cyan
 
+# 手动启动 = 解除停机标记,让守护重新接管(否则标记一直留着,服务再崩也不会被拉起)
+if (Test-Path $PausedFile) {
+    Remove-Item $PausedFile -Force
+    Write-Host "  [清理] 已解除停机标记 run/.paused,守护重新生效"
+}
+
 # --- 前置检查 ---
 if (-not (Test-Path (Join-Path $Backend '.env'))) {
     Write-Host "  [警告] backend/.env 不存在,数据库连接可能失败" -ForegroundColor Yellow

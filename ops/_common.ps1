@@ -9,6 +9,9 @@ $Root     = Split-Path $PSScriptRoot -Parent
 $Backend  = Join-Path $Root 'backend'
 $Frontend = Join-Path $Root 'frontend'
 $RunDir   = Join-Path $Root 'run'
+# 停机标记:stop.ps1 写入、start.ps1 删除;guard.ps1 见到它就静默让路,
+# 否则手动关服务会被计划任务在下一个 tick 复活(等于关不掉)
+$PausedFile = Join-Path $RunDir '.paused'
 
 if ($env:VA_PORT)   { $Port   = [int]$env:VA_PORT } else { $Port = 8000 }
 if ($env:VA_PYTHON) { $Python = $env:VA_PYTHON }        else { $Python = 'python' }
