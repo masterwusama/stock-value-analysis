@@ -31,7 +31,10 @@ for market, n in db.execute(select(Security.market, func.count()).group_by(Secur
 
 print("== 3. 抽样:600309 最新行情 ==")
 sid = db.execute(select(Security.sid).where(Security.code == "600309")).scalar_one()
-q = db.execute(select(QuoteDaily).where(QuoteDaily.sid == sid)).scalar_one()
+# quote_daily / score_daily 是按交易日堆的时间序列（一天一行，跨天后就不止一行），
+# 要对比的是源快照对应的那一行，故取最新交易日而不是 scalar_one()
+q = db.execute(select(QuoteDaily).where(QuoteDaily.sid == sid)
+               .order_by(QuoteDaily.trade_date.desc()).limit(1)).scalar_one()
 # 行情面日更只改 index.json 的 quote(不重写 companies 明细),故源以 index 为准;
 # index 无 quote 块(早期条目)时回退明细 snapshot
 IDX = json.loads((DATA / "index.json").read_text(encoding="utf-8"))
@@ -46,7 +49,8 @@ print("== 4. 抽样:002027 评分 vs index.json ==")
 idx = IDX
 src_sc = next(c["scores"] for c in idx["companies"] if c["code"] == "002027")
 sid2 = db.execute(select(Security.sid).where(Security.code == "002027")).scalar_one()
-s = db.execute(select(ScoreDaily).where(ScoreDaily.sid == sid2)).scalar_one()
+s = db.execute(select(ScoreDaily).where(ScoreDaily.sid == sid2)
+               .order_by(ScoreDaily.trade_date.desc()).limit(1)).scalar_one()
 print(f"  DB:   buffett={s.score_buffett} fraud={s.fraud} mgmt={s.mgmt} buy_schloss={s.buy_schloss}")
 print(f"  JSON: buffett={src_sc['buffett']} fraud={src_sc['fraud']} mgmt={src_sc['mgmt']} buy={src_sc['priceRefs']['schloss']['buy']}")
 assert float(s.score_buffett) == src_sc["buffett"]

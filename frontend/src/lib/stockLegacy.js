@@ -84,6 +84,18 @@
       .sort(function (a, b) { return a['报告期'] < b['报告期'] ? -1 : 1; });
   }
 
+  // 美股真实财年末：数据侧为对齐 A 股 schema 把报告期压成 12-31（见
+  // collector/scripts/fetch_data.py 的 fiscal_year_end，年报选行全靠这个日期），
+  // 原值随 extras 存在 财年截止 字段里。未重抓的老数据没这个字段，返回 null 即可。
+  function fiscalEndOf(rows) {
+    var best = null;
+    (rows || []).forEach(function (r) {
+      var f = String(r['财年截止'] || '');
+      if (f.length === 10 && (!best || f > best)) best = f;
+    });
+    return best;
+  }
+
   // 滚动 TTM 净利润（利润表为累计口径）：最新累计 + 上年年报 - 上年同期累计；最新为年报时直接用年报数
   function ttmNetProfit(indicators) {
     var byDate = {}, latest = null, cur = null;
@@ -1291,7 +1303,14 @@
       '<div class="stock-chart-block"><h4 id="stock-chart-revenue-title">营业总收入 & 净利润（单季，' + yiUnit() + '）</h4><div class="stock-chart" id="stock-chart-revenue"></div></div>' +
       '<div class="stock-chart-block"><h4 id="stock-chart-margin-title">销售毛利率 & 销售净利率（报告期口径）</h4><div class="stock-chart" id="stock-chart-margin"></div></div>' +
       '<div class="stock-chart-block"><h4 id="stock-chart-roe-title">净资产收益率（各期累计）</h4><div class="stock-chart" id="stock-chart-roe"></div></div>' +
-      '<p class="stock-chart-note" id="stock-chart-note">季度口径：单季值 = 本期累计 - 上期累计（一季报为当季值）；ROE 为报告期累计值</p></div>';
+      '<p class="stock-chart-note" id="stock-chart-note">季度口径：单季值 = 本期累计 - 上期累计（一季报为当季值）；ROE 为报告期累计值' +
+      // 财年不是日历年的公司（NVDA 1 月末、MSFT 6 月末、AAPL 9 月末）图上标的是对齐用的
+      // 12-31，不点明就会被当成日历年数据去跟同行比（时点最多差半年）
+      (function () {
+        var fe = fiscalEndOf(d.indicators);
+        return fe && fe.slice(5) !== '12-31'
+          ? '；本公司财年截至 ' + fe + '，下面的 12-31 只是对齐日历年的报告期标签' : '';
+      })() + '</p></div>';
 
     // 财务对比（年报/季报，任意两个报告期可对比）
     html += '<div class="stock-section"><div class="stock-section-head">' +

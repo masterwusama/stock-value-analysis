@@ -596,7 +596,7 @@ def fetch_company_hk(code: str, name: str):
 
 # ==================== 美股数据源（东财美股 + 腾讯行情） ====================
 # 东财美股三大报表为长表（科目×报告期），科目中文命名；财务指标仅年报口径
-# （美股财年统一映射 12-31，与 A 股 schema 对齐）。金额单位为美元；
+# （金额单位为美元；真实财年末由我们自己压平成 12-31 对齐 A 股 schema，见 fiscal_year_end）；
 # 无分红/定期报告接口（前端已容错空列表）。
 
 # 财务指标映射：前端字段 → 东财列名候选（取第一个非空）；比率类为百分数数值需 /100
@@ -663,8 +663,18 @@ US_CASHFLOW_MAP = {
 
 
 def fiscal_year_end(date_str):
-    """美股财年统一映射 12-31：财年末在 1-6 月 → 上年 12-31，7-12 月 → 当年 12-31
-    （如 NVDA 2026-01-25 → 2025-12-31，保证前端年报序列按 12-31 对齐）"""
+    """美股真实财年末 → 对齐用的 12-31 报告期：1-6 月 → 上年 12-31，7-12 月 → 当年 12-31。
+
+    为什么压平发生在我们而不在源（2026-09-03 实测东财接口）：源给的就是真实财年末
+    ——NVDA 全是 1 月末（2026-01-25…）、AAPL 9 月末、MSFT 6 月末，只有我们的
+    fetch_us_report/_us_ind_row 调了本函数。压平不能去掉：scoring.py 有 6 处靠
+    `'12-31' in 报告日` 选年报行（annualRows/annualBalanceRows/prev_ann 等），美股原样
+    入库就一条年报都选不出来，整套评分对 765 只美股直接失效。
+
+    压平丢掉的是“这一行到底盖住哪 12 个月”：MSFT 截至 2025-06-30 的财年会被标成
+    2024-12-31，跟日历年公司并排比增速时点上差半年。这个信息用 `财年截止` 字段补回
+    （随 extras 全量入库、API 原样还原，见 app/fin_columns.py），不再靠读的人猜。
+    """
     try:
         y, m, _ = str(date_str).split("-")
         y, m = int(y), int(m)
@@ -673,20 +683,38 @@ def fiscal_year_end(date_str):
         return date_str
 
 
+def us_report_period(raw):
+    """东财 REPORT_DATE → (对齐用的 12-31 标签, 真实财年末)；识别不了时两者同为原值。"""
+    real = to_iso(str(raw)[:10])
+    return fiscal_year_end(real), real
+
+
 def fetch_us_report(code: str, kind: str, item_map: dict):
     """东财美股三大报表：长表（科目×金额）→ 宽表（报告日 × 字段），按报告日倒序"""
     df = ak.stock_financial_us_report_em(stock=code, symbol=kind, indicator="年报")
     if df is None or df.empty:
         return []
     by_date = {}
+    real_by_label = {}   # 12-31 标签 → 该行实际来自哪个财年末
     for _, r in df.iterrows():
-        dt = fiscal_year_end(to_iso(str(r["REPORT_DATE"])[:10]))
+        dt, real = us_report_period(r["REPORT_DATE"])
         if not dt:
             continue
+        prev = real_by_label.get(dt)
+        if prev and prev != real:
+            # 两个不同财年末压进同一个 12-31（换财年的过渡期、53 周制公司）时，老写法会把
+            # 两年的科目并成一行——那不是“取其一”，是造出一个哪年都不对的行。留财年末更晚
+            # 的整行，先清掉旧的再填，并喊一声让人去核
+            print("  [warn] %s %s: 财年 %s 与 %s 同落 %s，只留较晚的" % (code, kind, prev, real, dt))
+            if prev > real:
+                continue
+            by_date[dt] = {}
+        real_by_label[dt] = real
         item = item_map.get(str(r["ITEM_NAME"]).strip(), str(r["ITEM_NAME"]).strip())
         val = parse_number(r["AMOUNT"])
         by_date.setdefault(dt, {})[item] = val
-    records = [{"报告日": dt, **fields} for dt, fields in by_date.items()]
+    records = [{"报告日": dt, "财年截止": real_by_label.get(dt), **fields}
+               for dt, fields in by_date.items()]
     records.sort(key=lambda r: r["报告日"], reverse=True)
     return records[:MAX_PERIODS]
 
@@ -706,7 +734,8 @@ def _us_ind_row(r):
                     return v
         return None
 
-    rec = {"报告期": fiscal_year_end(to_iso(str(r.get("REPORT_DATE") or "")[:10]))}
+    label, real = us_report_period(r.get("REPORT_DATE") or "")
+    rec = {"报告期": label, "财年截止": real}
     for zh, cols in US_IND_MAP.items():
         rec[zh] = pick(cols, parse_number)
     for zh, cols in US_IND_PCT.items():

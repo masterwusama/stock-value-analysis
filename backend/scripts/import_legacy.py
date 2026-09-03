@@ -16,6 +16,11 @@
     python -m scripts.import_legacy             # 清空后全量导入
     python -m scripts.import_legacy --no-clean  # 不清空,按唯一键 upsert;
         wind_event/wind_holder/pf_trade 无自然唯一键,按 sid/strat_key 先删后插(整文件权威)
+
+2026-09-03:fin_*/dividend/periodic_report 从 INSERT IGNORE 改成按唯一键 upsert。
+    旧写法下“源 JSON 是唯一权威”只对第一次入库成立:东财修订过的数字、以及后来新增的
+    字段（如 财年截止）永远进不了库,深抓 job 重抓全市场实际只写进了新报告期那几行。
+    改后 MySQL 不再默默钳掉超列宽/越界的值,故 _Writer 里显式截长文、越界置 NULL。
 """
 import argparse
 import json
@@ -25,7 +30,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import JSON, select, text
+from sqlalchemy import JSON, Numeric, String, select, text
 from sqlalchemy.dialects.mysql import insert as mysql_insert
 
 from app.config import LEGACY_DATA_DIR, MARKET_CURRENCY
@@ -173,6 +178,8 @@ DIV_KEYS = ("sid", "div_year", "div_type", "description", "bonus_per_10",
             "transfer_per_10", "announce_date", "record_date", "ex_date", "pay_date")
 RPT_KEYS = ("sid", "report_date", "category", "title", "pdf_url", "detail_url",
             "audit_firm", "audit_opinion")
+# 财务四表公共列（各表再拼自己的核心科目列，见 import_companies）
+FIN_KEYS = ("sid", "report_date", "updated_at", "extras")
 # 证券主数据：名称/行业/上市日缺失时不用 NULL 覆盖已有值
 SEC_UPD = ("name=VALUES(name), "
            "industry=COALESCE(VALUES(industry), industry), "
@@ -180,32 +187,73 @@ SEC_UPD = ("name=VALUES(name), "
            "updated_at=VALUES(updated_at)")
 
 
+def coalesce_upd(cols):
+    """ON DUPLICATE KEY UPDATE 子句：本轮没抓到的字段（NULL）保留库里旧值。
+
+    源 JSON 是权威，撞唯一键必须更新，不能靠 INSERT IGNORE 默默丢掉：那会让东财
+    修订过的数字、以及后加的字段（如 2026-09-03 的 财年截止）永远进不了库，
+    深抓 job 每天重抓全市场财务实际只写进了新报告期那几行。
+    抓到 0 仍会覆盖（0 不是 NULL），只有真缺值才留旧。
+    """
+    return ", ".join(f"`{c}`=COALESCE(VALUES(`{c}`), `{c}`)" for c in cols)
+
+
 class _Writer:
     """一张表一个写入器：攒够 BULK_ROWS 冲刷一次，commit 时机由调用方掌握。"""
 
     def __init__(self, db, stats, model, keys=None, mode="ignore",
-                 upd_skip=(), upd_expr=None):
+                 upd_skip=(), upd_expr=None, upd_coalesce=False):
         tbl = model.__table__
         self.cols = [k for k in (keys or [c.name for c in tbl.columns]) if k in tbl.c]
         self.json_cols = {c.name for c in tbl.columns
                           if c.name in self.cols and isinstance(c.type, JSON)}
+        self.str_len = {c.name: c.type.length for c in tbl.columns
+                        if c.name in self.cols and isinstance(c.type, String) and c.type.length}
+        # 定点列可表达的最大绝对值：Numeric(p,s) 的整数位只有 p-s 位
+        self.num_max = {c.name: 10 ** (c.type.precision - c.type.scale) - 1
+                        for c in tbl.columns
+                        if c.name in self.cols and isinstance(c.type, Numeric)
+                        and c.type.precision and c.type.scale is not None}
         names = ", ".join(f"`{c}`" for c in self.cols)
         holders = ", ".join(f":{c}" for c in self.cols)
         if mode == "ignore":
             sql = f"INSERT IGNORE INTO {tbl.name} ({names}) VALUES ({holders})"
         else:
             upd = [c for c in self.cols if c not in upd_skip]
-            expr = upd_expr or ", ".join(f"`{c}`=VALUES(`{c}`)" for c in upd)
+            if upd_expr:
+                expr = upd_expr
+            elif upd_coalesce:
+                expr = coalesce_upd(upd)
+            else:
+                expr = ", ".join(f"`{c}`=VALUES(`{c}`)" for c in upd)
             sql = f"INSERT INTO {tbl.name} ({names}) VALUES ({holders}) ON DUPLICATE KEY UPDATE {expr}"
         self.stmt, self.db, self.stats = text(sql), db, stats
         self.table, self.rows = tbl.name, []
 
     def add(self, row):
+        """一行入集：按列型预处理（截长文 / 越界置 NULL）后再交给 executemany。
+
+        以前走 INSERT IGNORE， MySQL 会默默把这些值按列宽/量程钳掉（1406/1264 降为
+        warning）；改 upsert 后同样的数据会直接抛错、把整轮回灌（含全市场行情快照）
+        一起回滚。钳位与置 NULL 的口径收回到这里，统一计数：核心列只是查询索引，
+        真值原样存在 extras 里，存一个“假的最大值”只会污染排序/筛选。
+        """
         vals = {}
         for c in self.cols:
             v = row.get(c)
             if c in self.json_cols and v is not None:
                 v = json.dumps(v, ensure_ascii=False)
+            elif isinstance(v, str):
+                lim = self.str_len.get(c)
+                if lim and len(v) > lim:
+                    # 截头：分红方案/公告标题的开头就是人要看的部分，比丢整行好
+                    v = v[:lim]
+                    self.stats[f"{self.table}.clipped"] += 1
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                lim = self.num_max.get(c)
+                if lim is not None and abs(v) >= lim:
+                    v = None
+                    self.stats[f"{self.table}.out_of_range"] += 1
             vals[c] = v
         self.rows.append(vals)
         if len(self.rows) >= BULK_ROWS:
@@ -215,9 +263,29 @@ class _Writer:
         rows, self.rows = self.rows, []
         if not rows:
             return
+        bad_total = 0
         for i in range(0, len(rows), BULK_ROWS):
-            self.db.execute(self.stmt, rows[i:i + BULK_ROWS])
-        self.stats[self.table] += len(rows)
+            batch = rows[i:i + BULK_ROWS]
+            try:
+                # SAVEPOINT 包住每批：一批出错只退这一批，不把已扫进事务的
+                # 前几千行连带丢给外层 rollback
+                with self.db.begin_nested():
+                    self.db.execute(self.stmt, batch)
+            except Exception as e:
+                # 整批被一行坏数据带崩（见过 1406/1264）：逐行重试，只丢真装不下的行
+                bad, first = 0, None
+                for r in batch:
+                    try:
+                        with self.db.begin_nested():
+                            self.db.execute(self.stmt, r)
+                    except Exception as e2:
+                        bad += 1
+                        first = first or f"{type(e2).__name__}: {e2}"[:200]
+                bad_total += bad
+                self.stats[f"{self.table}.bad_rows"] += bad
+                print(f"[warn] {self.table} 批量写入报错退回逐行，跳过 {bad}/{len(batch)} 行"
+                      f"；首个错误 {first or repr(e)[:200]}", flush=True)
+        self.stats[self.table] += len(rows) - bad_total
 
 
 def load_sid_map(db):
@@ -369,12 +437,17 @@ def import_companies(db, stats, only_fresh=None, quiet=False, head=True):
                      upd_skip=("sid", "trade_date"))
     w_score = writer("score_daily", ScoreDaily, mode="upsert",
                      upd_skip=("sid", "trade_date"))
-    w_div = writer("dividend", Dividend, DIV_KEYS)
-    w_rpt = writer("periodic_report", PeriodicReport, RPT_KEYS)
+    # 分红/报告/财务四表都有唯一键（uk 或复合主键），故按源 JSON 更新而非忽略；
+    # 主键列不参与 SET 子句（upd_skip），余下各列缺值时留库旧值（upd_coalesce）
+    w_div = writer("dividend", Dividend, DIV_KEYS, mode="upsert",
+                   upd_skip=("sid",), upd_coalesce=True)
+    w_rpt = writer("periodic_report", PeriodicReport, RPT_KEYS, mode="upsert",
+                   upd_skip=("sid", "report_date"), upd_coalesce=True)
     w_fin = {
         spec[1].__tablename__: writer(
             spec[1].__tablename__, spec[1],
-            ("sid", "report_date", "updated_at", "extras") + tuple(spec[2]),
+            FIN_KEYS + tuple(spec[2]),
+            mode="upsert", upd_skip=("sid", "report_date"), upd_coalesce=True,
         )
         for spec in FIN_SPECS
     }
@@ -662,14 +735,28 @@ def import_edb(db, stats):
                 db.execute(stmt)
                 stats["edb_value"] += 1
                 keep.add(d)
-            # 与 import_agro 同理：--no-clean 下只 upsert 不删，指标撤点会永久残留
+            # 与 import_agro 同理：--no-clean 下只 upsert 不删，指标撤点会永久残留。
+            # 但删除要限定在源自身覆盖的区间内：Wind 积分有限（2026-09-03 约剩 1000），
+            # 而 fetch_edb 默认只抓近 365 天，一旦 edb.json 被整份覆盖成一年数据，
+            # 无条件差集会把库里回溯到前几年的点一起抹掉，而且补不回来。区间外的历史点
+            # 保留（真要清库用不带 --no-clean 的全量重灌）。
+            src_dates = sorted(x for x in keep if x is not None)
+            if not src_dates:
+                stats["edb_value_delete_skipped"] += 1
+                continue  # 源里该指标一个可用点都没有：一个都不删
+            lo, hi = src_dates[0], src_dates[-1]
             for row in db.execute(text(
                     "SELECT data_date FROM edb_value WHERE edb_code = :c"),
                     {"c": ind["code"]}).fetchall():
-                if row[0] not in keep:
+                if row[0] in keep:
+                    continue
+                if lo <= row[0] <= hi:
                     db.execute(text("DELETE FROM edb_value WHERE edb_code = :c"
                                     " AND data_date = :d"), {"c": ind["code"], "d": row[0]})
                     stats["edb_value_stale_deleted"] += 1
+                else:
+                    # 窗口外的历史点：源里没给，但不能当成“被撤点”删掉
+                    stats["edb_value_delete_skipped"] += 1
 
 
 TABLES = [
