@@ -37,3 +37,5 @@ backend/collector/data/_index_backup_*
 backend/collector/data/*.err
 # 全市场扫描缓存(screen_stocks/auto_screen 副产物)
 _screen_cache.json
+# screen_stocks 输出(内含本机绝对路径,每次运行重写)
+_screen_result.json

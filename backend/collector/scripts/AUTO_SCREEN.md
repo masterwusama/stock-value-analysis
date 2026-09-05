@@ -2,12 +2,12 @@
 
 本地自动化抓取筛选器：把 [价值分析网页](https://masterwusama.github.io/stock-data/) 列表页的**全部筛选条件**做成了命令行参数，并额外支持**全市场扫描**。所有评分与买点/卖点算法直接复用网站同源代码（`scoring.py`），输出与网页所见完全一致。
 
-脚本位置：`stock-data/scripts/auto_screen.py`，在 `stock-data` 目录下运行。
+脚本位置：`backend/collector/scripts/auto_screen.py`，在 `backend/collector` 目录下运行。
 
 ## 1. 快速上手
 
 ```powershell
-cd <项目目录>
+cd <项目目录>\backend\collector
 
 # ① 和网页勾「造假≤30 + 管理≥55 + 施洛斯买点」完全等价
 python scripts\auto_screen.py --fraud-max 30 --mgmt-min 55 --buy schloss
