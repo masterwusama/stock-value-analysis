@@ -63,6 +63,9 @@ python -m collector.scheduler   # stock 周一~六 16:05/22:05 · deep 周六 09
 .\ops\status.ps1 -Jobs           # 附带 etl_job_log 最近运行记录
 .\ops\stop.ps1                   # 关调度器 + 服务 + 残留采集子进程
 .\ops\stop.ps1 -Api              # 只关服务（不动正在跑的采集任务）
+.\ops\collect.ps1                # 手动补跑每日采集：stock → agro（调度器同款命令，自动回灌）
+.\ops\collect.ps1 edb -Background # 只跑一个 job；长任务转后台，日志 run/collect.<job>.out.log
+.\ops\collect.ps1 -List          # job 表 + 调度时刻 + etl_job_log 最近记录
 ```
 
 进程按命令行特征识别（不依赖 pid 文件），日志落在 `run/*.log`（已 gitignore）。环境变量 `VA_PORT` / `VA_PYTHON` 可覆盖端口与 python 解释器。
@@ -115,5 +118,5 @@ backend/
   collector/      采集脚本+JSON 工作目录+调度(run.py/scheduler.py)
   docs/schema.sql 16 表 DDL 存档
 frontend/         Vue3+Vite(hash 路由, echarts)
-ops/              启停脚本 start/stop/status(.ps1 + .bat 包装)
+ops/              启停脚本 start/stop/status/guard/collect(.ps1 + .bat 包装)
 ```
