@@ -158,6 +158,32 @@ def _weighted_total(scored):
     return min(100.0, sum(s for s, _ in avail) / wsum * 100.0)
 
 
+def _school_total(items, weights, penalties=()):
+    """四派总分：正分项按可用满分归一，再夹到 ±「可评估权重」，扣分项原样相加。
+
+    为什么不能直接 ssum(items)（None 当 0 分）：缺一项等于白扣该项满分。施洛斯股息率项缺
+    44.1%、巴菲特净现比与净利 CAGR 两项各缺 23.8%/32.4%，港股美股字段本就稀疏，实测平均
+    被压 3~6 分而 A 股只 1~2 分，跨市场不可比。
+
+    但也不能纯归一：银行/券商/保险缺的恰好是按业务模型本就不适用的偿债项（格防的流动比率
+    与营运资本共 40 分权重、施洛斯的流动比率与市值/流动资产共 30 分权重），剩余项全满就是
+    100 分，实测把格防前 15 里的 12 席、施洛斯前 15 里的 10 席换成金融股，真达标的公司被
+    挤出去。夹到 ±可评估权重后：缺项仍中性，但最多只能拿到「桌上真正摆着的分」——覆盖度
+    满 100 时与旧口径完全相同，四派前 15 名换手实测均为 0，港股美股仍拿回大部分补偿
+    （格攻 A +0.23 / HK +0.71 / US +1.53，巴菲特 A +1.86 / HK +2.88 / US +5.51）。
+    下限那一侧同样需要：只评估到 35 分权重的公司若全为负分，纯归一会给 −42.9，
+    跌破格防 −30 的设计下限。
+    扣分项不参与归一：缺数据本就给 0，已中性；若按 |最低分| 也归一，施洛斯分母会变成 137，
+    一家满分公司只能拿 73 分。penalties 里的项由构造保证非 None，故直接求和。
+    """
+    avail = [(s, w) for s, w in zip(items, weights) if s is not None]
+    wsum = sum(w for _, w in avail)
+    if wsum <= 0:
+        return None
+    total = sum(s for s, _ in avail) / wsum * 100.0 + sum(penalties)
+    return max(-wsum, min(wsum, total))
+
+
 def value_analysis(d, now=None):
     """对应 JS valueAnalysis —— 仅计算评分依赖字段（股息/净现比/CAGR/杜邦 ROE）"""
     ind = d.get('indicators') or []
@@ -210,13 +236,22 @@ def value_analysis(d, now=None):
         dupont_roe.append(annual[j].get('净资产收益率'))
 
     # ---- 成长性 ----
-    rev_cagr5 = net_cagr5 = None
-    if len(annual) >= 2:
-        first = annual[0]
-        span = last_year - int(str(first.get('报告期') or '')[:4])
+    # 基期必须真是 5 年前：早先直接取 annual[0]，窗口等于数据有多深就多深（实测 6911 家里
+    # 97.2% 跨度≠5 年，7 年 4051 家、19 年 176 家），却按「5 年 CAGR」喂给 _fair_pe 与
+    # 巴菲特净利成长项（阈值 10% 是按 5 年标定的）。取不晚于 last_year-5 的最近年报作基期，
+    # 历史不足 5 年时退回最早年报（与 management_analysis 的营收 CAGR 同口径）。
+    net_cagr5 = None
+    if len(annual) >= 2 and last_year is not None:
+        base = None
+        for r in reversed(annual[:-1]):
+            if int(str(r.get('报告期') or '')[:4]) <= last_year - 5:
+                base = r
+                break
+        if base is None:
+            base = annual[0]
+        span = last_year - int(str(base.get('报告期') or '')[:4])
         if span > 0:
-            rev_cagr5 = cagr(last.get('营业总收入'), first.get('营业总收入'), span)
-            net_cagr5 = cagr(last.get('净利润'), first.get('净利润'), span)
+            net_cagr5 = cagr(last.get('净利润'), base.get('净利润'), span)
 
     return {
         'divYield': div_yield, 'payout': payout, 'divConsecutive': div_consecutive,
@@ -302,10 +337,8 @@ def value_scores(d, va):
     roe_vals = [v for v in va['dupontRoe'] if v is not None]
     roe5 = ssum(roe_vals) / len(roe_vals) if roe_vals else None
 
-    scores = []
-
     # ---- 格雷厄姆 · 进取型烟蒂 ----
-    scores.append((
+    g_a_items = (
         # 价格/净流动资产（市值/NCAV）≤ 0.67×，30 分
         None if ncav is None else (lerp_score(pncav, G_A_PNCAV_FULL, 1.5, 30, 0) if ncav > 0 else 0.0),
         # 价格/净现金 ≤ 1×，20 分
@@ -318,8 +351,8 @@ def value_scores(d, va):
         lerp_score(debtr, 0.6, 0.8, 10, 0),
         # 连续分红 ≥ 3 年，5 分
         (5.0 if div_consecutive >= 3 else (2.5 if div_consecutive >= 1 else 0.0)),
-    ))
-    g_a_total = ssum(scores[-1])
+    )
+    g_a_total = _school_total(g_a_items, (30, 20, 20, 15, 10, 5))
 
     # ---- 格雷厄姆 · 防御型烟蒂（规模硬门槛 + 负分惩罚）----
     def size_score(v):
@@ -371,11 +404,13 @@ def value_scores(d, va):
         pepb_score = 0.0 if (pe <= 0 or pb <= 0) else (
             5.0 if pepb <= 22.5 else (lerp_score(pepb, 22.5, 45, 5, 0) if pepb <= 45 else 0.0))
 
-    scores.append((
+    g_d_items = (
         size_score(assets), cur_score, ltd_score, pos_score,
         div_score10(div_consecutive), grow_score, lerp_score_nonneg(pe, G_D_PE_FULL, 25, 5, 0), pepb_score,
-    ))
-    g_d_total = ssum(scores[-1])
+    )
+    # 其中 cur_score/ltd_score/pos_score/grow_score 可为负（最低各 −10/−10/−5/−5），
+    # 归一分母仍是满分合计 100，故 −30 的下限不变
+    g_d_total = _school_total(g_d_items, (10, 20, 20, 15, 15, 10, 5, 5))
 
     # ---- 施洛斯烟蒂 ----
     s_items = (
@@ -469,7 +504,8 @@ def value_scores(d, va):
         # 毛利率5年变动
         0.0 if g_margin_delta is None else (-4.0 if g_margin_delta <= -0.2 else (-2.0 if g_margin_delta <= -0.1 else 0.0)),
     )
-    s_total = ssum(s_items + risk_items)
+    # 正分项归一 + 9 个扣分项原样相加：扣分项缺数据本就给 0，不参与归一（理由见 _school_total）
+    s_total = _school_total(s_items, (25, 20, 20, 15, 10, 10), risk_items)
 
     # ---- 巴菲特芒格 ----
     share = None
@@ -490,7 +526,8 @@ def value_scores(d, va):
         lerp_score(va['ratio5'], 0.5, 1, 0, 15),       # 5年净现比 ≥ 1
         lerp_score(va['netCagr5'], 0, 0.1, 0, 15),     # 净利 5 年 CAGR ≥ 10%
     )
-    b_total = ssum(moat_items + b_items)
+    # 缺得最多的是净现比（23.8%）与净利 5 年 CAGR（32.4%），各 15 分，早先一律白扣
+    b_total = _school_total(moat_items + b_items, (5, 4, 3, 3, 25, 15, 15, 15, 15))
 
     return {
         'grahamAgg': g_a_total,

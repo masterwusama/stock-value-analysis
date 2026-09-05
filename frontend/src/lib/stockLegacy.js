@@ -731,19 +731,27 @@
     }
 
     // ---- 成长性 & PEG ----
+    // 基期必须真是 5 年前：早先直接取 annual[0]，窗口等于数据有多深就多深（实测 6911 家里
+    // 97.2% 跨度≠5 年，7 年 4051 家、19 年 176 家），却挂着「CAGR(5年)」的标签，还喂给
+    // fairPe 与巴菲特净利成长项（10% 阈值是按 5 年标定的）。取不晚于 lastYear-5 的最近年报
+    // 作基期，历史不足 5 年时退回最早年报（与后端 scoring.py 同口径）。
     var revCagr5 = null, netCagr5 = null, revCagr3 = null, netCagr3 = null, growthNote = '年报数据';
-    if (annual.length >= 2) {
-      var first = annual[0];
-      var span = lastYear - Number(String(first['报告期']).slice(0, 4));
+    if (annual.length >= 2 && lastYear != null) {
+      var base = null;
+      for (var bi = annual.length - 2; bi >= 0; bi--) {
+        if (Number(String(annual[bi]['报告期']).slice(0, 4)) <= lastYear - 5) { base = annual[bi]; break; }
+      }
+      if (base == null) base = annual[0];
+      var baseYear = Number(String(base['报告期']).slice(0, 4));
+      var span = lastYear - baseYear;
       if (span > 0) {
-        revCagr5 = cagr(last['营业总收入'], first['营业总收入'], span);
-        netCagr5 = cagr(last['净利润'], first['净利润'], span);
-        growthNote = '最新年报(' + lastYear + ') vs ' + String(first['报告期']).slice(0, 4) + '，跨度 ' + span + ' 年';
+        revCagr5 = cagr(last['营业总收入'], base['营业总收入'], span);
+        netCagr5 = cagr(last['净利润'], base['净利润'], span);
+        var spanNote = span === 5 ? '' : (span > 5 ? '（5 年前年报缺档，取更早一期）' : '（年报不足 5 年，按实际跨度折算）');
+        growthNote = '最新年报(' + lastYear + ') vs ' + baseYear + '，跨度 ' + span + ' 年' + spanNote;
         var a3 = null;
-        if (lastYear != null) {
-          for (var k = 0; k < annual.length; k++) {
-            if (Number(String(annual[k]['报告期']).slice(0, 4)) === lastYear - 3) { a3 = annual[k]; break; }
-          }
+        for (var k = 0; k < annual.length; k++) {
+          if (Number(String(annual[k]['报告期']).slice(0, 4)) === lastYear - 3) { a3 = annual[k]; break; }
         }
         if (a3) {
           revCagr3 = cagr(last['营业总收入'], a3['营业总收入'], 3);
@@ -897,6 +905,31 @@
     }
     if (!any || wsum <= 0) return null;
     return Math.min(100, ssum2 / wsum * 100);
+  }
+
+  // 四派总分：正分项按可用满分归一（每项自带 max），扣分项原样相加，再夹到 ±「可评估权重」。
+  // 不能直接 sum(所有项)（null 当 0 分）：缺一项等于白扣该项满分。施洛斯股息率项缺 44.1%、
+  // 巴菲特净现比与净利 CAGR 两项各缺 23.8%/32.4%，港股美股字段本就稀疏，实测平均被压
+  // 3~6 分而 A 股只 1~2 分，跨市场不可比。
+  // 但也不能纯归一：银行/券商/保险缺的恰好是按业务模型本就不适用的偿债项（格防的流动比率
+  // 与营运资本共 40 分权重、施洛斯的流动比率与市值/流动资产共 30 分权重），剩余项全满就是
+  // 100 分，实测把格防前 15 里的 12 席、施洛斯前 15 里的 10 席换成金融股，真达标的公司被
+  // 挤出去。夹到 ±可评估权重后：缺项仍中性，但最多只能拿到「桌上真正摆着的分」——覆盖度
+  // 满 100 时与旧口径完全相同，四派前 15 名换手实测均为 0。
+  // 下限那一侧同样需要：只评估到 35 分权重的公司若全为负分，纯归一会给 −42.9，跌破格防
+  // −30 的设计下限。
+  // 扣分项不参与归一：缺数据本就给 0，已中性；若按 |最低分| 也归一，施洛斯分母会变成 137，
+  // 一家满分公司只能拿 73 分。
+  function schoolTotal(posItems, penItems) {
+    var wsum = 0, acc = 0;
+    for (var i = 0; i < posItems.length; i++) {
+      if (posItems[i].score == null) continue;
+      acc += posItems[i].score;
+      wsum += posItems[i].max;
+    }
+    if (wsum <= 0) return null;
+    var pen = sum((penItems || []).map(function (x) { return x.score; })) || 0;
+    return Math.max(-wsum, Math.min(wsum, acc / wsum * 100 + pen));
   }
 
   // row 之前最多 3 个年报的资本开支（按 row 在年报序列中的实际位置开窗）。
@@ -1086,7 +1119,7 @@
       it('资产负债率', fmtPct(debtr), '≤ 60%', 10, lerpScore(debtr, 0.6, 0.8, 10, 0)),
       it('连续分红年数', (divConsecutive || 0) + ' 年', '≥ 3 年', 5, divConsecutive >= 3 ? 5 : divConsecutive >= 1 ? 2.5 : 0)
     ];
-    var gATotal = sum(gA.map(function (x) { return x.score; }));
+    var gATotal = schoolTotal(gA);
 
     // ---- 格雷厄姆 · 防御型烟蒂（《聪明的投资者》防御型标准）----
     // 严格性设计：规模为硬门槛（≥100亿满分）；关键安全项（流动比率/长期负债比/盈利稳定/增长）
@@ -1122,7 +1155,9 @@
       it('市盈率（TTM）', pe == null ? '-' : (pe > 0 ? fmtNum(pe) : 'PE 为负（亏损）'), '≤ 15（亦是保守卖出参考倍数）', 5, lerpScoreNonneg(pe, G_D_PE_FULL, 25, 5, 0)),
       it('PE × PB', pepb == null ? '-' : ((pe > 0 && pb > 0) ? fmtNum(pepb) : 'PE/PB 为负'), '≤ 22.5', 5, pepb != null ? ((pe <= 0 || pb <= 0) ? 0 : (pepb <= 22.5 ? 5 : (pepb <= 45 ? lerpScore(pepb, 22.5, 45, 5, 0) : 0))) : null)
     ];
-    var gDTotal = sum(gD.map(function (x) { return x.score; }));
+    // 其中流动比率/长期负债比/盈利稳定/增长四项可为负（最低各 −10/−10/−5/−5），
+    // 归一分母仍是满分合计 100，故 −30 的下限不变
+    var gDTotal = schoolTotal(gD);
 
     // ---- 施洛斯风险扣分（资产萎缩/减值结构/债务恶化/经营溃败的量化危险信号，仅负分）----
     // 归母权益（优先归母，缺则全部权益）
@@ -1208,7 +1243,8 @@
       it('市值 / 流动资产', (mcap == null ? '-' : fmtMoney(mcap)) + ' / ' + (ca == null ? '-' : fmtMoney(ca)), '市值 ≤ 流动资产', 10,
         (mcap != null && ca != null && ca > 0) ? (mcap <= ca ? 10 : lerpScore(mcap / ca, 1, 2, 10, 0)) : null)
     ];
-    var sTotal = sum(sItems.concat(riskItems).map(function (x) { return x.score; }));
+    // 正分项归一 + 9 个扣分项原样相加：扣分项缺数据本就给 0，不参与归一（理由见 schoolTotal）
+    var sTotal = schoolTotal(sItems, riskItems);
 
     // ---- 巴菲特芒格（优质企业 + 护城河）----
     var moatItems = [
@@ -1226,7 +1262,8 @@
       it('5年累计净现比', fmtNum(va.ratio5), '≥ 1', 15, lerpScore(va.ratio5, 0.5, 1, 0, 15)),
       it('净利润 5 年 CAGR', fmtPct(va.netCagr5), '≥ 10%', 15, lerpScore(va.netCagr5, 0, 0.1, 0, 15))
     ];
-    var bTotal = sum(bItems.concat(moatItems).map(function (x) { return x.score; }));
+    // 缺得最多的是净现比（23.8%）与净利 5 年 CAGR（32.4%），各 15 分，早先一律白扣
+    var bTotal = schoolTotal(bItems.concat(moatItems));
 
     // 护城河备注：无形资产/商誉明细 + 特许经营（定价权）证据说明
     var moatNote = '';
