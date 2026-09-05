@@ -111,29 +111,26 @@ for c in idx['companies']:
             recalc = (wsum - tl0) / m0
             check(abs(recalc - ncr) <= max(1e-9, abs(ncr) * 1e-9),
                   f'{c["code"]} netCashCalc 反算({recalc}) != netCashRatio({ncr})')
-    sc, bu, gd = pr.get('schloss') or {}, pr.get('buffett') or {}, pr.get('grahamDef') or {}
-    for tag, r in (('schloss', sc),):
+    # 四派三档都是保守卖价的固定倍数（scoring.py 的锚常量），买点为空只允许是
+    # 「倍数×保守卖价 跌破一分钱下限」这一种原因，否则说明 ref/锚另有问题
+    for tag, (bm, fm) in (('grahamAgg', (0.67, 1.5)),
+                          ('grahamDef', (2.0 / 3.0, 4.0 / 3.0)),
+                          ('schloss', (0.75, 1.5)),
+                          ('buffett', (2.0 / 3.0, 1.3))):
+        r = pr.get(tag) or {}
         buy, cons, fair = r.get('buy'), r.get('sellCons'), r.get('sellFair')
-        if cons is not None:
-            check(close(fair, 1.5 * cons), f'{c["code"]} {tag}.sellFair({fair}) != 1.5×sellCons({cons})')
-            if buy is not None:
-                check(buy <= cons + max(1e-6, cons * 1e-6),
-                      f'{c["code"]} {tag}.buy({buy}) > sellCons({cons})（clamp失效）')
-    # buffett：buy=2/3·公平PE·eps，sellCons=公平PE·eps，sellFair=1.3倍
-    bb_c, bb_f, bb_b = bu.get('sellCons'), bu.get('sellFair'), bu.get('buy')
-    if bb_c is not None:
-        check(close(bb_f, 1.3 * bb_c), f'{c["code"]} buffett.sellFair({bb_f}) != 1.3×sellCons({bb_c})')
-        # 买价可低于一分钱下限被置空（2/3×sellCons < 0.01，实测 300787 sellCons=0.0136），
-        # 但为空必须就是这个原因，否则说明 clamp_buy / ref 另有问题
-        check(close(bb_b, 2.0 / 3.0 * bb_c) if bb_b is not None
-              else 2.0 / 3.0 * bb_c < MIN_PRICE_REF,
-              f'{c["code"]} buffett.buy({bb_b}) 与 2/3×sellCons({bb_c}) 不符一分钱下限口径')
-    gdc, gdf = gd.get('sellCons'), gd.get('sellFair')
-    check(close(gdf, 4.0 / 3.0 * gdc) if gdc is not None else True,
-          f'{c["code"]} grahamDef.sellFair({gdf}) != 4/3×sellCons({gdc})')
+        if cons is None:
+            check(buy is None, f'{c["code"]} {tag} 保守卖价为空却仍给了买点({buy})')
+            continue
+        check(close(fair, fm * cons),
+              f'{c["code"]} {tag}.sellFair({fair}) != {fm:.4g}×sellCons({cons})')
+        check(close(buy, bm * cons) if buy is not None else bm * cons < MIN_PRICE_REF,
+              f'{c["code"]} {tag}.buy({buy}) 与 {bm:.4g}×sellCons({cons}) 不符一分钱下限口径')
+        # 买点必须严格低于保守卖点：同价意味着「买入区」与「卖出区」在同一点相遇，无参考价值
+        check(buy is None or buy < cons, f'{c["code"]} {tag}.buy({buy}) >= sellCons({cons})')
     # 一分钱下限：低于它的参考价没有任何市场能成交，留着还会把「折价率 1-现价/买价」吹成天文数字
-    for tag, r in (('grahamAgg', pr.get('grahamAgg') or {}), ('grahamDef', gd),
-                   ('schloss', sc), ('buffett', bu)):
+    for tag in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
+        r = pr.get(tag) or {}
         for k in ('buy', 'sellCons', 'sellFair'):
             v = r.get(k)
             check(v is None or v >= MIN_PRICE_REF,

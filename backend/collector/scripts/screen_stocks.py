@@ -19,8 +19,8 @@ compute_scores，精算结果与全量抓取一致），结果缓存到本地，
 
 说明：
 - 预筛条件：非 ST/退/次新，PB ∈ [--pb-min, --pb-max]，动态 PE>0，市值≥--mcap-min，
-  排除已跟踪（data/index.json）；施洛斯买点上限为每股净资产（clamp_buy 截断），
-  故现价触及施洛斯买点必然 PB≤1，--pb-max 超过 1.3 意义不大。
+  排除已跟踪（data/index.json）；施洛斯买点 = 0.75×每股净资产，故现价触及施洛斯买点
+  必然 PB≤0.75，--pb-max 超过 1.0 意义不大。
 - 精算受 --max-attempts 限制，单次运行时长约 attempts×9 秒；扫不完的池子下次继续
   （已精算的股票走缓存，不重复抓取）。
 - 本脚本只做筛选与报告（打印 + JSON 输出），不修改 data/ 与 config.py；

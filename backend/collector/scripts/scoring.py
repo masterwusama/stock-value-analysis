@@ -224,26 +224,21 @@ def value_analysis(d, now=None):
     }
 
 
-def value_scores(d, va, k=1.0, use_fundamental=False):
+def value_scores(d, va):
     """对应 JS valueScores —— 返回四大流派总分（满分 100）。
 
-    k 为市值/估值缩放因子（默认 1=当前市值）：mcap/pe/pb 同乘 k、股息率除以 k，
-    使总分随 k 单调变化，供价格参考二分反推使用（price_references）。
-    use_fundamental=True（仅二分反推）时 pb/pe 改用财报驱动每股量反推
-    （归母权益/股本、TTM净利/股本），使“现价×临界倍数”的现价因子精确抵消，
-    参考价只随财报变动；快照 pb/pe 仅 2 位小数，直接缩放会引入舍入漂移。
+    估值量一律取快照 market_cap/pe_ttm/pb（当期评分口径）。曾有 k（市值缩放）与
+    use_fundamental（财报驱动每股量反推）两个参数，只服务已删除的买入价二分反推。
     """
     annual = annual_rows(d.get('indicators') or [])
     last = annual[-1] if annual else None
     last_date = str(last.get('报告期') or '')[:10] if last else None
-    last_year = int(last_date[:4]) if last_date else None
     ba_list = sorted(d.get('balance') or [], key=lambda r: str(r.get('报告日') or ''))
     last_ba = sheet_row_by_date(ba_list, last_date) if last_date else None
     s = d.get('snapshot') or {}
     mcap, pe, pb = s.get('market_cap'), s.get('pe_ttm'), s.get('pb')
-    # 快照缺 PB（腾讯行情不返回美股 PB）时用财报每股净资产补算：股价÷每股净资产，缺则归母权益/股本反推；
-    # 仅 k=1（当期评分）时补算，k≠1 的缩放分支已由财报驱动精确计算，两者口径一致（与 JS valueScores 镜像）
-    if pb is None and k == 1.0:
+    # 快照缺 PB（腾讯行情不返回美股 PB）时用财报每股净资产补算：股价÷每股净资产，缺则归母权益/股本反推
+    if pb is None:
         bps_fb = _latest_field(d.get('indicators') or [], '每股净资产')
         if bps_fb is None and last_ba is not None:
             eq_fb = last_ba.get('归属于母公司股东权益合计')
@@ -255,37 +250,8 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
                 bps_fb = eq_fb / sh_fb
         if bps_fb is not None and bps_fb > 0 and s.get('price') is not None and s.get('price') > 0:
             pb = s.get('price') / bps_fb
-    if k != 1.0 or use_fundamental:
-        p0 = s.get('price')
-        # 每股净资产优先用指标字段（数据源按财报算好、随财报更新），缺则财报权益/股本
-        bps_f = _latest_field(d.get('indicators') or [], '每股净资产')
-        shares_f = _share_count(d.get('balance') or [], (mcap / p0) if (mcap is not None and p0) else None, bps_f)
-        last_eq_v = None
-        if last_ba is not None:
-            last_eq_v = last_ba.get('归属于母公司股东权益合计')
-            if last_eq_v is None:
-                last_eq_v = last_ba.get('所有者权益(或股东权益)合计')
-        if shares_f:
-            # 快照 mcap 含舍入/滞后，改用财报股本×实时价（市值类价格项同样精确抵消）
-            mcap = shares_f * p0 * k
-            if bps_f is None and last_eq_v is not None:
-                bps_f = last_eq_v / shares_f
-            pb = (p0 * k / bps_f) if bps_f else (pb * k if pb is not None else None)
-            # 每股收益优先用基本每股收益字段做 TTM，缺则 TTM 净利/股本
-            eps_f = _eps_ttm_field(d.get('indicators') or [])
-            if eps_f is None:
-                ttm_f = _ttm_net_profit(d.get('indicators') or [])
-                eps_f = (ttm_f / shares_f) if ttm_f is not None else None
-            pe = (p0 * k / eps_f) if eps_f else (pe * k if pe is not None else None)
-        else:
-            mcap = mcap * k if mcap is not None else None
-            pe = pe * k if pe is not None else None
-            pb = pb * k if pb is not None else None
     div_consecutive = va['divConsecutive'] or 0
-    # 股息率随假设价格反向缩放（仅施洛斯股息率项使用）
     div_yield = va['divYield']
-    if k != 1.0 and div_yield is not None:
-        div_yield = div_yield / k
 
     # ---- 基础量（最新年报）----
     def g(ba, key):
@@ -341,7 +307,7 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
     # ---- 格雷厄姆 · 进取型烟蒂 ----
     scores.append((
         # 价格/净流动资产（市值/NCAV）≤ 0.67×，30 分
-        None if ncav is None else (lerp_score(pncav, 0.67, 1.5, 30, 0) if ncav > 0 else 0.0),
+        None if ncav is None else (lerp_score(pncav, G_A_PNCAV_FULL, 1.5, 30, 0) if ncav > 0 else 0.0),
         # 价格/净现金 ≤ 1×，20 分
         None if net_cash is None else (lerp_score(pnetcash, 1, 2, 20, 0) if net_cash > 0 else 0.0),
         # 流动资产/总负债 ≥ 2，20 分
@@ -407,13 +373,13 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
 
     scores.append((
         size_score(assets), cur_score, ltd_score, pos_score,
-        div_score10(div_consecutive), grow_score, lerp_score_nonneg(pe, 15, 25, 5, 0), pepb_score,
+        div_score10(div_consecutive), grow_score, lerp_score_nonneg(pe, G_D_PE_FULL, 25, 5, 0), pepb_score,
     ))
     g_d_total = ssum(scores[-1])
 
     # ---- 施洛斯烟蒂 ----
     s_items = (
-        lerp_score_nonneg(pb, 0.75, 1.5, 25, 0),    # 市净率 ≤ 0.75
+        lerp_score_nonneg(pb, S_PB_FULL, 1.5, 25, 0),    # 市净率 ≤ 0.75（亦是买点倍数）
         lerp_score_nonneg(pe, 10, 20, 20, 0),       # 市盈率 ≤ 10
         lerp_score(liq_ratio, 1, 2, 0, 20),        # 流动资产/总负债 ≥ 2
         lerp_score(div_yield, 0, 0.03, 0, 15),  # 股息率 ≥ 3%
@@ -535,16 +501,28 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
 
 
 # ---- 价格参考（买入/保守卖出/公允卖出）----
-# 买入价：二分反推使该流派总分 ≥ BUY_SCORE_TARGET 的最高市值对应股价；
-#         若质量项托底已达标或总分不随价格变化则返回 None。
-# 卖出价：锚定各流派核心估值指标的评分阈值倍数（不随质量分托底失真）。
-BUY_SCORE_TARGET = 90.0   # 买入参考价对应的评分目标
-PRICE_K_HI = 1000.0       # 二分市值缩放上限（足够大使价格项归零）
-PRICE_K_ITERS = 80        # 二分固定迭代次数（双端一致）
+# 三档都锚定各流派自己的估值阈值，不做任何反推：
+#   买点   = 账面派（格攻/施洛斯）取资产折价线；收益派（格防/巴菲特）取保守卖价 × 2/3 安全边际
+#   保守卖 = 该派核心估值锚：格攻 每股净流动资产、格防 15×EPS、施洛斯 每股净资产、巴菲特 公允PE×EPS
+#   公允卖 = 保守卖上浮：格攻/施洛斯 1.5 倍（正是价格项归零点）、格防 4/3 倍（PE 20，半分位）、
+#            巴菲特 1.3 倍（无对应评分项）
+# 曾用「二分反推使总分 ≥ 90 的最高价」，实测 6939 家里 56%~96% 的公司分数上限本就不足
+# 90，tgt = min(90, t_max) 把目标悄悄降级成公司自己的上限，产出的买价与 90 分再无关系；
+# 且买价中位数只有现价的 8%（格攻）~40%（格防），即要跌 60%~92% 才触发，不是参考价。
+BUY_MARGIN = 2.0 / 3.0    # 收益派（格防/巴菲特）买点相对公允倍数的安全边际
+G_A_PNCAV_FULL = 0.67     # 格攻：市值/净流动资产 ≤ 0.67 拿满 30 分，亦是买点倍数
+G_D_PE_FULL = 15.0        # 格防：市盈率 ≤ 15 拿满 5 分，亦是保守卖价倍数
+S_PB_FULL = 0.75          # 施洛斯：市净率 ≤ 0.75 拿满 25 分，亦是买点倍数
 # 低于一分钱的参考价一律视为「无」：没有任何市场按这个价位报价，而它当分母会把
 # 「折价率 1-现价/买价」吹到 1e20 量级。EPS 的滚动 TTM 是三项相减，留得住浮点零渣
 # （实测 3 家：比依股份 5.6e-17、安旭生物 5.6e-17、中科通达 1.7e-18）。
 MIN_PRICE_REF = 0.01
+# EPS 锚可信度：符号相反只是其中一种坏法，量级差一个数量级同样是坏锚（一次性损益、
+# 股本口径错、年报窗口与快照 TTM 错配）。坏锚会占满「买入性价比」榜首：*ST华幸 买价
+# 55.81 对现价 1.08、金科股份 46.4 倍、BKNG 13.9 倍、和黄医药 买价 28.91 对现价 19.14。
+EPS_PE_MIN = 1.0          # 隐含 PE（现价/EPS）低于 1 倍：持续经营不可能，EPS 口径错
+EPS_MAG_TTM = 3.0         # 自算值与快照同为 TTM 口径时，隐含 PE 允许的最大倍数差
+EPS_MAG_ANNUAL = 10.0     # 最新报告期是年报（自算值为上一财年）时放宽到 10 倍，只砍数量级背离
 
 
 def _fair_pe(net_cagr5):
@@ -655,33 +633,6 @@ def _latest_period_is_annual(rows):
     return bool(periods) and max(periods)[5:7] == '12'
 
 
-def _bisect_buy(score_fn, price0):
-    """二分找总分 ≥ 目标的最大缩放因子 k，返回买入价 = price0×k；无解返回 None"""
-    t_max = score_fn(1e-9)          # k→0：价格项全满分的上限
-    t_inf = score_fn(PRICE_K_HI)    # k→很大：价格项归零后的质量分托底
-    if t_max is None or t_inf is None:
-        return None
-    if t_max - t_inf < 1e-9:
-        return None                 # 总分不随价格变（无价格项），无法反推
-    if t_inf >= BUY_SCORE_TARGET:
-        return None                 # 质量分已达标，买入价无上界
-    tgt = min(BUY_SCORE_TARGET, t_max)
-    lo, hi = 0.0, PRICE_K_HI
-    for _ in range(PRICE_K_ITERS):
-        mid = (lo + hi) / 2.0
-        if score_fn(mid) >= tgt:
-            lo = mid
-        else:
-            hi = mid
-    if lo < 0.01:
-        # 买入价不足现价 1%（需跌 99%）时，二分给出的已经不是价格而是判决：任何现实价位都到不了
-        # 目标分。实测 16627 次二分里 610 次落在此区，买入价从 1e-8 元到 1.3 元、对应现价 5~956 元，
-        # 没有一条能当参考价用，还会污染"按买入价排序"。这类里 493 次是 t_max<90 的平台塌缩，
-        # 另 117 次目标可达却同样给出 0.0015 元这种数，所以只按 t_max 分流并不够，统一按 lo 切。
-        return None
-    return price0 * lo
-
-
 def price_references(d, va):
     """对应 JS priceReferences：公允清算价值 + 四大流派买入/保守卖出/公允卖出价格参考
     fairLiq = 每股公允清算价值（流动资产合计-负债合计）/财报股本，格雷厄姆清算口径"""
@@ -730,19 +681,27 @@ def price_references(d, va):
         eps_ttm = (ttm_net / shares) if (ttm_net is not None and shares) else None
     if eps_ttm is None:
         eps_ttm = price0 / pe0 if (pe0 is not None and pe0 > 0) else None
-    # 自算 EPS 与快照 pe_ttm 符号相反时置空——但只在两边同为 TTM 口径时才比：
-    # 最新报告期是年报时 _eps_ttm_field 直接返回上一财年 EPS（不做滚动相减），与 TTM
-    # 快照本就不同窗口，符号相反是真实的一次性减值/基本面转折，实测这类 65 家（GILD
-    # 上一财年 +6.84 而 TTM 隐含 -2.65、COIN +4.85 对 -3.92、WBD +0.29 对 -1.28），
-    # 不是数据错误，动它等于把 Gilead/Coinbase 这类的 EPS 锚全抹掉。
-    # 最新报告期是中间期时自算值就是 cur+上年年报-上年同期 的真 TTM，与快照同口径，
-    # 符号相反说明至少一边错；实测 37 家全是累计相减在零附近的残差（招商蛇口 0.06+0.08
-    # -0.14=0 对 pe0=+565、山东墨龙 0.0001 对 pe0=-2558、ST能特 0.0018 对 pe0=-441），
-    # 据此给的 EPS 锚方向都不可信，连同格防御/巴菲特三档一起置空。
-    if (eps_ttm is not None and pe0 is not None and pe0 != 0
-            and not _latest_period_is_annual(d.get('indicators') or [])
+    # ---- EPS 锚可信度：坏锚会让收益派三档价一起错，还会霸榜「买入性价比」排序 ----
+    is_annual = _latest_period_is_annual(d.get('indicators') or [])
+    # ① 符号相反且同为 TTM 口径 → 至少一边错。最新报告期是年报时 _eps_ttm_field 直接
+    # 返回上一财年 EPS，与 TTM 快照本就不同窗口，符号相反是真实的一次性减值/转折
+    # （实测 65 家：GILD 上一财年 +6.84 对 TTM 隐含 -2.65、COIN +4.85 对 -3.92），保留。
+    # 中间期时自算值就是 cur+上年年报-上年同期 的真 TTM，实测 37 家全是累计相减在零附近
+    # 的残差（招商蛇口 0.06+0.08-0.14=0 对 pe0=+565、山东墨龙 0.0001 对 pe0=-2558）。
+    if (eps_ttm is not None and pe0 is not None and pe0 != 0 and not is_annual
             and (eps_ttm > 0) != (pe0 > 0)):
         eps_ttm = None
+    # ② 隐含 PE（现价/EPS）低于 1 倍：持续经营的公司不可能一年赚回自己的市值，
+    # 是 EPS 单位/口径错（实测 3 家，含金科股份快照 PE 与自算 EPS 同给 0.36）
+    if eps_ttm is not None and eps_ttm > 0 and price0 / eps_ttm < EPS_PE_MIN:
+        eps_ttm = None
+    # ③ 量级背离：同 TTM 口径差 3 倍以上、年报窗口差 10 倍以上（实测 7 + 8 家）。
+    # 年报窗口放宽是因为真实业绩可以一年翻几倍，但 10 倍以上的背离全是坏锚
+    # （和黄医药 buy 28.91 对现价 19.14、BKNG 隐含 2497.8 倍、中国中冶 0.03 倍）。
+    if eps_ttm is not None and eps_ttm > 0 and pe0 is not None and pe0 > 0:
+        mag = EPS_MAG_ANNUAL if is_annual else EPS_MAG_TTM
+        if not (1.0 / mag <= (price0 / eps_ttm) / pe0 <= mag):
+            eps_ttm = None
     # 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
     # 类现金保守折算：货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产×0.3；
     # 分子随财报更新（含季报），分母随行情快照，缺失科目按 0 折入
@@ -774,16 +733,6 @@ def price_references(d, va):
                      if has_core else None)
     fair_pe = _fair_pe(va.get('netCagr5'))
 
-    def buy_of(key):
-        return _bisect_buy(lambda kk: value_scores(d, va, kk, use_fundamental=True)[key], price0)
-
-    def clamp_buy(buy, anchor):
-        """买入价不超过本流派估值锚（保守卖出价）：质量分托底时反推价可能高于锚位，
-        截断后仍满足“该价时评分≥90”且避免买入参考高于卖出参考的矛盾"""
-        if buy is not None and anchor is not None and buy > anchor:
-            return anchor
-        return buy
-
     def ref(v):
         """低于一分钱（含负值与浮点零渣）的参考价一律视为无"""
         return v if (v is not None and v >= MIN_PRICE_REF) else None
@@ -791,34 +740,35 @@ def price_references(d, va):
     gA_cons = ref(ncav_ps)
     # TTM 每股亏损（≤0）时基于 EPS 的估值锚无意义，锚位与买入价一并置空（避免负价/误导价）
     eps_ok = eps_ttm is not None and eps_ttm > 0
-    gD_cons = ref(15.0 * eps_ttm) if eps_ok else None
+    gD_cons = ref(G_D_PE_FULL * eps_ttm) if eps_ok else None
     s_cons = ref(bps)
     b_cons = ref(fair_pe * eps_ttm) if eps_ok else None
 
     # 公允卖价跟着保守卖价同生同灭：每派公允都是保守的 ≥1.3 倍，保守过了一分钱下限
     # 公允必然也过；但若各自独立套下限，会在保守差一点、公允刚过点时只留半档，
     # 而卖点筛选要求「同时 ≥ 保守与公允」，半档等于把这家公司永久排除。
+    # 买点同理挂在保守卖价上：锚为空就没有买点，不会出现「有买价没卖价」的半档。
     return {
         'fairLiq': gA_cons,
         'netCashRatio': net_cash_ratio,
         'netCashCalc': net_cash_calc,
         'grahamAgg': {
-            'buy': ref(clamp_buy(buy_of('grahamAgg'), gA_cons)),
+            'buy': ref(G_A_PNCAV_FULL * ncav_ps) if gA_cons is not None else None,
             'sellCons': gA_cons,
             'sellFair': (1.5 * gA_cons) if gA_cons is not None else None,
         },
         'grahamDef': {
-            'buy': ref(clamp_buy(buy_of('grahamDef'), gD_cons)) if eps_ok else None,
+            'buy': ref(BUY_MARGIN * gD_cons) if gD_cons is not None else None,
             'sellCons': gD_cons,
             'sellFair': (20.0 * eps_ttm) if gD_cons is not None else None,
         },
         'schloss': {
-            'buy': ref(clamp_buy(buy_of('schloss'), s_cons)),
+            'buy': ref(S_PB_FULL * s_cons) if s_cons is not None else None,
             'sellCons': s_cons,
             'sellFair': (1.5 * s_cons) if s_cons is not None else None,
         },
         'buffett': {
-            'buy': ref(clamp_buy(fair_pe * eps_ttm * 2.0 / 3.0, b_cons)) if eps_ok else None,
+            'buy': ref(BUY_MARGIN * b_cons) if b_cons is not None else None,
             'sellCons': b_cons,
             'sellFair': (fair_pe * eps_ttm * 1.3) if b_cons is not None else None,
         },
