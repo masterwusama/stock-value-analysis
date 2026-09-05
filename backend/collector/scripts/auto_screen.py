@@ -6,7 +6,7 @@
 - 管理能力 ≥ N          --mgmt-min
 - 买点（多选需同时满足）  --buy 格进取,格防御,施洛斯,巴菲特（逗号分隔，可中英文）
 - 打折促销 %            --discount（仅配合 --buy，现价 ≤ 买价×N%，默认 100）
-- 卖点（多选需同时满足）  --sell（现价须同时 ≥ 保守卖价与公允卖价，任一缺失即排除）
+- 卖点（多选需同时满足）  --sell（现价 ≥ 公允卖价即命中，公允恒高于保守卖价；缺参考价即排除）
 - 搜索框                --keyword（名称/代码模糊）
 - 市场 Tab             --market A,HK,US
 额外增强（网页没有）：--cycle-max 周期位置上限、market 源的 PB/市值预筛。
@@ -313,7 +313,7 @@ def main():
                     % ','.join(SCHOOLS))
     ap.add_argument('--discount', type=int, default=100,
                     help='打折促销%%：现价 ≤ 买价×N%% 才命中（仅配合 --buy，0~500，默认 100）')
-    ap.add_argument('--sell', help='卖点流派逗号分隔（现价须同时≥保守与公允）')
+    ap.add_argument('--sell', help='卖点流派逗号分隔（现价≥公允卖价即命中，公允恒高于保守）')
     ap.add_argument('--keyword', help='名称/代码模糊匹配')
     ap.add_argument('--market', default='A,HK,US', help='市场（逗号分隔 A,HK,US；默认全部）')
     ap.add_argument('--cycle-max', type=int, help='周期位置 ≤ N（越低越接近底部；非周期公司排除）')

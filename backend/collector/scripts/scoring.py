@@ -541,6 +541,10 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
 BUY_SCORE_TARGET = 90.0   # 买入参考价对应的评分目标
 PRICE_K_HI = 1000.0       # 二分市值缩放上限（足够大使价格项归零）
 PRICE_K_ITERS = 80        # 二分固定迭代次数（双端一致）
+# 低于一分钱的参考价一律视为「无」：没有任何市场按这个价位报价，而它当分母会把
+# 「折价率 1-现价/买价」吹到 1e20 量级。EPS 的滚动 TTM 是三项相减，留得住浮点零渣
+# （实测 3 家：比依股份 5.6e-17、安旭生物 5.6e-17、中科通达 1.7e-18）。
+MIN_PRICE_REF = 0.01
 
 
 def _fair_pe(net_cagr5):
@@ -642,6 +646,15 @@ def _eps_ttm_field(rows):
     return cur + prev_ann - prev_same
 
 
+def _latest_period_is_annual(rows):
+    """indicators 最新报告期是否年报。_eps_ttm_field / _ttm_net_profit 在年报期都直接
+    返回当期值、不做滚动相减，所以这个判断等于「自算值是上一财年数，还是与快照 PE
+    同为 TTM 口径的真滚动值」"""
+    periods = [str(r.get('报告期') or '')[:10]
+               for r in (rows or []) if len(str(r.get('报告期') or '')) >= 10]
+    return bool(periods) and max(periods)[5:7] == '12'
+
+
 def _bisect_buy(score_fn, price0):
     """二分找总分 ≥ 目标的最大缩放因子 k，返回买入价 = price0×k；无解返回 None"""
     t_max = score_fn(1e-9)          # k→0：价格项全满分的上限
@@ -717,6 +730,19 @@ def price_references(d, va):
         eps_ttm = (ttm_net / shares) if (ttm_net is not None and shares) else None
     if eps_ttm is None:
         eps_ttm = price0 / pe0 if (pe0 is not None and pe0 > 0) else None
+    # 自算 EPS 与快照 pe_ttm 符号相反时置空——但只在两边同为 TTM 口径时才比：
+    # 最新报告期是年报时 _eps_ttm_field 直接返回上一财年 EPS（不做滚动相减），与 TTM
+    # 快照本就不同窗口，符号相反是真实的一次性减值/基本面转折，实测这类 65 家（GILD
+    # 上一财年 +6.84 而 TTM 隐含 -2.65、COIN +4.85 对 -3.92、WBD +0.29 对 -1.28），
+    # 不是数据错误，动它等于把 Gilead/Coinbase 这类的 EPS 锚全抹掉。
+    # 最新报告期是中间期时自算值就是 cur+上年年报-上年同期 的真 TTM，与快照同口径，
+    # 符号相反说明至少一边错；实测 37 家全是累计相减在零附近的残差（招商蛇口 0.06+0.08
+    # -0.14=0 对 pe0=+565、山东墨龙 0.0001 对 pe0=-2558、ST能特 0.0018 对 pe0=-441），
+    # 据此给的 EPS 锚方向都不可信，连同格防御/巴菲特三档一起置空。
+    if (eps_ttm is not None and pe0 is not None and pe0 != 0
+            and not _latest_period_is_annual(d.get('indicators') or [])
+            and (eps_ttm > 0) != (pe0 > 0)):
+        eps_ttm = None
     # 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
     # 类现金保守折算：货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产×0.3；
     # 分子随财报更新（含季报），分母随行情快照，缺失科目按 0 折入
@@ -758,36 +784,43 @@ def price_references(d, va):
             return anchor
         return buy
 
-    gA_cons = ncav_ps if (ncav_ps is not None and ncav_ps > 0) else None
+    def ref(v):
+        """低于一分钱（含负值与浮点零渣）的参考价一律视为无"""
+        return v if (v is not None and v >= MIN_PRICE_REF) else None
+
+    gA_cons = ref(ncav_ps)
     # TTM 每股亏损（≤0）时基于 EPS 的估值锚无意义，锚位与买入价一并置空（避免负价/误导价）
     eps_ok = eps_ttm is not None and eps_ttm > 0
-    gD_cons = (15.0 * eps_ttm) if eps_ok else None
-    s_cons = bps if (bps is not None and bps > 0) else None
-    b_cons = (fair_pe * eps_ttm) if eps_ok else None
+    gD_cons = ref(15.0 * eps_ttm) if eps_ok else None
+    s_cons = ref(bps)
+    b_cons = ref(fair_pe * eps_ttm) if eps_ok else None
 
+    # 公允卖价跟着保守卖价同生同灭：每派公允都是保守的 ≥1.3 倍，保守过了一分钱下限
+    # 公允必然也过；但若各自独立套下限，会在保守差一点、公允刚过点时只留半档，
+    # 而卖点筛选要求「同时 ≥ 保守与公允」，半档等于把这家公司永久排除。
     return {
-        'fairLiq': ncav_ps if (ncav_ps is not None and ncav_ps > 0) else None,
+        'fairLiq': gA_cons,
         'netCashRatio': net_cash_ratio,
         'netCashCalc': net_cash_calc,
         'grahamAgg': {
-            'buy': clamp_buy(buy_of('grahamAgg'), gA_cons),
+            'buy': ref(clamp_buy(buy_of('grahamAgg'), gA_cons)),
             'sellCons': gA_cons,
-            'sellFair': (1.5 * ncav_ps) if (ncav_ps is not None and ncav_ps > 0) else None,
+            'sellFair': (1.5 * gA_cons) if gA_cons is not None else None,
         },
         'grahamDef': {
-            'buy': clamp_buy(buy_of('grahamDef'), gD_cons) if eps_ok else None,
+            'buy': ref(clamp_buy(buy_of('grahamDef'), gD_cons)) if eps_ok else None,
             'sellCons': gD_cons,
-            'sellFair': (20.0 * eps_ttm) if eps_ok else None,
+            'sellFair': (20.0 * eps_ttm) if gD_cons is not None else None,
         },
         'schloss': {
-            'buy': clamp_buy(buy_of('schloss'), s_cons),
+            'buy': ref(clamp_buy(buy_of('schloss'), s_cons)),
             'sellCons': s_cons,
-            'sellFair': (1.5 * bps) if (bps is not None and bps > 0) else None,
+            'sellFair': (1.5 * s_cons) if s_cons is not None else None,
         },
         'buffett': {
-            'buy': clamp_buy(fair_pe * eps_ttm * 2.0 / 3.0, b_cons) if eps_ok else None,
+            'buy': ref(clamp_buy(fair_pe * eps_ttm * 2.0 / 3.0, b_cons)) if eps_ok else None,
             'sellCons': b_cons,
-            'sellFair': (fair_pe * eps_ttm * 1.3) if eps_ok else None,
+            'sellFair': (fair_pe * eps_ttm * 1.3) if b_cons is not None else None,
         },
     }
 

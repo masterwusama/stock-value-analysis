@@ -247,7 +247,7 @@ def list_securities(
     cap_max: float | None = Query(None, ge=0, description="总市值≤(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
     wind: bool = Query(False, description="事件增强分档：造假/管理两列的筛选与排序改用基础分+Wind 事件增量（响应里两列仍为基础分，显示值由前端叠 wind_* 字段换算）"),
     buys: str | None = Query(None, max_length=64, description="买点复选(逗号分隔,同时满足)"),
-    sells: str | None = Query(None, max_length=64, description="卖点复选(须同时达保守与公允)"),
+    sells: str | None = Query(None, max_length=64, description="卖点复选(现价≥公允卖价即命中,公允恒高于保守)"),
     discount: float | None = Query(None, gt=0, le=500, description="买点折扣%,仅与 buys 配合"),
     sort: str = Query("code", description=f"排序字段: {'/'.join(SORT_COLS)}（buy_* 是折价率 1-现价/买价，降序=相对买入价折得最深）"),
     order: Literal["asc", "desc"] = Query("asc"),
@@ -320,6 +320,9 @@ def list_securities(
         conds.append(QuoteDaily.price <= FLT_BUY_COLS[k] * factor)
     for k in _flt_keys(sells, FLT_SELL_COLS, "sells"):
         cons, fair = FLT_SELL_COLS[k]
+        # 两条都写是为了照字面语义（同时越过保守与公允）。实测 6939 行里四派公允恒为
+        # 保守的 1.3~1.5 倍且两者同生同灭（sellFair<sellCons 0 次、只有一个为空 0 次），
+        # 所以这等价于 price >= fair；保留 cons 那条只为将来某派公允被改到低于保守时不失守。
         conds.append(QuoteDaily.price >= cons)
         conds.append(QuoteDaily.price >= fair)
     if conds:

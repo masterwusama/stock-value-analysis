@@ -177,6 +177,17 @@
     return cur + prevAnn - prevSame;
   }
 
+  // indicators 最新报告期是否年报。epsTtmField / ttmNetProfit 在年报期都直接
+  // 返回当期值、不做滚动相减，所以这个判断等于「自算值是上一财年数，还是与快照 PE
+  // 同为 TTM 口径的真滚动值」（对应 scoring.py _latest_period_is_annual）
+  function latestPeriodIsAnnual(indicators) {
+    var periods = (indicators || [])
+      .map(function (r) { return String(r['报告期'] || '').slice(0, 10); })
+      .filter(function (p) { return p.length >= 10; });
+    if (!periods.length) return false;
+    return periods.sort()[periods.length - 1].slice(5, 7) === '12';
+  }
+
   // 从三大报表列表中取指定报告日（YYYY-MM-DD）的行
   function sheetRowByDate(list, date) {
     list = list || [];
@@ -1986,6 +1997,11 @@
     return lines.join('\n');
   }
 
+  // 低于一分钱的参考价一律视为「无」：没有任何市场按这个价位报价，而它当分母会把
+  // 「折价率 1-现价/买价」吹到 1e20 量级。EPS 的滚动 TTM 是三项相减，留得住浮点零渣
+  // （实测 3 家：比依股份 5.6e-17、安旭生物 5.6e-17、中科通达 1.7e-18）。
+  var MIN_PRICE_REF = 0.01;
+
   // 巴菲特合理市盈率 = 净利5年CAGR×100，夹在 [8, 25]；无数据取 15
   function fairPe(netCagr5) {
     if (netCagr5 == null) return 15;
@@ -2048,6 +2064,20 @@
       if (ttmNet != null && shares) epsTtm = ttmNet / shares;
     }
     if (epsTtm == null && pe0 != null && pe0 > 0) epsTtm = price0 / pe0;
+    // 自算 EPS 与快照 pe_ttm 符号相反时置空——但只在两边同为 TTM 口径时才比：
+    // 最新报告期是年报时 epsTtmField 直接返回上一财年 EPS（不做滚动相减），与 TTM
+    // 快照本就不同窗口，符号相反是真实的一次性减值/基本面转折，实测这类 65 家（GILD
+    // 上一财年 +6.84 而 TTM 隐含 -2.65、COIN +4.85 对 -3.92、WBD +0.29 对 -1.28），
+    // 不是数据错误，动它等于把 Gilead/Coinbase 这类的 EPS 锚全抹掉。
+    // 最新报告期是中间期时自算值就是 cur+上年年报-上年同期 的真 TTM，与快照同口径，
+    // 符号相反说明至少一边错；实测 37 家全是累计相减在零附近的残差（招商蛇口 0.06+0.08
+    // -0.14=0 对 pe0=+565、山东墨龙 0.0001 对 pe0=-2558、ST能特 0.0018 对 pe0=-441），
+    // 据此给的 EPS 锚方向都不可信，连同格防御/巴菲特三档一起置空。
+    if (epsTtm != null && pe0 != null && pe0 !== 0
+        && !latestPeriodIsAnnual(d.indicators)
+        && (epsTtm > 0) !== (pe0 > 0)) {
+      epsTtm = null;
+    }
     // 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
     // 类现金保守折算：货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产×0.3；
     // 分子随财报更新（含季报），分母随行情快照，缺失科目按 0 折入
@@ -2080,35 +2110,40 @@
       if (buy != null && anchor != null && buy > anchor) return anchor;
       return buy;
     }
-    var gACons = (ncavPs != null && ncavPs > 0) ? ncavPs : null;
-    var gDCons = (epsTtm != null && epsTtm > 0) ? 15 * epsTtm : null;
-    var sCons = (bps != null && bps > 0) ? bps : null;
+    // 低于一分钱（含负值与浮点零渣）的参考价一律视为无
+    function ref(v) { return (v != null && v >= MIN_PRICE_REF) ? v : null; }
+    var gACons = ref(ncavPs);
     // TTM 每股亏损（≤0）时基于 EPS 的估值锚无意义，锚位与买入价一并置空（避免负价/误导价）
     var epsOk = epsTtm != null && epsTtm > 0;
-    var bCons = epsOk ? fpe * epsTtm : null;
+    var gDCons = epsOk ? ref(15 * epsTtm) : null;
+    var sCons = ref(bps);
+    var bCons = epsOk ? ref(fpe * epsTtm) : null;
+    // 公允卖价跟着保守卖价同生同灭：每派公允都是保守的 ≥1.3 倍，保守过了一分钱下限
+    // 公允必然也过；但若各自独立套下限，会在保守差一点、公允刚过点时只留半档，
+    // 而卖点筛选要求「同时 ≥ 保守与公允」，半档等于把这家公司永久排除。
     return {
-      fairLiq: (ncavPs != null && ncavPs > 0) ? ncavPs : null,
+      fairLiq: gACons,
       netCashRatio: netCashRatio,
       netCashCalc: netCashCalc,
       grahamAgg: {
-        buy: clampBuy(buyOf('grahamAgg'), gACons),
+        buy: ref(clampBuy(buyOf('grahamAgg'), gACons)),
         sellCons: gACons,
-        sellFair: (ncavPs != null && ncavPs > 0) ? 1.5 * ncavPs : null
+        sellFair: (gACons != null) ? 1.5 * gACons : null
       },
       grahamDef: {
-        buy: epsOk ? clampBuy(buyOf('grahamDef'), gDCons) : null,
+        buy: epsOk ? ref(clampBuy(buyOf('grahamDef'), gDCons)) : null,
         sellCons: gDCons,
-        sellFair: epsOk ? 20 * epsTtm : null
+        sellFair: (gDCons != null) ? 20 * epsTtm : null
       },
       schloss: {
-        buy: clampBuy(buyOf('schloss'), sCons),
+        buy: ref(clampBuy(buyOf('schloss'), sCons)),
         sellCons: sCons,
-        sellFair: (bps != null && bps > 0) ? 1.5 * bps : null
+        sellFair: (sCons != null) ? 1.5 * sCons : null
       },
       buffett: {
-        buy: epsOk ? clampBuy(fpe * epsTtm * 2 / 3, bCons) : null,
+        buy: epsOk ? ref(clampBuy(fpe * epsTtm * 2 / 3, bCons)) : null,
         sellCons: bCons,
-        sellFair: epsOk ? fpe * epsTtm * 1.3 : null
+        sellFair: (bCons != null) ? fpe * epsTtm * 1.3 : null
       }
     };
   }

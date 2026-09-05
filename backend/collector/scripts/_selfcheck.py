@@ -11,7 +11,7 @@ from pathlib import Path
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_COMPANIES  # noqa: E402
-from scoring import compute_scores, _ttm_net_profit, _eps_ttm_field  # noqa: E402
+from scoring import compute_scores, _ttm_net_profit, _eps_ttm_field, MIN_PRICE_REF  # noqa: E402
 
 BASE = Path(__file__).parent.parent
 DATA = BASE / 'data'
@@ -123,10 +123,25 @@ for c in idx['companies']:
     bb_c, bb_f, bb_b = bu.get('sellCons'), bu.get('sellFair'), bu.get('buy')
     if bb_c is not None:
         check(close(bb_f, 1.3 * bb_c), f'{c["code"]} buffett.sellFair({bb_f}) != 1.3×sellCons({bb_c})')
-        check(close(bb_b, 2.0 / 3.0 * bb_c), f'{c["code"]} buffett.buy({bb_b}) != 2/3×sellCons({bb_c})')
+        # 买价可低于一分钱下限被置空（2/3×sellCons < 0.01，实测 300787 sellCons=0.0136），
+        # 但为空必须就是这个原因，否则说明 clamp_buy / ref 另有问题
+        check(close(bb_b, 2.0 / 3.0 * bb_c) if bb_b is not None
+              else 2.0 / 3.0 * bb_c < MIN_PRICE_REF,
+              f'{c["code"]} buffett.buy({bb_b}) 与 2/3×sellCons({bb_c}) 不符一分钱下限口径')
     gdc, gdf = gd.get('sellCons'), gd.get('sellFair')
     check(close(gdf, 4.0 / 3.0 * gdc) if gdc is not None else True,
           f'{c["code"]} grahamDef.sellFair({gdf}) != 4/3×sellCons({gdc})')
+    # 一分钱下限：低于它的参考价没有任何市场能成交，留着还会把「折价率 1-现价/买价」吹成天文数字
+    for tag, r in (('grahamAgg', pr.get('grahamAgg') or {}), ('grahamDef', gd),
+                   ('schloss', sc), ('buffett', bu)):
+        for k in ('buy', 'sellCons', 'sellFair'):
+            v = r.get(k)
+            check(v is None or v >= MIN_PRICE_REF,
+                  f'{c["code"]} {tag}.{k}={v} 低于一分钱下限 {MIN_PRICE_REF}，应为 None')
+        # 保守/公允同生同灭：卖点筛选是「同时 ≥ 两档」，半档会把这家公司永久排除
+        cons, fair = r.get('sellCons'), r.get('sellFair')
+        check((cons is None) == (fair is None),
+              f'{c["code"]} {tag} 保守卖价({cons})与公允卖价({fair})只有一个为空')
 
 # ---------- 3) 重算一致性（index 与最新算法同步） ----------
 mismatch = []

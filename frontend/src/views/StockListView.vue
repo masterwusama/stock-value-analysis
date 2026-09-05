@@ -53,7 +53,7 @@ const data = ref(null)
 const loading = ref(false)
 const error = ref('')
 
-// 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(须同时达保守与公允);空值=不限
+// 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(现价≥公允卖价即命中,公允恒高于保守);空值=不限
 // 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
 const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', buys: [], discount: '', sells: [] })
@@ -349,7 +349,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <label class="num disc" title="买点门槛 × 折扣%,如填 80 要求现价 ≤ 买价×80%,填 120 放宽到买价×120%;仅勾选买点后可用,留空等同 100%">打折
         <input v-model="flt.discount" type="number" min="0" max="500" step="1" placeholder="100"
                :disabled="!flt.buys.length" @change="applyFlt">%</label>
-      <span class="t" title="多选需同时满足:现价须同时 ≥ 保守卖价与公允卖价">卖点</span>
+      <span class="t" title="多选需同时满足:现价 ≥ 公允卖价（公允恒高于保守卖价，达到公允即两档都过）">卖点</span>
       <label v-for="[k, lab] in SCHOOLS" :key="'s' + k" class="cb">
         <input type="checkbox" :checked="flt.sells.includes(k)"
                @change="toggleFlt(flt.sells, k, $event.target.checked); applyFlt()">{{ lab }}</label>
@@ -360,7 +360,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         {{ FRAUD_TIP }}<br>
         {{ MGMT_TIP }}<br>
         {{ CAP_TIP }}<br>
-        买：现价 ≤ 买价×折扣；卖：现价须同时 ≥ 保守卖价与公允卖价；缺数据的公司自动排除
+        买：现价 ≤ 买价×折扣；卖：现价 ≥ 公允卖价（公允恒高于保守卖价，达到公允即两档都过）；缺数据的公司自动排除
       </p>
     </div>
 

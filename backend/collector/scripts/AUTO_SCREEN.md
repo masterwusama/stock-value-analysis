@@ -27,7 +27,7 @@ python scripts\auto_screen.py --source market --cache-only --buy schloss --fraud
 | 管理能力 ≥ N | `--mgmt-min 55` | 0~100 整数，越高越好 |
 | 买点复选框（多选=同时满足） | `--buy schloss` / `--buy gdef,schloss` | 流派可写英文（`grahamAgg` `grahamDef` `schloss` `buffett`）、缩写（`gagg` `gdef` `buf`）或中文（`格进取` `格防御` `施洛斯` `巴菲特`） |
 | 打折促销 % | `--discount 80` | 仅配合 `--buy`：要求现价 ≤ 买价×N%。80=再打8折才买，120=距买点 20% 以内即放行；默认 100 |
-| 卖点复选框（多选=同时满足） | `--sell buffett` | 现价须**同时** ≥ 保守卖价与公允卖价，任一缺失即排除 |
+| 卖点复选框（多选=同时满足） | `--sell buffett` | 现价 ≥ **公允卖价**即命中（四派公允恒为保守卖价的 1.3~1.5 倍，越过公允等于两档都过），缺参考价即排除 |
 | 搜索框 | `--keyword 轮胎` | 名称/代码模糊匹配 |
 | 市场 Tab | `--market A,HK,US` | 默认全部；逗号分隔，可写 `A股` `港股` `美股` |
 
@@ -60,7 +60,7 @@ python scripts\auto_screen.py --source market --cache-only --buy schloss --fraud
 
 - 各条件之间取**交集**；某公司依赖的评分/参考价/现价缺失时**自动排除**（不会误放行）。
 - 买点命中：`现价 ≤ 买价 × discount%`；多流派同选需全部满足。
-- 卖点命中：`现价 ≥ 保守卖价 且 ≥ 公允卖价`（券商类 sellCons 常为 null，会被排除，属预期）。
+- 卖点命中：`现价 ≥ 保守卖价 且 ≥ 公允卖价`；因四派公允恒为保守的 1.3~1.5 倍且两档同生同灭，实际等于 `现价 ≥ 公允卖价`（券商类格进取 NCAV 为负，两档同为 null，会被排除，属预期）。
 - `--discount`、`--fraud-max` 等越界值自动钳制到合法区间（与网页输入框行为一致）。
 
 ## 5. 排序与输出
