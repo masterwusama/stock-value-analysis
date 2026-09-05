@@ -39,11 +39,8 @@ try:
 except ImportError:
     pass
 
-# Wind MCP skill(node cli.mjs + 密钥)仍留在博客仓库;如整体搬迁用环境变量改指
-WIND_SKILL_DIR = os.getenv(
-    "WIND_SKILL_DIR",
-    r"<wind-mcp-skill 目录>",
-)
+# Wind MCP skill(node cli.mjs + 密钥)不在本仓库,目录由 backend/.env 的 WIND_SKILL_DIR 指定
+WIND_SKILL_DIR = os.getenv("WIND_SKILL_DIR")
 
 
 def _stale_note(code):
@@ -146,7 +143,8 @@ def fetch_locked() -> bool:
 def _env():
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"  # 子脚本中文 print 防 GBK 断管
-    env["WIND_SKILL_DIR"] = WIND_SKILL_DIR
+    if WIND_SKILL_DIR:  # 未配时不塞 None,让子脚本走自己的仓库相对兜底
+        env["WIND_SKILL_DIR"] = WIND_SKILL_DIR
     return env
 
 
