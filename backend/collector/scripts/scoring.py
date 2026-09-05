@@ -513,14 +513,17 @@ def value_scores(d, va):
         share = (intang_share or 0.0) + (goodwill_share or 0.0)
     moat_items = (
         lerp_score(g_margin, 0.2, 0.4, 0, 5),          # 销售毛利率 ≥ 40%
-        lerp_score(roe5, 0.08, 0.15, 0, 4),            # ROE ≥ 15%
+        lerp_score(roe5, 0.08, 0.15, 0, 4),            # ROE ≥ 15%（护城河档，8% 起给分）
         lerp_score(share, 0, 0.1, 0, 3),               # 无形+商誉占比 ≥ 10%
         # 连续分红 ≥ 5 年且分红率 ≤ 70%
         (3.0 if (va['payout'] is not None and va['payout'] <= 0.7) else 1.5)
         if div_consecutive >= 5 else 0.0,
     )
     b_items = (
-        lerp_score(roe5, 0.10, 0.15, 0, 25),           # ROE ≥ 15%
+        # ROE 在巴菲特派计两次（护城河 4 分 + 盈利质量 25 分 = 29/100），是有意设计：
+        # 两档起给分不同（8% / 10%）。实测两项相关系数 0.9801，无一家「一项满分另一项不满分」，
+        # 故前端把档位写进标签与阈值，并在卡片备注里说明，避免看起来像重复录入。
+        lerp_score(roe5, 0.10, 0.15, 0, 25),           # ROE ≥ 15%（盈利质量档，10% 起给分）
         lerp_score(n_margin, 0.05, 0.10, 0, 15),       # 净利率 ≥ 10%
         lerp_score(debtr, 0.5, 0.75, 15, 0),           # 负债率 ≤ 50%
         lerp_score(va['ratio5'], 0.5, 1, 0, 15),       # 5年净现比 ≥ 1

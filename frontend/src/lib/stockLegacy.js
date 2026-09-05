@@ -1249,14 +1249,14 @@
     // ---- 巴菲特芒格（优质企业 + 护城河）----
     var moatItems = [
       it('销售毛利率', fmtPct(gMargin), '≥ 40%（定价权迹象）', 5, lerpScore(gMargin, 0.2, 0.4, 0, 5)),
-      it('ROE（近5年均值）', fmtPct(roe5), '≥ 15%', 4, lerpScore(roe5, 0.08, 0.15, 0, 4)),
+      it('ROE（近5年均值）· 护城河', fmtPct(roe5), '≥ 15%（8% 起给分）', 4, lerpScore(roe5, 0.08, 0.15, 0, 4)),
       it('无形资产+商誉 / 总资产', fmtPct((intangShare != null || goodwillShare != null) ? (intangShare || 0) + (goodwillShare || 0) : null), '≥ 10%（品牌/专利/特许权）', 3,
         lerpScore((intangShare != null || goodwillShare != null) ? (intangShare || 0) + (goodwillShare || 0) : null, 0, 0.1, 0, 3)),
       it('连续分红且分红率 ≤ 70%', (divConsecutive || 0) + ' 年 / ' + fmtPct(va.payout), '≥ 5 年且 ≤ 70%', 3,
         divConsecutive >= 5 ? (va.payout != null && va.payout <= 0.7 ? 3 : 1.5) : 0)
     ];
     var bItems = [
-      it('ROE（近5年均值）', fmtPct(roe5), '≥ 15%', 25, lerpScore(roe5, 0.10, 0.15, 0, 25)),
+      it('ROE（近5年均值）· 盈利质量', fmtPct(roe5), '≥ 15%（10% 起给分）', 25, lerpScore(roe5, 0.10, 0.15, 0, 25)),
       it('销售净利率（最新年报）', fmtPct(nMargin), '≥ 10%', 15, lerpScore(nMargin, 0.05, 0.10, 0, 15)),
       it('资产负债率', fmtPct(debtr), '≤ 50%', 15, lerpScore(debtr, 0.5, 0.75, 15, 0)),
       it('5年累计净现比', fmtNum(va.ratio5), '≥ 1', 15, lerpScore(va.ratio5, 0.5, 1, 0, 15)),
@@ -1281,6 +1281,11 @@
     } else {
       moatNote = '最新年报未披露无形资产/商誉明细，无法量化评估特许经营资产。';
     }
+    // ROE 在本卡出现两行，标签与阈值原先完全相同而「符合度」不同（实测 10.76% 显示 15% 与 39%），
+    // 看上去像重复录入。两档起给分本就不同（护城河 8%、盈利质量 10%），故把档位写进标签与阈值，
+    // 并在此说明合计权重。实测两项相关系数 0.9801，没有一家「一项满分另一项不满分」。
+    moatNote += 'ROE 在本卡计两次是有意设计：护城河项 4 分（8% 起给分）＋盈利质量项 25 分（10% 起给分），'
+      + '合计占本卡 29/100，两档起给分不同，故同一 ROE 在两行的「符合度」也不同。';
 
     // 有效满分/缺维数：数据缺失项不计分也不计入满分，总分实际按有效满分折算，需向用户标注（跨市场可比性）
     function effOf(arr) {
