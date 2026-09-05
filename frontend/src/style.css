@@ -16,6 +16,8 @@ body {
   background: var(--bg);
   color: var(--txt);
   font: 14px/1.6 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  /* clip 而非 hidden：hidden 会把 body 变成滚动容器，进而废掉 .topbar / .va-nav / .stick 的 sticky */
+  overflow-x: clip;
 }
 
 a { color: var(--accent); text-decoration: none; }
@@ -91,3 +93,39 @@ table.grid thead th.stick { z-index: 2; }
 .error { color: var(--up); padding: 20px 0; }
 
 .wip { padding: 40px; text-align: center; color: var(--sub); }
+
+/* ── 手机（≤600px）──────────────────────────────────────────────
+   这是全站唯一在所有路由都加载的样式表，故顶栏/页面容器/工具条/分页的移动端规则集中在此。
+   断点值与 stock.css、agro.css 的 @media 以及 stockLegacy.js 的 mqMobile、lib/useMediaQuery.js 保持一致。 */
+@media (max-width: 600px) {
+  /* iOS Safari 对 font-size<16px 的文本输入控件聚焦时会自动放大整页且不缩回。
+     用 viewport meta 的 maximum-scale=1 压制会连带废掉无障碍缩放，故这里统一字号。
+     button 不在列：按钮不触发 iOS 缩放，放大只会让 chip/tab 变臃肿。 */
+  input, select, textarea { font-size: 16px; }
+
+  /* 详情页的 .va-nav 自带 sticky top:0 z-index:50，若顶栏也吸顶就会两条重叠。
+     这里让顶栏退回 static（而不是去调 z-index），全站只保留一条吸顶条。 */
+  .topbar { position: static; padding: 8px 12px; gap: 12px; }
+  .topbar .brand { font-size: 15px; }
+  .topbar nav { gap: 14px; margin-left: auto; }
+  .topbar nav a { font-size: 13px; }
+
+  .page { padding: 12px 10px 48px; }
+  .card { padding: 12px 10px; border-radius: 8px; }
+
+  .toolbar { gap: 8px; margin-bottom: 10px; }
+  /* 市场切换标签放不下就横向滑，滚动条藏掉（iOS/Android 上默认样式很占地方） */
+  .toolbar .tabs {
+    flex: 1 1 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .toolbar .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; white-space: nowrap; padding: 6px 12px; min-height: 32px; }
+  /* 干掉桌面的固定 200px：窄屏上它会把整行挤到溢出 */
+  .toolbar input { width: auto; flex: 1 1 140px; min-width: 0; min-height: 32px; }
+
+  .pager { flex-wrap: wrap; justify-content: center; gap: 8px; }
+  .pager button { padding: 7px 14px; }
+}

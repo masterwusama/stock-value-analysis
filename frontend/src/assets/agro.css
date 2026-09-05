@@ -303,6 +303,13 @@
   border-bottom: 1px solid #eee;
 }
 
+/* 8 个行业按钮的包层：桌面用 display:contents 让它不参与布局，
+   按钮照旧直接当 .edb-switch 的 flex item（渲染与加这层 div 之前逐像素相同）；
+   手机端由下面的 @media 把它切成单行横向滚动器。 */
+.edb-segs {
+  display: contents;
+}
+
 .edb-seg {
   padding: 7px 20px;
   border: 1px solid #d5d5d5;
@@ -489,4 +496,67 @@
 
 .edb-chart {
   width: 100%;
+}
+
+/* ── 手机（≤600px）──────────────────────────────────────────────
+   本表原先一条 @media 都没有，整页按 980px 桌面宽度写死。
+   断点值与 style.css、stock.css 及 lib/useMediaQuery.js 的 MOBILE_QUERY 保持一致。 */
+@media (max-width: 600px) {
+  /* 行业切换栏：8 个按钮在 390px 下要占三行，改成单行拇指横滑，滚动条藏掉 */
+  .edb-switch { gap: 6px; padding: 8px 0 12px; }
+  .edb-segs {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 6px;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .edb-segs::-webkit-scrollbar { display: none; }
+  .edb-seg { flex: none; min-height: 32px; padding: 6px 14px; font-size: 13px; }
+  /* 桌面靠 margin-left:auto 顶到最右，折行后会跑到半空；让它独占一行当页脚说明 */
+  .edb-switch-note { margin-left: 0; flex: 1 0 100%; font-size: 11px; }
+
+  /* 营收结构条：名称+占比一行、进度条整行、备注整行。
+     order 必须显式给全四个子元素，只给 track 加 order 会被排到最后去。 */
+  .agro-revenue { padding: 12px; }
+  .agro-company { font-size: 15px; }
+  .agro-rev-item { flex-wrap: wrap; gap: 6px 10px; }
+  .agro-rev-name { order: 1; }
+  .agro-rev-pct { order: 2; margin-left: auto; }
+  /* max-width:380px 在窄屏上会把进度条压成一小截，这里放开让它吃满整行 */
+  .agro-rev-track { order: 3; flex: 1 0 100%; max-width: none; }
+  .agro-rev-note { order: 4; flex: 1 0 100%; }
+
+  /* 分类筛选：四个 tab 均分一行，够 32px 触控高度 */
+  .agro-tabs { gap: 6px; }
+  .agro-tab { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 6px 8px; text-align: center; }
+
+  /* 产品卡：auto-fill minmax(280px,1fr) 在 390px 下算出一列但会被内边距顶到溢出，钉死单列 */
+  .agro-cards { grid-template-columns: 1fr; gap: 10px; }
+  .agro-card { padding: 10px 12px; }
+  .agro-card-price { font-size: 18px; }
+
+  .agro-chart-wrap { padding: 12px 10px; }
+  .agro-chart-tools { flex: 1 1 100%; gap: 8px; justify-content: space-between; }
+  /* style.css 的全局 input,select{font-size:16px} 特异性低于上面那条 .agro-chart-tools select，
+     不在这里覆盖回 16px，iOS 聚焦下拉时仍会把整页放大 */
+  .agro-chart-tools select { min-height: 32px; font-size: 16px; }
+  .agro-check { min-height: 32px; }
+
+  .agro-foot { margin: 12px 0 24px; font-size: 11px; }
+
+  /* EDB 视图 */
+  .edb-cat-head { gap: 8px; }
+  .edb-cat-name { font-size: 18px; }
+  .edb-kpis { grid-template-columns: 1fr; gap: 10px; }
+  .edb-kpi { padding: 10px 12px; }
+  .edb-kpi-val { font-size: 20px; }
+  /* 10px 在手机上偏小，这三处脚注统一提到 11px */
+  .edb-kpi-freq { font-size: 11px; }
+  .edb-kpi-foot { font-size: 11px; }
+  .edb-rng-label { font-size: 11px; }
+  .edb-panel { padding: 12px 10px; }
+  .edb-panel-sub { font-size: 11px; }
 }

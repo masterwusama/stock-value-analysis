@@ -6,6 +6,10 @@
   var DATA_FILE = '/api/agro/products';
   var $ = function (id) { return document.getElementById(id); };
 
+  // 惰性读断点（不在模块顶层缓存 MediaQueryList：那样转屏/改窗口后就过期）。
+  // 600 这个值须与 agro.css、style.css 的 @media 及 lib/useMediaQuery.js 保持一致。
+  function narrow() { return window.matchMedia('(max-width: 600px)').matches; }
+
   var state = {
     data: null,
     cat: '全部',
@@ -227,7 +231,7 @@
           return state.normalize ? (+v).toFixed(1) : fmtPrice(v) + ' 元/吨';
         }
       },
-      grid: { left: 64, right: 20, top: 40, bottom: 30 },
+      grid: narrow() ? { left: 46, right: 12, top: 44, bottom: 26 } : { left: 64, right: 20, top: 40, bottom: 30 },
       xAxis: { type: 'time' },
       yAxis: {
         type: 'value',
@@ -239,6 +243,26 @@
   }
 
   /* ---------------- 初始化 ---------------- */
+
+  var resizeBound = false;
+  var wasNarrow = null;
+
+  function onResize() {
+    // AgroView 的图表高度是 Vue :style 绑定，走微任务队列刷新；
+    // 同步 resize 读到的是旧高度，推一个宏任务再量才拿得到跨断点后的真实尺寸
+    setTimeout(function () {
+      if (!state.chart) return;
+      var n = narrow();
+      // 跨断点时 grid 左右留白是另一套值，只 resize 不重设 option 会留着旧边距
+      if (wasNarrow !== n) { wasNarrow = n; renderChart(); }
+      state.chart.resize();
+    }, 0);
+  }
+
+  // 组件卸载时摘掉监听：光 dispose 图表不够，监听器还挂在 window 上
+  function teardown() {
+    if (resizeBound) { resizeBound = false; window.removeEventListener('resize', onResize); }
+  }
 
   function init() {
     // 事件绑定
@@ -253,9 +277,8 @@
       state.range = this.value;
       renderChart();
     });
-    window.addEventListener('resize', function () {
-      if (state.chart) state.chart.resize();
-    });
+    wasNarrow = narrow();
+    if (!resizeBound) { resizeBound = true; window.addEventListener('resize', onResize); }
 
     // 加载数据
     fetch(DATA_FILE)
@@ -303,8 +326,12 @@
 
   // 供行业切换控制器调用：农化视图重新显示时恢复图表尺寸
   window.__agroRefresh = function () {
-    if (state.chart) state.chart.resize();
+    if (!state.chart) return;
+    var n = narrow();
+    // 可能在别的行业视图下转了屏，切回来时 grid 要按新视口重算
+    if (wasNarrow !== n) { wasNarrow = n; renderChart(); }
+    state.chart.resize();
   };
 
-  export { init, state as agroState };
+  export { init, teardown, state as agroState };
 

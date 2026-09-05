@@ -119,7 +119,14 @@
     return map;
   }
 
-  function baseGrid() { return { left: 66, right: 60, top: 44, bottom: 34 }; }
+  // 惰性读断点（顶层缓存 MediaQueryList 会在转屏后过期）；
+  // 600 须与 agro.css、style.css 的 @media 及 lib/useMediaQuery.js 一致
+  function narrow() { return window.matchMedia('(max-width: 600px)').matches; }
+
+  // 手机端左右留白收窄：桌面 left:66+right:60 在 390px 画布上要占掉近三分之一
+  function baseGrid() {
+    return narrow() ? { left: 46, right: 44, top: 40, bottom: 30 } : { left: 66, right: 60, top: 44, bottom: 34 };
+  }
 
   // 总览：所有指标归一为 100
   function renderOverview(cat) {
@@ -468,7 +475,8 @@
         '<span class="edb-panel-title">' + s.title + '</span>' +
         '<span class="edb-panel-sub">' + (s.note || '') + '</span>' +
         '</div>' +
-        '<div id="edb-dim-' + i + '" class="edb-chart" style="height:360px"></div>' +
+        // 高度拼在内联样式里，CSS 盖不住，只能按视口给值
+        '<div id="edb-dim-' + i + '" class="edb-chart" style="height:' + (narrow() ? 280 : 360) + 'px"></div>' +
         '</div>';
     });
     box.innerHTML = html;
@@ -532,6 +540,9 @@
 
   /* ---------------- 行业切换控制 ---------------- */
 
+  var resizeBound = false;
+  var wasNarrow = null;
+
   function showEdbBody(on) {
     $('edb-body').style.display = on ? '' : 'none';
   }
@@ -551,11 +562,35 @@
     loadEdb(function () {
       showEdbBody(true);
       renderCategory(view);
+      wasNarrow = narrow();  // renderCategory 已按当前视口出图，同步跟踪值避免下次 resize 误判翻转
       // 视图刚显示，容器尺寸有效，再 resize 一次保证宽度
       setTimeout(function () {
         state.instances.forEach(function (c) { c.resize(); });
       }, 0);
     });
+  }
+
+  function onResize() {
+    var v = $('edb-view');
+    // 农化视图在前台时 EDB 图表是 display:none，量出来的尺寸没有意义
+    if (!v || v.style.display === 'none') return;
+    // 分维图表高度是拼进 HTML 的内联样式、总览图高度是 Vue :style 绑定，
+    // 都要等这一轮 DOM 更新落地后再量，故推进宏任务
+    setTimeout(function () {
+      var n = narrow();
+      if (wasNarrow !== n) {
+        wasNarrow = n;
+        // 跨断点时 grid 与内联高度都是另一套值，只 resize 会留着旧边距，必须整体重建
+        if (state.loaded && state.current) renderCategory(state.current);
+        return;
+      }
+      state.instances.forEach(function (c) { c.resize(); });
+    }, 0);
+  }
+
+  // 组件卸载时摘掉监听：光 dispose 图表不够，监听器还挂在 window 上
+  function teardown() {
+    if (resizeBound) { resizeBound = false; window.removeEventListener('resize', onResize); }
   }
 
   function init() {
@@ -564,13 +599,9 @@
         switchView(b.getAttribute('data-view'));
       });
     });
-    window.addEventListener('resize', function () {
-      var v = $('edb-view');
-      if (v && v.style.display !== 'none') {
-        state.instances.forEach(function (c) { c.resize(); });
-      }
-    });
+    wasNarrow = narrow();
+    if (!resizeBound) { resizeBound = true; window.addEventListener('resize', onResize); }
   }
 
-  export { init, switchView, state as edbState };
+  export { init, switchView, teardown, state as edbState };
 

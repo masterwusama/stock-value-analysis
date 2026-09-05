@@ -4,9 +4,11 @@
  */
 import { nextTick, onBeforeUnmount, onMounted } from 'vue'
 import * as echarts from 'echarts'
+import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
 import '../assets/agro.css'
 
 window.echarts = echarts
+const isMobile = useMediaQuery(MOBILE_QUERY)
 let mods = null
 
 onMounted(async () => {
@@ -24,6 +26,10 @@ onBeforeUnmount(() => {
   if (c) { try { c.dispose() } catch (e) { /* 已释放 */ } mods.agro.agroState.chart = null }
   mods.edb.edbState.instances.forEach((x) => { try { x.dispose() } catch (e) { /* 已释放 */ } })
   mods.edb.edbState.instances = []
+  // 光 dispose 不够：两个模块的 resize 监听还挂在 window 上，路由切走后
+  // 每次窗口变化都会去 resize 已释放的实例，反复来回切会越积越多
+  mods.agro.teardown?.()
+  mods.edb.teardown?.()
 })
 </script>
 
@@ -32,14 +38,16 @@ onBeforeUnmount(() => {
 
     <!-- 行业切换栏 -->
     <div class="edb-switch" id="edb-switch">
-      <button class="edb-seg active" data-view="agro">农化制品</button>
-      <button class="edb-seg" data-view="auto">汽车</button>
-      <button class="edb-seg" data-view="alu">电解铝</button>
-      <button class="edb-seg" data-view="shipping">航运</button>
-      <button class="edb-seg" data-view="tire">轮胎橡胶</button>
-      <button class="edb-seg" data-view="realestate">地产链</button>
-      <button class="edb-seg" data-view="coal">煤炭</button>
-      <button class="edb-seg" data-view="steel">钢铁</button>
+      <div class="edb-segs">
+        <button class="edb-seg active" data-view="agro">农化制品</button>
+        <button class="edb-seg" data-view="auto">汽车</button>
+        <button class="edb-seg" data-view="alu">电解铝</button>
+        <button class="edb-seg" data-view="shipping">航运</button>
+        <button class="edb-seg" data-view="tire">轮胎橡胶</button>
+        <button class="edb-seg" data-view="realestate">地产链</button>
+        <button class="edb-seg" data-view="coal">煤炭</button>
+        <button class="edb-seg" data-view="steel">钢铁</button>
+      </div>
       <span class="edb-switch-note">行业 EDB 量价跟踪 · 数据源 万得 Wind（周/月聚合）</span>
     </div>
 
@@ -84,7 +92,8 @@ onBeforeUnmount(() => {
               </select>
             </span>
           </div>
-          <div id="agro-chart" style="width:100%;height:420px"></div>
+          <!-- 内联高度任何 CSS 都盖不住，只能在这里绑定；手机端降到 300px 免得一图占满整屏 -->
+          <div id="agro-chart" :style="{ width: '100%', height: isMobile ? '300px' : '420px' }"></div>
         </div>
 
         <div class="agro-foot" id="agro-foot"></div>
@@ -108,7 +117,7 @@ onBeforeUnmount(() => {
             <span class="edb-panel-title">相对走势总览</span>
             <span class="edb-panel-sub">各指标区间起点归一为 100，仅比较相对涨跌幅（单位不同不可直接比高低）</span>
           </div>
-          <div id="edb-chart-overview" class="edb-chart" style="height:420px"></div>
+          <div id="edb-chart-overview" class="edb-chart" :style="{ height: isMobile ? '300px' : '420px' }"></div>
         </div>
 
         <!-- 多维度分类图表（动态生成） -->

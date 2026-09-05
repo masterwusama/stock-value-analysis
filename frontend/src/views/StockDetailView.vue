@@ -46,6 +46,7 @@ onMounted(() => render(route.params.code))
 watch(() => route.params.code, (c) => c && render(c))
 onBeforeUnmount(() => {
   if (legacy) {
+    legacy.unbindResize()
     legacy.state.charts.forEach((c) => { try { c.dispose() } catch (e) { /* 已释放 */ } })
     legacy.state.charts = []
   }
@@ -80,4 +81,9 @@ onBeforeUnmount(() => {
   color: var(--txt);
 }
 .back-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* 手机端放大返回按钮的点击区；桌面保持原尺寸不变 */
+@media (max-width: 600px) {
+  .back-btn { padding: 8px 16px; font-size: 15px; min-height: 36px; }
+}
 </style>

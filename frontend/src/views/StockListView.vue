@@ -1,9 +1,11 @@
 <script setup>
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { get } from '../api/client'
+import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
 
 const router = useRouter()
+const isMobile = useMediaQuery(MOBILE_QUERY)
 
 const COLS = [
   // stick：横向滚动时固定在左侧，滚到右边仍知道当前是哪只（同原站 .stick）
@@ -225,6 +227,55 @@ function doJump() {
   if (target === page.value) load()
   else page.value = target
 }
+
+/* ---------------- 手机（≤600px）：卡片视图 + 折叠筛选/排序 ---------------- */
+
+// 筛选栏一行约 17 个控件，手机上默认收起，只留一行摘要按钮；两个面板互斥，
+// 同时展开会把首屏全部吃掉（同原内嵌页 fltOpen/sortOpen 的语义）
+const fltsOpen = ref(false)
+const sortOpen = ref(false)
+function toggleFlts() {
+  fltsOpen.value = !fltsOpen.value
+  if (fltsOpen.value) sortOpen.value = false
+}
+function toggleSort() {
+  sortOpen.value = !sortOpen.value
+  if (sortOpen.value) fltsOpen.value = false
+}
+
+// 排序 chip 的键直接从 COLS 派生，与桌面表头可排序列一一对应，后端 sort= 白名单不会失配。
+// 保守/公允卖价不进面板，靠卡片里点卖价小字触发（同桌面表格格内小字）。
+const SORT_CHIPS = COLS.filter((c) => c.key).map((c) => [c.key, c.ref ? c.label.split(' ')[0] + '买' : c.label])
+const SORT_NAME = Object.fromEntries(SORT_CHIPS)
+
+// 收起态按钮文案：把“已启用了哪些条件”直接写在按钮上，省得为了确认状态反复展开
+const fltSummary = computed(() => {
+  const parts = []
+  if (flt.fraudMax !== '') parts.push('造假≤' + flt.fraudMax)
+  if (flt.mgmtMin !== '') parts.push('管理≥' + flt.mgmtMin)
+  if (flt.capMin !== '') parts.push('市值≥' + flt.capMin)
+  if (flt.capMax !== '') parts.push('市值≤' + flt.capMax)
+  if (flt.buys.length) parts.push(flt.buys.length + '个买点' + (flt.discount !== '' ? '×' + flt.discount + '%' : ''))
+  if (flt.sells.length) parts.push(flt.sells.length + '个卖点')
+  if (industry.value) parts.push(industry.value)
+  if (noSt.value) parts.push('剔除ST')
+  return parts.length ? '筛选：' + parts.join(' · ') : '筛选条件'
+})
+const sortSummary = computed(() => {
+  const n = SORT_NAME[sort.value]
+  return n ? '排序：' + n + (order.value === 'desc' ? ' ↓' : ' ↑') : '选择排序方式'
+})
+
+// 等级色阈值镜像 stockLegacy.js 的 gradeOf / fraudGradeOf；造假与周期是“越低越好”，走反向那套。
+// 仅用于卡片着色，不参与任何计算。
+const gradeOf = (v) => v == null ? 'na' : v >= 80 ? 'good' : v >= 60 ? 'mid' : v >= 40 ? 'low' : 'bad'
+const fraudGradeOf = (v) => v == null ? 'na' : v < 20 ? 'good' : v < 40 ? 'mid' : v < 60 ? 'low' : 'bad'
+const GRADE_TEXT = { good: '优秀', mid: '良好', low: '一般', bad: '较差', na: '数据不足' }
+const FRAUD_GRADE_TEXT = { good: '低', mid: '中', low: '较高', bad: '高', na: '数据不足' }
+
+// 四流派评分字段名沿用 refKey 的 snake 拼法（score_graham_agg 等），与接口字段同源不另写一份
+const SCORE_CARDS = SCHOOLS.map(([k, lab]) => [refKey(k, 'score'), lab])
+const REF_COLS = COLS.filter((c) => c.ref)
 </script>
 
 <template>
@@ -244,7 +295,16 @@ function doJump() {
       <span v-if="data" style="color: var(--sub)">共 {{ data.total }} 只 · 快照 {{ data.trade_date }}</span>
     </div>
 
-    <div class="flts">
+    <div v-if="isMobile" class="m-tgls">
+      <button type="button" class="m-tgl" :class="{ on: fltsOpen }" :aria-expanded="fltsOpen" @click="toggleFlts">
+        <span class="m-tgl-tx">{{ fltSummary }}</span><i class="tgl-arw" aria-hidden="true">▾</i>
+      </button>
+      <button type="button" class="m-tgl" :class="{ on: sortOpen }" :aria-expanded="sortOpen" @click="toggleSort">
+        <span class="m-tgl-tx">{{ sortSummary }}</span><i class="tgl-arw" aria-hidden="true">▾</i>
+      </button>
+    </div>
+
+    <div v-show="!isMobile || fltsOpen" class="flts">
       <button v-if="windVisible()" type="button" class="wind" :class="{ on: windMode }"
               title="切换造假/管理两列口径：基础财报分 ↔ Wind 事件增强分（基础分 + 一次性 Wind 事件增量，排序与造假≤/管理≥筛选同步跟随；Wind 档下无事件数据的公司不给分显示 -，切回基础档可看全部）"
               @click="toggleWind">事件增强分 <b>{{ windMode ? 'Wind' : '基础' }}</b></button>
@@ -274,13 +334,85 @@ function doJump() {
         <input type="checkbox" :checked="flt.sells.includes(k)"
                @change="toggleFlt(flt.sells, k, $event.target.checked); applyFlt()">{{ lab }}</label>
       <button type="button" class="rst" @click="resetFlt">重置筛选{{ fltCount() ? `(${fltCount()})` : '' }}</button>
+      <!-- 手机没有 hover：桌面靠 title 才看得到的口径说明，触屏上必须常驻可见。
+           文案复用上面的 FRAUD_TIP/MGMT_TIP/CAP_TIP，同一套解释不维护两份。 -->
+      <p class="flts-hint">
+        {{ FRAUD_TIP }}<br>
+        {{ MGMT_TIP }}<br>
+        {{ CAP_TIP }}<br>
+        买：现价 ≤ 买价×折扣；卖：现价须同时 ≥ 保守卖价与公允卖价；缺数据的公司自动排除
+      </p>
+    </div>
+
+    <div v-if="isMobile && sortOpen" class="sorts">
+      <button v-for="[k, lab] in SORT_CHIPS" :key="k" type="button" class="chip" :class="{ active: sort === k }"
+              @click="setSort(k); sortOpen = false">
+        {{ lab }}<template v-if="sort === k">{{ order === 'desc' ? ' ↓' : ' ↑' }}</template>
+      </button>
     </div>
 
     <div v-if="error" class="error">{{ error }}</div>
     <div v-if="loading && !data" class="loading">加载中…</div>
 
     <div v-if="data && !data.items.length && !loading" class="loading">无符合筛选条件的公司</div>
-    <div v-else-if="data" class="tbl-wrap">
+    <template v-else-if="data">
+      <!-- 手机：卡片流，单指纵向滑、零横向拖动；桌面：原宽表，标记与样式一字未改 -->
+      <div v-if="isMobile" class="stock-cards">
+        <div v-for="s in data.items" :key="s.sid" class="stock-card" tabindex="0" role="link"
+             @click="router.push(`/stock/${s.code}`)"
+             @keyup.enter="router.push(`/stock/${s.code}`)">
+          <div class="sc-head">
+            <span class="sc-name">{{ s.name }}</span>
+            <span class="sc-code">{{ s.code }}</span>
+            <span v-if="s.market !== 'A'" class="badge">{{ MARKET_NAME[s.market] }}</span>
+            <span class="sc-price" :class="cls(s.change_pct)">
+              {{ fmt(s.price) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i>
+              <b>{{ pct(s.change_pct) }}</b>
+            </span>
+            <span class="sc-industry">{{ s.industry || '-' }}</span>
+          </div>
+
+          <div class="sc-badges">
+            <span class="sc-bd"><em>PE</em><b>{{ fmt(s.pe_ttm) }}</b></span>
+            <span class="sc-bd"><em>PB</em><b>{{ fmt(s.pb) }}</b></span>
+            <span class="sc-bd"><em>市值亿</em><b>{{ yi(s.market_cap) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></b></span>
+            <span class="sc-bd" :class="'sc-' + fraudGradeOf(dispScore(s, 'fraud'))"
+                  :title="windTip(s, 'fraud', FRAUD_TIP)">
+              <em>造假</em><b>{{ score(dispScore(s, 'fraud')) }}</b></span>
+            <span class="sc-bd" :class="'sc-' + gradeOf(dispScore(s, 'mgmt'))"
+                  :title="windTip(s, 'mgmt', MGMT_TIP)">
+              <em>管理</em><b>{{ score(dispScore(s, 'mgmt')) }}</b></span>
+            <span class="sc-bd" :class="'sc-' + fraudGradeOf(s.cycle)"
+                  :title="'周期位置（0-100，越低越接近周期底部）：' + FRAUD_GRADE_TEXT[fraudGradeOf(s.cycle)]">
+              <em>周期</em><b>{{ score(s.cycle) }}</b></span>
+          </div>
+
+          <div class="sc-scores">
+            <div v-for="[k, lab] in SCORE_CARDS" :key="k" class="sc-score" :class="'sc-' + gradeOf(s[k])"
+                 :title="GRADE_TEXT[gradeOf(s[k])]">
+              <span class="sc-k">{{ lab }}</span>
+              <span class="sc-v">{{ score(s[k]) }}</span>
+            </div>
+          </div>
+
+          <div class="sc-refs">
+            <div v-for="c in REF_COLS" :key="c.school" class="sc-ref" :title="refTitle(s, c.school)">
+              <em>{{ REF_LABELS[c.school] }}</em>
+              <span class="r-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">买 {{ fmt(refBuy(s, c.school)) }}</span>
+              <!-- 卖出价可点排序（.stop 挡住卡片的跳转）；公允缺失显示 - 而非留空，
+                   四列等高对齐，缺一行会让整排参差 -->
+              <span class="r-sell sl-sort"
+                    :class="{ 'r-hit-s': refCons(s, c.school) != null && s.price != null && s.price >= refCons(s, c.school) }"
+                    @click.stop="setSort(refKey(c.school, 'sellCons'))">保 {{ fmt(refCons(s, c.school)) }}</span>
+              <span class="r-sell sl-sort"
+                    :class="{ 'r-hit-s': refFair(s, c.school) != null && s.price != null && s.price >= refFair(s, c.school) }"
+                    @click.stop="setSort(refKey(c.school, 'sellFair'))">公 {{ fmt(refFair(s, c.school)) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="tbl-wrap">
       <table class="grid grid-list">
         <thead>
           <tr>
@@ -325,7 +457,8 @@ function doJump() {
           </tr>
         </tbody>
       </table>
-    </div>
+      </div>
+    </template>
 
     <div class="pager">
       <button :disabled="page <= 1" @click="page--">上一页</button>
@@ -377,6 +510,8 @@ function doJump() {
 }
 .flts .num input:disabled { opacity: 0.45; }
 .flts .cb { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+/* 触屏专用的口径说明：桌面已有 title 悬浮，不再重复占位；手机端由 @media 打开 */
+.flts-hint { display: none; }
 /* Wind 事件增强分切换档：选中时边框与文字走主题色（不加底色，与筛选栏其它控件一致） */
 .flts .wind {
   display: inline-flex;
@@ -430,4 +565,161 @@ table.grid-list .ind {
 }
 .r-hit { color: #0a7d3c; font-weight: 600; }
 .r-hit-s { color: #c0392b; }
+
+/* ---- 手机卡片视图 ----
+   下面这些元素只在 isMobile 为真时渲染，所以不需要 @media 包裹；
+   真正随视口切换的（筛选栏折行、折叠按钮、说明段落）放在文件末尾的 @media 里。 */
+.stock-cards { display: flex; flex-direction: column; gap: 10px; }
+.stock-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.stock-card:active { background: #f2f6fc; }
+.stock-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.sc-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.sc-name { font-size: 15px; font-weight: 600; color: var(--txt); }
+.sc-code { font-size: 11px; color: var(--sub); }
+/* 行业最长 20 字，独占第二行，不与名称/现价抢宽度 */
+.sc-industry { font-size: 11px; color: var(--sub); flex: 1 1 100%; order: 3; }
+.sc-price { margin-left: auto; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.sc-price b { font-size: 11px; font-weight: 500; margin-left: 4px; }
+
+/* 指标条：PE/PB/市值/造假/管理/周期，窄屏自动折成两行 */
+.sc-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.sc-bd {
+  flex: 1 1 calc(33.33% - 6px);
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: #f7f9fc;
+  font-size: 12px;
+}
+/* em 显式复位字重：stock.css 的全局 .sc-good 带 font-weight:600，
+   用户访问过详情页后那张表会留在文档里，不复位就会把灰色小标签也加粗 */
+.sc-bd em, .sc-ref em { font-style: normal; color: var(--sub); font-size: 10px; font-weight: 400; }
+.sc-bd b { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.sc-scores { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 6px; }
+.sc-score {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #f7f9fc;
+  font-size: 12px;
+}
+.sc-k { color: var(--sub); font-weight: 400; }
+.sc-v { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.sc-refs { display: flex; gap: 6px; margin-top: 6px; }
+.sc-ref {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+  font-size: 11px;
+  background: #f0f3f7;
+  border-radius: 6px;
+  padding: 5px 2px;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sc-ref .r-buy, .sc-ref .r-sell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 卖价小字是可点的排序入口：桌面靠下划线提示，触屏没有 hover，改按压反馈 + 加高点击区 */
+.sc-ref .sl-sort { cursor: pointer; padding: 2px 0; }
+.sc-ref .sl-sort:active { text-decoration: underline; }
+
+/* 等级色：stock.css 里 .sc-* 定义了两次（189-193 与 1045-1062），后者覆盖前者，
+   这里取“实际生效”的那套值——mid 琥珀、low 红；.sc-bad 只在第一处定义，同为红。
+   scoped 选择器带 [data-v-*] 属性，特异性高于全局同名类，不会被 stock.css 反压。 */
+.sc-good { color: #1e7e44; }
+.sc-mid { color: #b07a10; }
+.sc-low { color: #c0392b; }
+.sc-bad { color: #c0392b; }
+.sc-na { color: #9aa5b5; }
+
+@media (max-width: 600px) {
+  /* 折叠触发按钮：36px 触控高度，展开态走主题色，箭头翻转 */
+  .m-tgls { display: flex; gap: 8px; margin-bottom: 8px; }
+  .m-tgl {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 6px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--txt);
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .m-tgl.on { border-color: var(--accent); color: var(--accent); }
+  .m-tgl-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tgl-arw { font-style: normal; flex: none; transition: transform .15s; }
+  .m-tgl[aria-expanded="true"] .tgl-arw { transform: rotate(180deg); }
+
+  /* 筛选栏：桌面是一行约 17 个控件的横向流，手机上必然溢出。
+     改成两列折行（小控件半宽，下拉/按钮/说明整行），限高内滚不吃掉首屏。 */
+  .flts { gap: 8px; max-height: 52vh; overflow-y: auto; padding-right: 2px; }
+  .flts > * { flex: 1 1 calc(50% - 5px); min-width: 0; }
+  .flts .t, .flts .wind, .flts .disc, .flts .rst, .flts-hint { flex: 1 1 100%; }
+  .flts .t { margin-left: 0; }
+  .flts label.t { display: flex; align-items: center; gap: 6px; }
+  .flts .num { justify-content: space-between; }
+  .flts .num input { flex: 1; width: auto; min-width: 0; }
+  .flts select { width: 100%; max-width: none; }
+  .flts .cb, .flts .wind, .flts .num, .flts .rst, .flts .num input, .flts select { min-height: 32px; }
+  /* 重置按钮桌面靠 margin-left:auto 顶到最右；折行后那个 auto 会让它缩到半宽并错位 */
+  .flts .rst { margin-left: 0; padding: 9px 12px; }
+  /* 桌面靠 title 悬浮看的口径说明，触屏上转成常驻段落 */
+  .flts-hint {
+    display: block;
+    margin: 4px 0 0;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--txt);
+  }
+
+  /* 排序 chip 面板：表头在手机上不存在，排序入口全在这里 */
+  .sorts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 10px 0 12px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 10px;
+  }
+  .chip {
+    flex: none;
+    min-height: 32px;
+    padding: 5px 12px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--card);
+    color: var(--sub);
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+  .pager .psize { margin-left: 0; }
+  .pager .psize select, .pager .psize input { min-height: 32px; }
+}
 </style>
