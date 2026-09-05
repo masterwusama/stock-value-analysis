@@ -113,13 +113,49 @@ def recent_dividends(d, now=None):
 
 def lerp_score(v, a, b, ma, mb):
     """对应 JS lerpScore：v ≤ a 取 ma；v ≥ b 取 mb；中间线性"""
-    if v is None:
+    if v is None or v != v:
+        # v != v 即 NaN。JS 侧 isNaN 会返回 null；Python 若放行，NaN 两个比较都为假，
+        # 一路走到调用方的 min(100.0, nan) → 100.0，等于把垃圾数据顶到榜首
         return None
     if v <= a:
         return ma
     if v >= b:
         return mb
     return ma + (v - a) / (b - a) * (mb - ma)
+
+
+def lerp_score_nonneg(v, a, b, ma, mb):
+    """对应 JS lerpScoreNonneg：定义域为正数的“越小越好”项（PE/PB 等，ma > mb）的符号护栏。
+    v ≤ 0 是亏损/资不抵债的“不达标”，不是数据缺失，直接给最低分 mb；
+    否则 lerp_score 的 v ≤ a 分支会把负值夹到满分端（pb=-0.5 比 pb=0.7 得分还高）"""
+    if v is None:
+        return None
+    return mb if v <= 0 else lerp_score(v, a, b, ma, mb)
+
+
+def _yoy(cur, prev):
+    """同比增长率：基期为负时用 |基期| 作分母，使亏损扩大→负、亏损收窄/扭亏→正；
+    基期为正时与 cur/prev-1 完全等价，基期为 0 或缺失时无定义返回 None"""
+    if cur is None or prev is None or prev == 0:
+        return None
+    return (cur - prev) / abs(prev)
+
+
+# 周期位置分 8 维权重：cycle_analysis 阶段二与 cycle_history 必须同尺度。
+# 合计 105 而非 100 —— 这正是旧代码要靠 min(100, sum) 硬夹的原因，归一化后不再需要
+CYCLE_POS_W = (25, 15, 15, 10, 10, 10, 10, 10)
+
+
+def _weighted_total(scored):
+    """scored = [(得分 or None, 该项满分权重)] → 按“可用项的有效满分”归一到 0~100。
+    不能直接 sum(可用项)：造假分与周期位置分都是越低越好，缺一项就少扣一项，
+    数据不全的公司反而显得更干净、更接近周期底部（实测 1620 家亏损公司缺造假分里
+    25 分的净现比项）。归一化让缺项变成中性，而不是占便宜。"""
+    avail = [(s, w) for s, w in scored if s is not None]
+    wsum = sum(w for _, w in avail)
+    if wsum <= 0:
+        return None
+    return min(100.0, sum(s for s, _ in avail) / wsum * 100.0)
 
 
 def value_analysis(d, now=None):
@@ -142,7 +178,7 @@ def value_analysis(d, now=None):
             per_share_12m = (per_share_12m or 0.0) + r['bonus_per_10']
             hit12 = True
     per_share_12m = per_share_12m / 10.0 if hit12 else None
-    div_yield = per_share_12m / price if (price is not None and per_share_12m is not None) else None
+    div_yield = per_share_12m / price if (price and per_share_12m is not None) else None
     per_share_y = per_share_div(divs, last_year) if last_year is not None else None
     eps_y = last.get('基本每股收益') if last else None
     payout = per_share_y / eps_y if (per_share_y is not None and eps_y is not None and eps_y > 0) else None
@@ -365,18 +401,20 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
 
     pepb_score = None
     if pepb is not None:
-        pepb_score = 5.0 if pepb <= 22.5 else (lerp_score(pepb, 22.5, 45, 5, 0) if pepb <= 45 else 0.0)
+        # 单负/双负都属不达标：双负相乘得正会骗过 ≤22.5 阈值，故先按 pe/pb 符号判定
+        pepb_score = 0.0 if (pe <= 0 or pb <= 0) else (
+            5.0 if pepb <= 22.5 else (lerp_score(pepb, 22.5, 45, 5, 0) if pepb <= 45 else 0.0))
 
     scores.append((
         size_score(assets), cur_score, ltd_score, pos_score,
-        div_score10(div_consecutive), grow_score, lerp_score(pe, 15, 25, 5, 0), pepb_score,
+        div_score10(div_consecutive), grow_score, lerp_score_nonneg(pe, 15, 25, 5, 0), pepb_score,
     ))
     g_d_total = ssum(scores[-1])
 
     # ---- 施洛斯烟蒂 ----
     s_items = (
-        lerp_score(pb, 0.75, 1.5, 25, 0),          # 市净率 ≤ 0.75
-        lerp_score(pe, 10, 20, 20, 0),             # 市盈率 ≤ 10
+        lerp_score_nonneg(pb, 0.75, 1.5, 25, 0),    # 市净率 ≤ 0.75
+        lerp_score_nonneg(pe, 10, 20, 20, 0),       # 市盈率 ≤ 10
         lerp_score(liq_ratio, 1, 2, 0, 20),        # 流动资产/总负债 ≥ 2
         lerp_score(div_yield, 0, 0.03, 0, 15),  # 股息率 ≥ 3%
         10.0 if (net_profit is not None and net_profit > 0) else 0.0,  # 最新年报净利 > 0
@@ -417,7 +455,7 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
     ar_rev3 = None
     if len(ar3) == 3 and len(rev3) == 3:
         s_ar, s_rev = ssum(ar3), ssum(rev3)
-        if s_ar is not None and s_rev is not None:
+        if s_ar is not None and s_rev is not None and s_rev > 0:
             ar_rev3 = s_ar / s_rev
     # 近3年累计经营现金流 vs 累计利息费用
     ocf3 = [r.get('经营活动产生的现金流量净额') for r in cf_annual[-3:]]
@@ -437,6 +475,11 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
     rev_grow = (rev_now / rev_earliest - 1.0) if (rev_now is not None and rev_earliest is not None and rev_earliest > 0) else None
     g_margin_delta = (g_margin_now - g_margin_earliest) if (g_margin_now is not None and g_margin_earliest is not None) else None
     gw_int_sum = (goodwill or 0.0) + (intang or 0.0)
+    # 负权益有两种，不能一律豁免：回购把权益打成负数而公司仍在赚钱（达美乐/HCA 这类）
+    # 属正常资本结构；亏损导致的资不抵债、账上却还压着商誉无形，才是本项最该扣的情形
+    # ——比值在负权益下算不出来，但实质是"无形压在已被抹平的权益基数上"，按最重档处理
+    eq_distress = (last_eq is not None and last_eq <= 0 and gw_int_sum > 0
+                   and not (net_profit is not None and net_profit > 0))
     inv = last_ba.get('存货') if last_ba else None
     # 9 个量化扣分项（与 JS riskItems 阈值/分值完全一致），数据不足给 0 不误伤
     risk_items = (
@@ -444,8 +487,9 @@ def value_scores(d, va, k=1.0, use_fundamental=False):
         0.0 if eq_grow is None else (-5.0 if eq_grow <= -0.4 else (-3.0 if eq_grow <= -0.2 else 0.0)),
         # 近5年扣非亏损年数
         0.0 if adj_valid < 3 else (-5.0 if adj_loss_n >= 3 else (-3.0 if adj_loss_n == 2 else 0.0)),
-        # (商誉+无形资产)/归母权益
-        0.0 if (last_eq is None or last_eq <= 0) else (-4.0 if gw_int_sum / last_eq > 0.6 else (-2.0 if gw_int_sum / last_eq > 0.3 else 0.0)),
+        # (商誉+无形资产)/归母权益：负权益下比值无意义，改由 eq_distress 区分对待
+        (-4.0 if eq_distress else 0.0) if (last_eq is None or last_eq <= 0)
+        else (-4.0 if gw_int_sum / last_eq > 0.6 else (-2.0 if gw_int_sum / last_eq > 0.3 else 0.0)),
         # 应收账款/营收（3年年报均值）
         0.0 if ar_rev3 is None else (-3.0 if ar_rev3 > 0.6 else (-1.5 if ar_rev3 > 0.4 else 0.0)),
         # 存货/总资产（最新年报）
@@ -616,6 +660,12 @@ def _bisect_buy(score_fn, price0):
             lo = mid
         else:
             hi = mid
+    if lo < 0.01:
+        # 买入价不足现价 1%（需跌 99%）时，二分给出的已经不是价格而是判决：任何现实价位都到不了
+        # 目标分。实测 16627 次二分里 610 次落在此区，买入价从 1e-8 元到 1.3 元、对应现价 5~956 元，
+        # 没有一条能当参考价用，还会污染"按买入价排序"。这类里 493 次是 t_max<90 的平台塌缩，
+        # 另 117 次目标可达却同样给出 0.0015 元这种数，所以只按 t_max 分流并不够，统一按 lo 切。
+        return None
     return price0 * lo
 
 
@@ -833,10 +883,10 @@ def fraud_analysis(d):
         w(sev(soft_share, 0.10, 0.20, 0.35), 5),    # 资产偏软，5 分
         w(s8, 5),                               # 销售收现比，5 分
     ]
-    avail = [s for s in scores if s is not None]
-    if not avail:
+    # 归一化：本分越低越可疑，缺项若只从总分里少加一笔，等于数据不全反而“更干净”
+    total = _weighted_total(list(zip(scores, (25, 20, 15, 10, 10, 10, 5, 5))))
+    if total is None:
         return None
-    total = min(100.0, sum(avail))
     # 与 JS Math.round(total*10)/10 一致（Python round 为银行家舍入，不能直接用）
     return math.floor(total * 10 + 0.5) / 10.0
 
@@ -872,10 +922,14 @@ def management_analysis(d):
     ar = ar_of(last_ba)
     inv = last_ba.get('存货') if last_ba else None
 
-    # 1. 三费率：任一费用存在则缺失项按 0 计（与 JS (x||0) 一致）；
-    # 三费科目全缺（港股/美股报表口径）时回退替代科目近似计算：美股“营业费用”、港股“销售及分销费用”
+    # 1. 三费率：销售/管理费用任一存在则缺失项按 0 计（与 JS (x||0) 一致）；
+    # 三费科目全缺（港股/美股报表口径）时回退替代科目近似计算：美股“营业费用”、港股“销售及分销费用”。
+    # 只有财务费用时不算三费率：财务费用为净收益（利息收入>支出）会把费率压成负数，
+    # 而本项“越低越好”，负值直接拿满 15 分（实测友邦保险 fee_ratio=-0.0031 → 15/15），
+    # 等于用一个与费用纪律无关的科目发满分。此时按三费全缺处理，交给替代科目兜底。
     fees = [sell_exp, adm_exp, fin_exp]
-    fee_sum = sum(f for f in fees if f is not None) if any(f is not None for f in fees) else None
+    has_opex = sell_exp is not None or adm_exp is not None
+    fee_sum = sum(f for f in fees if f is not None) if has_opex else None
     if fee_sum is None and last_inc is not None:
         fee_sum = last_inc.get('营业费用') if last_inc.get('营业费用') is not None else last_inc.get('销售及分销费用')
     fee_ratio = fee_sum / rev if (fee_sum is not None and rev is not None and rev > 0) else None
@@ -916,8 +970,11 @@ def management_analysis(d):
         payout = (divs[0]['bonus_per_10'] / 10.0) / eps
         if payout > 1.5:
             payout = None
-    # 8. 治理诚信：造假风险分反向（越低越诚信）
-    fraud = fraud_analysis(d)
+    # 8. 治理诚信：造假风险分反向（越低越诚信）；异常只丢该维度不影响其余 7 项（与 JS try/catch 一致）
+    try:
+        fraud = fraud_analysis(d)
+    except Exception:                                       # noqa: BLE001
+        fraud = None
 
     scores = [
         lerp_score(fee_ratio, 0.10, 0.30, 15, 0),   # 费用纪律，15 分（越低越好）
@@ -929,12 +986,27 @@ def management_analysis(d):
         lerp_score(payout, 0, 0.50, 0, 10),         # 股东回报，10 分（越高越好）
         None if fraud is None else lerp_score(fraud, 0, 100, 10, 0),  # 治理诚信，10 分（造假分越低越好）
     ]
-    avail = [s for s in scores if s is not None]
-    if not avail:
+    # 归一化：本分越高越好，缺项若只是少几笔加分，数据不全的公司就被系统性压低
+    total = _weighted_total(list(zip(scores, (15, 10, 20, 10, 10, 15, 10, 10))))
+    if total is None:
         return None
-    total = min(100.0, sum(avail))
     # 与 JS Math.round(total*10)/10 一致（Python round 为银行家舍入，不能直接用）
     return math.floor(total * 10 + 0.5) / 10.0
+
+
+def _capex_prev(annual_cf, row, key):
+    """row 之前最多 3 个年报的资本开支（按 row 在年报序列中的实际位置开窗）。
+    不能硬切 annual_cf[-4:-1]（默认现金流表末年即当年，报表错位就取错窗口），
+    也不能用 list.index（row 不在序列中时返回 -1，切片退化成“全部历史除最后一行”）"""
+    ci = -1
+    if row is not None:
+        for i, r in enumerate(annual_cf):
+            if r is row:
+                ci = i
+                break
+    if ci < 0:
+        return []
+    return [r.get(key) for r in annual_cf[max(0, ci - 3):ci] if r.get(key) is not None]
 
 
 def cycle_analysis(d):
@@ -967,13 +1039,15 @@ def cycle_analysis(d):
             denom = sum(abs(x) for x in nets) / len(nets)
         if denom > 0:
             cv_net = sd(nets) / denom
-    # 1b 利润深度下滑频率：年度净利同比 ≤ -30% 的年数（同比自算，与报表口径一致）
-    drops, yoy_hist, hit_drop = 0, [], False
+    # 1b 利润深度下滑频率：年度净利同比 ≤ -30% 的年数（同比自算，与报表口径一致）。
+    # 此处只在基期为正时计算：“下滑 30%”对盈利基数才有意义；若把亏损扩大也算进来，
+    # 尚未盈利的生物医药/新经济公司会被误判为周期性行业（实测 166 家误判）。
+    # 阶段二“利润动能”用 _yoy（基期为负按 |基期|）——那里问的是“是否在离开底部”，亏损收窄正是信号。
+    drops, hit_drop = 0, False
     for ci in range(1, len(annual)):
         n_cur, n_pre = annual[ci].get('净利润'), annual[ci - 1].get('净利润')
         yoy = (n_cur / n_pre - 1.0) if (n_cur is not None and n_pre is not None and n_pre > 0) else None
         if yoy is not None:
-            yoy_hist.append(yoy)
             hit_drop = True
             if yoy <= -0.3:
                 drops += 1
@@ -1006,7 +1080,9 @@ def cycle_analysis(d):
     net_pct = pct_of(net_last, nets)
     gm_pct = pct_of(gm_last, gms)
     rev_pct = pct_of(rev_last, [r.get('营业总收入') for r in w8])
-    net_yoy = yoy_hist[-1] if yoy_hist else None
+    # 利润动能必须用最新年报自身同比：上年净利缺失/为 0 时置空，
+    # 不能回退到历史同比序列末位（那是数年前的值，会被当成最新动能打分）
+    net_yoy = _yoy(net_last, annual[-2].get('净利润')) if len(annual) >= 2 else None
     # 最新年报净现比（底部常伴随现金流恶化）
     last_cf = sheet_row_by_date(cf_list, last_date) if last_date else None
     ocf_last = last_cf.get('经营活动产生的现金流量净额') if last_cf else None
@@ -1022,7 +1098,7 @@ def cycle_analysis(d):
     CAPEX_K = '购建固定资产、无形资产和其他长期资产所支付的现金'
     annual_cf = [r for r in cf_list if str(r.get('报告日') or '')[5:] == '12-31']
     capex_now = last_cf.get(CAPEX_K) if last_cf else None
-    capex_prev = [r.get(CAPEX_K) for r in annual_cf[-4:-1] if r.get(CAPEX_K) is not None]
+    capex_prev = _capex_prev(annual_cf, last_cf, CAPEX_K)
     capex_ratio = None
     if capex_now is not None and len(capex_prev) >= 2:
         capex_avg = sum(capex_prev) / len(capex_prev)
@@ -1047,10 +1123,11 @@ def cycle_analysis(d):
         lerp_score(capex_ratio, 0.7, 1.3, 0, 10),                  # 资本开支周期，10 分（收缩→出清）
         lerp_score(qoq, -0.10, 0.05, 0, 10),                       # 单季环比，10 分（仍在探底→低分）
     ]
-    avail = [s for s in scores if s is not None]
-    if not avail:
+    # 归一化：本分越低越接近底部，缺项若只是少扣一笔，数据不全的公司就被判成“更接近底部”。
+    # 顺带去掉旧代码的 min(100, sum) 硬夹 —— 8 维权重合计 105，归一化后天然不越界
+    total = _weighted_total(list(zip(scores, CYCLE_POS_W)))
+    if total is None:
         return {'cyclical': True, 'cyclicalScore': cyc, 'total': None}
-    total = min(100.0, sum(avail))
     # 与 JS Math.round(total*10)/10 一致（Python round 为银行家舍入，不能直接用）
     return {'cyclical': True, 'cyclicalScore': cyc,
             'total': math.floor(total * 10 + 0.5) / 10.0}
@@ -1099,7 +1176,7 @@ def cycle_history(d):
         win = annual[max(0, i - 7):i + 1]
         net = row.get('净利润')
         prev = annual[i - 1].get('净利润')
-        yoy = (net / prev - 1.0) if (net is not None and prev is not None and prev > 0) else None
+        yoy = _yoy(net, prev)
         date = str(row.get('报告期') or '')[:10]
         cf = sheet_row_by_date(cf_list, date)
         ba = sheet_row_by_date(ba_list, date)
@@ -1110,9 +1187,7 @@ def cycle_history(d):
         inv_prev = ba_prev.get('存货') if ba_prev else None
         inv_grow = (inv_now / inv_prev - 1.0) if (inv_now is not None and inv_prev is not None and inv_prev > 0) else None
         capex_now = cf.get(CAPEX_K) if cf else None
-        ci = annual_cf.index(cf) if cf in annual_cf else -1
-        capex_prev = [r.get(CAPEX_K) for r in annual_cf[max(0, ci - 3):ci]
-                      if r.get(CAPEX_K) is not None]
+        capex_prev = _capex_prev(annual_cf, cf, CAPEX_K)
         capex_ratio = None
         if capex_now is not None and len(capex_prev) >= 2:
             capex_avg = sum(capex_prev) / len(capex_prev)
@@ -1133,8 +1208,9 @@ def cycle_history(d):
             lerp_score(capex_ratio, 0.7, 1.3, 0, 10),
             lerp_score(qoq_i, -0.10, 0.05, 0, 10),
         ]
-        avail = [s for s in scores if s is not None]
-        sc = math.floor(min(100.0, sum(avail)) * 10 + 0.5) / 10.0 if avail else None
+        # 与阶段二同口径归一化：各年可用维度数不同，不归一就没法逐年比（cycle_trend 正是逐年比）
+        total = _weighted_total(list(zip(scores, CYCLE_POS_W)))
+        sc = math.floor(total * 10 + 0.5) / 10.0 if total is not None else None
         out.append({'year': year, 'score': sc})
     return out
 
@@ -1143,14 +1219,19 @@ def cycle_trend(hist):
     """对应 JS cycleTrendOf —— 趋势状态（最新年相对上一年）：
     rev=反转（上一年还在底部区≤30 且明显回升）/ up=上行 / flat=筑底（低位≤40横盘）/ down=下行"""
     h = [x for x in (hist or []) if x.get('score') is not None]
-    if len(h) < 2:
+    if not h:
         return None
-    d1 = h[-1]['score'] - h[-2]['score']
+    cur = h[-1]
+    # 必须取“上一年”而非“上一条有分的年”：中间年缺分时两者跨年，会把两年前的分当成上一年
+    prev = next((x for x in reversed(h[:-1]) if x.get('year') == cur['year'] - 1), None)
+    if prev is None:
+        return None
+    d1 = cur['score'] - prev['score']
     if d1 > 5:
-        return 'rev' if h[-2]['score'] <= 30 else 'up'
+        return 'rev' if prev['score'] <= 30 else 'up'
     if d1 < -5:
         return 'down'
-    if h[-1]['score'] <= 40:
+    if cur['score'] <= 40:
         return 'flat'
     return 'up' if d1 >= 0 else 'down'
 

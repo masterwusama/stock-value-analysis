@@ -1,5 +1,8 @@
-# 临时验证：Python scoring.py 与 stock.js 原函数（Node 抽取）的四大流派分数对比
+# Python scoring.py 与 frontend/src/lib/stockLegacy.js 原函数（Node 抽取）的逐项一致性对比
+# Node 全量跑一遍约 7 分钟；只改 Python 侧时可设 VA_JS_CACHE 复用上次结果：
+#   node scripts/_score_check_node.js > _tmp/js.json && VA_JS_CACHE=_tmp/js.json python -X utf8 scripts/_score_check.py
 import json
+import os
 import subprocess
 import sys
 import io
@@ -12,14 +15,18 @@ from scoring import compute_scores, cycle_analysis, cycle_history  # noqa: E402
 BASE = Path(__file__).parent.parent
 companies_dir = BASE / 'data' / 'companies'
 
-js_out = subprocess.run(
-    ['node', str(Path(__file__).parent / '_score_check_node.js')],
-    capture_output=True, timeout=300,
-)
-if js_out.returncode != 0:
-    print('NODE FAIL:', js_out.stderr.decode('utf-8', 'replace')[:2000])
-    sys.exit(1)
-js_scores = json.loads(js_out.stdout)
+cache = os.environ.get('VA_JS_CACHE')
+if cache:
+    js_scores = json.loads(Path(cache).read_text(encoding='utf-8'))
+else:
+    js_out = subprocess.run(
+        ['node', str(Path(__file__).parent / '_score_check_node.js')],
+        capture_output=True, timeout=1800,
+    )
+    if js_out.returncode != 0:
+        print('NODE FAIL:', js_out.stderr.decode('utf-8', 'replace')[:2000])
+        sys.exit(1)
+    js_scores = json.loads(js_out.stdout)
 
 diffs = []
 for f in sorted(companies_dir.glob('*.json')):

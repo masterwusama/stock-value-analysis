@@ -6,16 +6,11 @@
   var DATA_BASE = './data/';
 
   var $ = function (id) { return document.getElementById(id); };
-  var state = { companies: [], current: null, charts: [], view: 'year',
-    indexUpdatedAt: null, listScroll: 0, keyword: '', tab: 'A',
-    scores: {}, details: {}, scoresLoaded: false, sortKey: null, sortDir: 'desc', sortOpen: false,
-    // Wind 事件增强分开关（列表用，localStorage 记忆）+ 事件覆盖层（events/index.json byCode）+ 单家事件明细缓存
-    windMode: (function () { try { return localStorage.getItem('va_wind') === '1'; } catch (e) { return false; } })(),
-    eventOverlay: null, eventDetails: {}, overlayLoaded: false,
-    // 筛选条件：造假风险≤ / 管理能力≥ / 买点（多选同满，可乘打折促销%）/ 卖点（多选同满，须同时达保守与公允）
-    flt: { fraudMax: null, mgmtMin: null, buys: [], discount: null, sells: [] }, fltOpen: false };
+  var state = { current: null, charts: [], view: 'year', details: {},
+    // 事件覆盖层（events/index.json byCode）：由 fetchOverlayOnce 拉取，或 StockDetailView 从接口数据直接注入
+    eventOverlay: null, overlayLoaded: false };
 
-  // 移动端断点（与 CSS @media max-width:600px 保持一致）：宽表切换卡片流、详情长列表折叠
+  // 移动端断点（与 CSS @media max-width:600px 保持一致）：详情长列表折叠 + 图表 grid 收紧
   var mqMobile = window.matchMedia('(max-width: 600px)');
 
   // 10年期国债收益率参考值（用于股债利差对比，需手动定期更新）
@@ -55,11 +50,6 @@
     return s ? String(s).slice(0, 10) : '-';
   }
 
-  // "2026-08-09T01:37:56+08:00" → "2026-08-09 01:37"
-  function fmtFullDate(s) {
-    return s ? String(s).replace('T', ' ').slice(0, 16) : '-';
-  }
-
   function cls(v) {
     if (v == null || isNaN(v) || v === 0) return 'flat';
     return v > 0 ? 'up' : 'down';
@@ -77,11 +67,17 @@
 
   /* ---------------- 价值分析：数据准备与工具函数 ---------------- */
 
+  // 报表排序统一走三路比较。原来各处写成 `a[k] < b[k] ? -1 : 1`，相等时 cmp(a,b) 与 cmp(b,a)
+  // 都是 1，违反反对称性 —— V8 的 TimSort 遇到这种比较器不保证保留输入序，而 scoring.py 用
+  // Python 稳定排序 sorted() 一定保留。实测有 8 家公司存在重复报告日，两边取到的“最新一期”
+  // 报表因此可能不是同一行，分数就对不上。相等必须显式返回 0。
+  function cmpKey(ka, kb) { return ka < kb ? -1 : (ka > kb ? 1 : 0); }
+
   // indicators 中的年报序列（按报告期升序）
   function annualRows(indicators) {
     return (indicators || [])
       .filter(function (r) { return String(r['报告期'] || '').indexOf('12-31') >= 0; })
-      .sort(function (a, b) { return a['报告期'] < b['报告期'] ? -1 : 1; });
+      .sort(function (a, b) { return cmpKey(a['报告期'], b['报告期']); });
   }
 
   // 美股真实财年末：数据侧为对齐 A 股 schema 把报告期压成 12-31（见
@@ -123,7 +119,7 @@
     var rows = (balance || []).filter(function (r) { return String(r['报告日'] || '').indexOf('12-31') >= 0; });
     var row = null, eq = null, capCn = null, capHk = null;
     if (rows.length) {
-      rows.sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
+      rows.sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
       row = rows[rows.length - 1];
       capCn = row['实收资本(或股本)'];
       capHk = row['股本'];
@@ -194,7 +190,7 @@
   function annualBalanceRows(rows) {
     return (rows || [])
       .filter(function (r) { return String(r['报告日'] || '').indexOf('12-31') >= 0; })
-      .sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
+      .sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
   }
 
   // 应收账款读取（港股报表科目为“应收帐款”，双科目兼容，优先 A 股口径）
@@ -258,325 +254,15 @@
     show('stock-error');
   }
 
-  function route() {
-    // 代码：A 股 6 位数字（600873）/ 港股 5 位数字（00696）/ 美股 1~5 位字母数字（GOOGL、NVDA）
-    var m = location.hash.match(/^#\/([A-Za-z0-9]{1,6})$/);
-    if (m) {
-      // 进入详情前记录列表滚动位置，返回时恢复
-      state.listScroll = window.scrollY;
-      showDetail(m[1]);
-    } else { showList(); }
-  }
-
   // [legacy] hash 路由绑定已移除:导航由 vue-router 接管
 
-  /* ---------------- 公司列表 ---------------- */
-
-  function showList() {
-    if (!state.companies.length) { fetchIndex(); return; }
-    show('stock-list');
-    renderList();
-    // 预载全部公司数据并计算三大流派评分（异步填充，缓存复用进详情页）
-    if (!state.scoresLoaded) fetchScores();
-  }
-
-  // 渲染列表（市场 Tab 过滤 + 搜索/条件筛选 + 评分排序 + 宽表展示），重建 DOM 后重新绑定交互
-  function renderList() {
-    var box = $('stock-list');
-    var list = sortCompanies().filter(function (c) { return c.market === state.tab; });
-    // 市场 Tab：A股/港股/美股 分流展示（带各市场数量），切换仅过滤不重拉数据
-    var tabLabels = { A: 'A股', HK: '港股', US: '美股' };
-    var isMobile = mqMobile.matches;
-    // 工具栏（Tab/搜索/排序）：移动端整组吸顶，切市场/搜索/排序无需滚回顶部
-    var html = '<div class="s-toolbar">' +
-      '<div class="s-tabs" role="tablist">' +
-      ['A', 'HK', 'US'].map(function (m) {
-        var n = state.companies.filter(function (c) { return c.market === m; }).length;
-        return '<button class="s-tab' + (state.tab === m ? ' active' : '') + '" data-tab="' + m +
-          '" role="tab" aria-selected="' + (state.tab === m ? 'true' : 'false') + '">' +
-          tabLabels[m] + '<span class="s-tab-count">' + n + '</span></button>';
-      }).join('') + '</div>' +
-      '<div class="stock-search-wrap">' +
-      '<input id="stock-search" type="search" placeholder="搜索公司名称 / 代码" ' +
-      'value="' + (state.keyword || '') + '" aria-label="搜索公司"></div>' +
-      // Wind 事件增强分切换档（仅当事件覆盖层存在时显示）：切换列表造假/管理两列口径，排序/筛选跟随
-      (state.eventOverlay ? '<button type="button" class="s-wind-toggle' + (state.windMode ? ' active' : '') + '" id="stock-wind-toggle" ' +
-        'title="切换造假/管理分口径：基础财报分 ↔ Wind 事件增强分（基础分 + 一次性 Wind 事件增量；Wind 档下无事件数据的公司不给分显示 -，切回基础档可看全部）">' +
-        '<span class="swt-lab">事件增强分</span><span class="swt-val">' + (state.windMode ? 'Wind' : '基础') + '</span></button>' : '') +
-      '<div class="s-filter' + (isMobile && !state.fltOpen ? ' s-filter-folded' : '') + '">' +
-      // 移动端折叠面板：默认收起为一行摘要（含已启用条件概览），与排序面板同样式风格
-      (isMobile ? '<button type="button" class="s-filter-toggle" id="stock-flt-toggle" ' +
-        'aria-expanded="' + (state.fltOpen ? 'true' : 'false') + '"><span>' + fltToggleLabel() + '</span>' +
-        '<i class="s-tgl-arw" aria-hidden="true">▾</i></button>' : '') +
-      '<div class="s-filter-body">' +
-      '<div class="s-flt-row">' +
-      '<label class="s-flt-num" title="财报造假可能性（0-100，越高越可疑），只保留 ≤ 该分的公司">造假风险 ≤ ' +
-      '<input id="flt-fraud" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="不限" value="' + fltVal(state.flt.fraudMax) + '"></label>' +
-      '<label class="s-flt-num" title="管理层管理水平（0-100，越高越好），只保留 ≥ 该分的公司">管理能力 ≥ ' +
-      '<input id="flt-mgmt" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="不限" value="' + fltVal(state.flt.mgmtMin) + '"></label>' +
-      '</div>' +
-      '<div class="s-flt-row"><span class="s-flt-t" title="多选需同时满足：现价 ≤ 买价 × 折扣%">买点</span>' +
-      fltCb('buy', 'grahamAgg', '格进取') + fltCb('buy', 'grahamDef', '格防御') +
-      fltCb('buy', 'schloss', '施洛斯') + fltCb('buy', 'buffett', '巴菲特') +
-      '<label class="s-flt-num s-flt-disc" title="买点门槛 × 折扣%，如填 80 则要求现价 ≤ 买价×80%，填 120 则放宽到买价×120%（即现价距买点 20% 以内）；仅勾选买点后可用，留空等同 100%">打折促销 ' +
-      '<input id="flt-disc" type="number" min="0" max="500" step="1" inputmode="numeric" placeholder="100" value="' + fltVal(state.flt.discount) + '"' +
-      (state.flt.buys.length ? '' : ' disabled') + '> %</label>' +
-      '</div>' +
-      '<div class="s-flt-row"><span class="s-flt-t" title="多选需同时满足：现价须同时 ≥ 保守卖价与公允卖价">卖点</span>' +
-      fltCb('sell', 'grahamAgg', '格进取') + fltCb('sell', 'grahamDef', '格防御') +
-      fltCb('sell', 'schloss', '施洛斯') + fltCb('sell', 'buffett', '巴菲特') +
-      '</div>' +
-      '<div class="s-flt-row"><button type="button" id="flt-reset">重置筛选</button>' +
-      '<span class="s-flt-hint">买：现价 ≤ 买价×折扣；卖：现价 ≥ 保守卖价且 ≥ 公允卖价；缺数据的公司自动排除</span></div>' +
-      '</div></div>' +
-      '<div class="s-sort' + (isMobile && !state.sortOpen ? ' s-sort-folded' : '') + '">' +
-      // 移动端折叠面板：默认收起（仅一行摘要），点开才显示全部排序按钮，避免占用屏高
-      (isMobile ? '<button type="button" class="s-sort-toggle" id="stock-sort-toggle" ' +
-        'aria-expanded="' + (state.sortOpen ? 'true' : 'false') + '"><span>' +
-        sortToggleLabel() + '</span><i class="s-tgl-arw" aria-hidden="true">▾</i></button>' : '') +
-      '<div class="s-sort-body">' +
-      '<span class="s-flt-t">排序</span>' +
-      sortBtn('score-grahamAgg', '格·进取') +
-      sortBtn('score-grahamDef', '格·防御') +
-      sortBtn('score-schloss', '施洛斯') +
-      sortBtn('score-buffett', '巴菲特') +
-      // 移动端卡片流补充入口：按各策略买入性价比排序（参考价÷现价，倍数大在前）
-      (isMobile ? '<span class="s-sort-divider">买入性价比</span>' +
-        sortBtn('buy-grahamAgg', '进取买') +
-        sortBtn('buy-grahamDef', '防御买') +
-        sortBtn('buy-schloss', '施洛斯买') +
-        sortBtn('buy-buffett', '巴菲特买') +
-        '<span class="s-sort-divider">清算价值</span>' +
-        sortBtn('liq', '清算价') +
-        sortBtn('netcash', '净现金率') +
-        '<span class="s-sort-divider">造假风险</span>' +
-        sortBtn('fraud', '造假分') +
-        '<span class="s-sort-divider">管理水平</span>' +
-        sortBtn('mgmt', '管理分') +
-        '<span class="s-sort-divider">周期位置</span>' +
-        sortBtn('cycle', '周期分') : '') +
-      '<span class="s-sort-hint">评分列按分数排，买入/卖出参考列按性价比排（参考价 ÷ 现价，倍数大在前），再点同列切换升/降序</span></div></div></div>';
-    if (isMobile) {
-      // 移动端卡片流：名称/代码/行业/现价 + 四流派评分四宫格 + 买入参考，零横向拖动
-      html += '<div class="stock-cards">' + list.map(cardHtml).join('') + '</div>';
-    } else {
-      // 宽表：列数从简——买入/卖出参考按流派合并为单列（单元格内竖排 买→保→公 三档，18列降为14列）；
-      // 列头按买入性价比排序，点卖出小字按保守价排序（data-sort 键：score-/buy-/sellC- + 流派）
-      var SCHOOLS = ['grahamAgg', 'grahamDef', 'schloss', 'buffett'];
-      html += '<div class="stock-table-wrap"><table class="stock-list-table"><thead>' +
-      '<tr class="th-g1">' +
-      thSort('name', '股票名称', 'stick', ' rowspan="2"') +
-      thSort('code', '代码', 'c-code', ' rowspan="2"') +
-      thSort('industry', '所属行业', 'c-industry', ' rowspan="2"') +
-      thSort('price', '现价', null, ' rowspan="2"') +
-      thSort('liq', '清算价值', null, ' rowspan="2"', '按每股公允清算价值排') +
-      thSort('netcash', '净现金/市值', null, ' rowspan="2"', '(货币资金×100%＋交易性金融资产×70%＋应收票据×40%＋其他流动资产×30%−负债合计)÷总市值，最近一期财报；鼠标悬停单元格可看代入值') +
-      thSort('fraud', '造假风险', null, ' rowspan="2"', '财报造假可能性评分（0-100，越高越可疑）；点击按分数排序') +
-      thSort('mgmt', '管理水平', null, ' rowspan="2"', '管理层管理水平评分（0-100，越高越好）；点击按分数排序') +
-            thSort('cycle', '周期位置', null, ' rowspan="2"', '周期位置评分（0-100，越低越接近周期底部）；非周期性行业不打分显示“非周期”；点击按分数排序（升序=更近底部）') +
-      '<th colspan="4">四大流派评分</th>' +
-      '<th colspan="4" title="每列自上而下：买入参考 / 保守卖出参考 / 公允卖出参考（小字）；现价进入买区绿底、卖区红字">价格参考（买 / 保卖 / 公卖）</th>' +
-      '</tr><tr class="th-g2">' +
-      SCHOOLS.map(function (k, i) {
-        return thSort('score-' + k, ['格进取', '格防御', '施洛斯', '巴菲特'][i]);
-      }).join('') +
-      SCHOOLS.map(function (k, i) {
-        return thSort('buy-' + k, ['格进取', '格防御', '施洛斯', '巴菲特'][i], 'c-ref-h', '', '按买入性价比排；点格内卖出小字按卖出价排');
-      }).join('') +
-      '</tr></thead><tbody>';
-    list.forEach(function (c) {
-      var k = (c.name + ' ' + c.code).toLowerCase();
-      html += '<tr class="stock-row" data-k="' + k + '" data-code="' + c.code + '" ' +
-        'data-price="' + (c.price == null ? '' : c.price) + '" tabindex="0" role="link">' +
-        listCells(c) + '</tr>';
-    });
-    html += '</tbody></table></div>';
-    }
-    html += '<div class="stock-hint" id="stock-search-empty" style="display:none">未找到匹配的公司</div>';
-    html += '<div class="stock-list-foot">数据更新于 ' + fmtFullDate(state.indexUpdatedAt) + '</div>';
-    box.innerHTML = html;
-
-    // 搜索框输入即时过滤（名称/代码模糊匹配，与筛选条件叠加）
-    var input = $('stock-search');
-    input.addEventListener('input', function () {
-      state.keyword = input.value;
-      applyFilters();
-    });
-
-    // 筛选面板：数值输入即时生效（0~上限钳制，越界/非法值失焦时回写钳制后的值；打折促销上限 500）
-    var fFraud = $('flt-fraud'), fMgmt = $('flt-mgmt'), fDisc = $('flt-disc');
-    function bindNumInput(el, key, max) {
-      if (!el) return;
-      el.addEventListener('input', function () {
-        state.flt[key] = clampInt(el.value, max);
-        applyFilters();
-      });
-      el.addEventListener('change', function () {
-        el.value = state.flt[key] == null ? '' : state.flt[key];
-      });
-    }
-    bindNumInput(fFraud, 'fraudMax');
-    bindNumInput(fMgmt, 'mgmtMin');
-    bindNumInput(fDisc, 'discount', 500);
-    // 买点/卖点复选：多选代表同时满足；勾选买点才解锁打折促销输入
-    box.querySelectorAll('[data-flt-buy]').forEach(function (cb) {
-      cb.addEventListener('change', function () {
-        fltToggleArr(state.flt.buys, cb.getAttribute('data-flt-buy'), cb.checked);
-        if (fDisc) fDisc.disabled = !state.flt.buys.length;
-        applyFilters();
-      });
-    });
-    box.querySelectorAll('[data-flt-sell]').forEach(function (cb) {
-      cb.addEventListener('change', function () {
-        fltToggleArr(state.flt.sells, cb.getAttribute('data-flt-sell'), cb.checked);
-        applyFilters();
-      });
-    });
-    var fReset = $('flt-reset');
-    if (fReset) {
-      fReset.addEventListener('click', function () {
-        state.flt = { fraudMax: null, mgmtMin: null, buys: [], discount: null, sells: [] };
-        renderList();
-      });
-    }
-    // 移动端筛选面板展开/收起（与排序面板互斥：同时只展开一个，避免叠加占满屏高）
-    var fltToggle = $('stock-flt-toggle');
-    if (fltToggle) {
-      fltToggle.addEventListener('click', function () {
-        state.fltOpen = !state.fltOpen;
-        if (state.fltOpen) state.sortOpen = false;
-        renderList();
-      });
-    }
-
-    // 市场 Tab 切换：仅重渲染当前列表，保留搜索词与排序状态
-    box.querySelectorAll('.s-tab').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        state.tab = btn.getAttribute('data-tab');
-        renderList();
-      });
-    });
-
-    // 移动端排序面板展开/收起（与筛选面板互斥）
-    var sortToggle = $('stock-sort-toggle');
-    if (sortToggle) {
-      sortToggle.addEventListener('click', function () {
-        state.sortOpen = !state.sortOpen;
-        if (state.sortOpen) state.fltOpen = false;
-        renderList();
-      });
-    }
-
-    // Wind 事件增强分切换档：切换造假/管理列口径（基础财报分 ↔ 基础分+事件增量），排序/筛选跟随，localStorage 记忆
-    var windToggle = $('stock-wind-toggle');
-    if (windToggle) {
-      windToggle.addEventListener('click', function () {
-        state.windMode = !state.windMode;
-        try { localStorage.setItem('va_wind', state.windMode ? '1' : '0'); } catch (e) {}
-        renderList();
-      });
-    }
-
-    // 排序：表头列与下方按钮共用同一逻辑（applySort），首次点击数值列降序、文本列升序；
-    // 仅绑定 .s-sort-body 内按钮，避免命中折叠面板触发按钮（无 data-sort）
-    box.querySelectorAll('thead th[data-sort]').forEach(function (th) {
-      th.addEventListener('click', function () { applySort(th.getAttribute('data-sort')); });
-    });
-    box.querySelectorAll('.s-sort-body button').forEach(function (btn) {
-      btn.addEventListener('click', function () { applySort(btn.getAttribute('data-sort')); });
-    });
-
-    // 行点击与键盘可达：进入详情（路由由 hashchange 统一处理）
-    box.querySelectorAll('.stock-row').forEach(function (row) {
-      row.addEventListener('click', function () {
-        location.hash = '#/' + row.getAttribute('data-code');
-      });
-      row.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          location.hash = '#/' + row.getAttribute('data-code');
-        }
-      });
-    });
-
-    // 净现金/市值单元格（宽表 td 与移动卡片 div）：点击弹出代入计算式，不触发行进详情
-    box.querySelectorAll('[data-s="netcash"]').forEach(function (el) {
-      el.addEventListener('click', function (e) {
-        e.stopPropagation();
-        showNetFormulaPop(el);
-      });
-    });
-
-    // 合并参考格内卖出小字：分别按保守/公允价排序（列头本身按买入价排），不触发行进详情
-    box.querySelectorAll('td .sl-c[data-sort], td .sl-f[data-sort]').forEach(function (el) {
-      el.addEventListener('click', function (e) {
-        e.stopPropagation();
-        applySort(el.getAttribute('data-sort'));
-      });
-    });
-
-    // 关键词 + 筛选条件统一应用到所有行（宽表与卡片流共用）
-    applyFilters();
-
-    // 从详情返回时恢复滚动位置
-    if (state.listScroll) window.scrollTo(0, state.listScroll);
-
-    // 断点跨越（手机↔桌面）时切换列表形态；详情页不打扰
-    if (!state.mqBound) {
-      state.mqBound = true;
-      mqMobile.addEventListener('change', function () {
-        if (!state.current && state.companies.length) renderList();
-      });
-    }
-  }
-
   /* ---------------- Wind 事件增强分 helper ---------------- */
-
-  // 该代码是否处于“Wind 增强”档：开关开 + 覆盖层有该代码事件数据（覆盖层仅含 A 股，命中即 A 股）
-  function windActiveCode(code) {
-    return !!(state.windMode && state.eventOverlay && state.eventOverlay[code]);
-  }
 
   // 基础分叠加事件 delta 后钉到 0~100；基础分缺失时原样返回（无基可加）
   function applyDelta(base, delta) {
     if (base == null) return null;
     if (!delta) return base;
     return Math.max(0, Math.min(100, base + delta));
-  }
-
-  // 展示用造假/管理分（按代码）：Wind 档下仅对有事件数据的公司给优化分，无数据公司不给分（显示 -）；基础档为财报基础分
-  function dispFraudCode(code) {
-    var sc = state.scores[code];
-    var base = sc ? sc.fraud : null;
-    if (!state.windMode || !state.eventOverlay) return base; // 覆盖层整体缺失（加载失败/无数据）时视同基础档
-    var o = state.eventOverlay[code];
-    if (!o) return null;
-    return applyDelta(base, o.fraudDelta || 0);
-  }
-  function dispMgmtCode(code) {
-    var sc = state.scores[code];
-    var base = sc ? sc.mgmt : null;
-    if (!state.windMode || !state.eventOverlay) return base;
-    var m = state.eventOverlay[code];
-    if (!m) return null;
-    return applyDelta(base, m.mgmtDelta || 0);
-  }
-  // 展示用造假/管理分（按公司对象）
-  function dispFraud(c) { return dispFraudCode(c.code); }
-  function dispMgmt(c) { return dispMgmtCode(c.code); }
-
-  // 单元格悬停提示：windMode 下补充“基础+delta→优化”与触发红旗摘要；Wind 档无事件数据时说明不给分
-  function windCellTip(c, base, disp, kind, baseTip) {
-    if (!state.windMode || !state.eventOverlay) return baseTip;
-    if (!windActiveCode(c.code)) {
-      return '无 Wind 事件数据（一次性抓取仅覆盖部分 A 股），“事件增强分”档下不给分；切回“基础”档可看财报基础分';
-    }
-    var o = state.eventOverlay[c.code] || {};
-    var d = (kind === 'fraud' ? o.fraudDelta : o.mgmtDelta) || 0;
-    var flags = (o.flags && o.flags.length) ? '；事件：' + o.flags.join('、') : '';
-    return 'Wind 事件增强：基础财报 ' + (base == null ? '-' : fmtNum(base)) + ' 分 ' +
-      (d >= 0 ? '+' : '') + fmtNum(d) + ' → 优化 ' + (disp == null ? '-' : fmtNum(disp)) + ' 分' + flags +
-      '\n' + baseTip;
   }
 
   // HTML 转义（事件明细表文本字段来自 Wind 原始数据，不可信，一律转义）
@@ -613,566 +299,6 @@
     return h + '</div>';
   }
 
-  // 单行 10 个单元格：名称/代码/行业/现价/清算/净现金 ＋ 评分4 ＋ 价格参考4（每流派买/保/公合并单列）
-  // data-s 标记供降级路径 fillRowScores 渐进重填；价格与现价对照着色（买区绿/卖区红）
-  function listCells(c) {
-    var sc = state.scores[c.code] || null;
-    var refs = sc ? sc.priceRefs : null;
-    var cur = c.price;
-    var h = '<td class="c-name stick" title="' + c.name + '">' + c.name + '</td>' +
-      '<td class="c-code">' + c.code + '</td>' +
-      '<td class="c-industry" title="' + (c.industry || '') + '">' + (c.industry || '-') + '</td>' +
-      '<td class="c-num c-now">' + (cur == null ? '-' : fmtNum(cur)) + '</td>';
-    // 公允清算价值（每股）：现价 ≤ 清算价（跌破清算价值）标绿
-    var liq = refs ? refs.fairLiq : null;
-    var liqHit = liq != null && cur != null && cur <= liq ? ' r-hit' : '';
-    h += '<td class="c-num' + liqHit + '" data-s="liq" title="公允清算价值估算：(流动资产合计-负债合计)/股本">' +
-      (liq == null ? '-' : fmtNum(liq)) + '</td>';
-    // 净现金/市值：分子随最近一期财报更新，分母随行情快照；悬停看公式，点击弹代入计算式
-    var ncr = refs ? refs.netCashRatio : null;
-    var ncrTitle = netCashFormula(refs) ||
-      '净现金/市值：(货币资金×100%＋交易性金融资产×70%＋应收票据×40%＋其他流动资产×30%−负债合计)÷总市值（最近一期财报），≥100% 表示扣除全部负债后的类现金仍高于市值';
-    h += '<td class="c-num' + (ncr != null && ncr >= 1 ? ' r-hit' : '') + '" data-s="netcash" ' +
-      'title="' + ncrTitle + '">' +
-      (ncr == null ? '-' : (ncr * 100).toFixed(1) + '%') + '</td>';
-    // 造假风险（百分制，越高风险越大）：Wind 档取基础+事件 delta 的优化分，否则基础财报分
-    var fraudBase = sc ? sc.fraud : null;
-    var fraud = dispFraud(c);
-    var fraudTip = windCellTip(c, fraudBase, fraud, 'fraud',
-      '财报造假可能性 ' + (fraud == null ? '-' : fmtNum(fraud)) + ' 分（0-100，越高越可疑）：净现背离/高应计/应收存货增速背离/毛利率逆势上升/其他应收占用等量化红旗加权');
-    h += '<td class="c-num sc-' + fraudGradeOf(fraud) + '" data-s="fraud" ' +
-      'title="' + fraudTip + '">' +
-      (fraud == null ? '-' : fmtNum(fraud)) + '</td>';
-    // 管理水平（百分制，越高越好）：Wind 档取基础+事件 delta 的优化分，否则基础财报分
-    var mgmtBase = sc ? sc.mgmt : null;
-    var mgmt = dispMgmt(c);
-    var mgmtTip = windCellTip(c, mgmtBase, mgmt, 'mgmt',
-      '管理层管理水平 ' + (mgmt == null ? '-' : fmtNum(mgmt)) + ' 分（0-100，越高越好）：费用纪律/资产周转/资本回报/成长质量/营运资金/现金流质量/股东回报/治理诚信加权');
-    h += '<td class="c-num sc-' + gradeOf(mgmt) + '" data-s="mgmt" ' +
-      'title="' + mgmtTip + '">' +
-      (mgmt == null ? '-' : fmtNum(mgmt)) + '</td>';
-    // 周期位置（百分制，越低越接近底部）：非周期性行业显示“非周期”灰色；周期性低分=机会=绿（同造假分方向）；
-    // 趋势图标：反转/上行 ▲绿、筑底 ◆琥珀、下行 ▼红（后端预计算，降级路径由客户端回填）
-    var cyc = sc ? sc.cycle : null;
-    var cycT = sc ? sc.cycleTrend : null;
-    var cycTip = (cycT ? cycleTrendText(cycT) + '（最新年分数相对上一年）；' : '') +
-      '周期位置 ' + (cyc == null ? '-' : fmtNum(cyc)) + ' 分（0-100，越低越接近周期底部）：利润/毛利率/营收位置 + 同比动能 + 现金流 + 库存/资本开支周期 + 单季环比加权';
-    if (sc && sc.cyclical === false) {
-      h += '<td class="c-num sc-na" data-s="cycle" title="非周期性/弱周期行业（周期强度 < 40），不适用周期位置评分">非周期</td>';
-    } else {
-      h += '<td class="c-num sc-' + fraudGradeOf(cyc) + '" data-s="cycle" title="' + cycTip + '">' +
-        (cyc == null ? '-' : fmtNum(cyc)) + cycleTrendIcon(cycT) + '</td>';
-    }
-    ['grahamAgg', 'grahamDef', 'schloss', 'buffett'].forEach(function (k) {
-      var v = sc ? sc[k] : null;
-      var g = gradeOf(v);
-      h += '<td class="c-num sc-' + g + '" data-s="score-' + k + '" title="' + gradeText(g) + '">' +
-        (v == null ? '-' : fmtNum(v)) + '</td>';
-    });
-    // 价格参考合并列：每流派一列，竖排 买→保守→公允；现价 ≤ 买价只标绿买入价，
-    // 现价 ≥ 卖出价对应行标红，其余中性不染色（避免整格绿底染到卖价小字）
-    var schoolNames = { grahamAgg: '格·进取', grahamDef: '格·防御', schloss: '施洛斯', buffett: '巴菲特' };
-    ['grahamAgg', 'grahamDef', 'schloss', 'buffett'].forEach(function (k) {
-      var p = refs && refs[k] ? refs[k] : null;
-      var buy = p ? p.buy : null;
-      var pC = p ? p.sellCons : null;
-      var pF = p ? p.sellFair : null;
-      var hitB = buy != null && cur != null && cur <= buy ? ' r-hit' : '';
-      var hitC = pC != null && cur != null && cur >= pC;
-      var hitF = pF != null && cur != null && cur >= pF;
-      h += '<td class="c-num c-ref" data-s="buy-' + k + '" ' +
-        'title="' + schoolNames[k] + '：买 ' + (buy == null ? '-' : fmtNum(buy)) + ' / 保卖 ' + (pC == null ? '-' : fmtNum(pC)) + ' / 公卖 ' + (pF == null ? '-' : fmtNum(pF)) + '">' +
-        '<span class="rf-buy' + hitB + '">' + (buy == null ? '-' : fmtNum(buy)) + '</span>' +
-        '<span class="rf-sell">' +
-          '<span class="sl-c' + (hitC ? ' r-hit-s' : '') + '" data-s="sellC-' + k + '" data-sort="sellC-' + k + '" title="保守卖出参考，点击按保守价排序">' + (pC == null ? '-' : fmtNum(pC)) + '</span>' +
-          '<span class="sl-f' + (hitF ? ' r-hit-s' : '') + '" data-s="sellF-' + k + '" data-sort="sellF-' + k + '" title="公允卖出参考，点击按公允价排序">' + (pF == null ? '' : fmtNum(pF)) + '</span>' +
-        '</span>' +
-        '</td>';
-    });
-    return h;
-  }
-
-  // 移动端卡片：头部（名称/代码/行业/现价）+ 四流派评分四宫格 + 买入参考一行四格；
-  // 带 stock-row 类以复用搜索过滤/点击进详情/键盘可达的绑定逻辑
-  function cardHtml(c) {
-    var sc = state.scores[c.code] || null;
-    var refs = sc ? sc.priceRefs : null;
-    var cur = c.price;
-    var names = ['格进取', '格防御', '施洛斯', '巴菲特'];
-    var h = '<div class="stock-card stock-row" data-k="' + (c.name + ' ' + c.code).toLowerCase() +
-      '" data-code="' + c.code + '" data-price="' + (cur == null ? '' : cur) + '" tabindex="0" role="link">';
-    h += '<div class="sc-head">' +
-      '<span class="sc-name">' + c.name + '</span>' +
-      '<span class="sc-code">' + c.code + '</span>' +
-      '<span class="sc-industry">' + (c.industry || '-') + '</span>' +
-      '<span class="sc-price">' + (cur == null ? '-' : fmtNum(cur)) + '</span>' +
-      '<span class="sc-fraud sc-' + fraudGradeOf(dispFraud(c)) + '" data-s="fraud" title="财报造假可能性（0-100，越高越可疑）"><em>造假</em><b>' + (dispFraud(c) != null ? fmtNum(dispFraud(c)) : '-') + '</b></span>' +
-      '<span class="sc-mgmt sc-' + gradeOf(dispMgmt(c)) + '" data-s="mgmt" title="管理层管理水平评分（0-100，越高越好）"><em>管理</em><b>' + (dispMgmt(c) != null ? fmtNum(dispMgmt(c)) : '-') + '</b></span>' +
-      (sc && sc.cyclical === false
-        ? '<span class="sc-cycle sc-na" data-s="cycle" title="非周期性/弱周期行业，不适用周期位置评分"><em>周期</em><b>非周期</b></span>'
-        : '<span class="sc-cycle sc-' + fraudGradeOf(sc ? sc.cycle : null) + '" data-s="cycle" title="周期位置评分（0-100，越低越接近周期底部）；趋势：' + (sc && sc.cycleTrend ? cycleTrendText(sc.cycleTrend) : '-') + '"><em>周期</em><b>' + (sc && sc.cycle != null ? fmtNum(sc.cycle) : '-') + '</b>' + cycleTrendIcon(sc ? sc.cycleTrend : null) + '</span>') +
-      '</div>';
-    // 公允清算价值 + 净现金/市值 并排（移动端半行各一块，样式复用 sc-liq）
-    var liq = refs ? refs.fairLiq : null;
-    var liqHit = liq != null && cur != null && cur <= liq;
-    var ncrC = refs ? refs.netCashRatio : null;
-    // 移动端无 hover：净现金块点按弹代入计算式浮层；初始提示写公式模板
-    h += '<div class="sc-duo">' +
-      '<div class="sc-liq' + (liqHit ? ' sc-liq-hit' : '') + '" title="公允清算价值估算：(流动资产合计-负债合计)/股本">' +
-        '<em>清算价值</em>' +
-        '<span class="sc-liq-v" data-s="liq">' + (liq == null ? '-' : fmtNum(liq)) + '</span>' +
-        (liqHit ? '<b>跌破</b>' : '') +
-      '</div>' +
-      '<div class="sc-liq sc-net-tap" data-s="netcash" title="(货币资金×100%＋交易性金融资产×70%＋应收票据×40%＋其他流动资产×30%−负债合计)÷总市值，点击看代入值">' +
-        '<em>净现金/市值</em>' +
-        '<span>' + (ncrC == null ? '-' : (ncrC * 100).toFixed(1) + '%') + '</span>' +
-      '</div>' +
-    '</div>';
-    // 评分四宫格（等级色与宽表一致：sc-good/mid/low/bad/na）
-    h += '<div class="sc-scores">' + ['grahamAgg', 'grahamDef', 'schloss', 'buffett'].map(function (k, i) {
-      var v = sc ? sc[k] : null;
-      var g = gradeOf(v);
-      return '<div class="sc-score sc-' + g + '"><span class="sc-k">' + names[i] + '</span>' +
-        '<span class="sc-v" data-s="score-' + k + '">' + (v == null ? '-' : fmtNum(v)) + '</span></div>';
-    }).join('') + '</div>';
-    // 买/卖参考四列：每列含买入价 + 保守卖出 + 公允卖出（现价 ≤ 买入价只标绿买入价，
-    // 现价 ≥ 卖出价对应值标红，其余中性不染色，与宽表语义一致）
-    h += '<div class="sc-refs">' + ['grahamAgg', 'grahamDef', 'schloss', 'buffett'].map(function (k, i) {
-      var p = refs && refs[k] ? refs[k] : null;
-      var buy = p ? p.buy : null;
-      var sellC = p ? p.sellCons : null;
-      var sellF = p ? p.sellFair : null;
-      var hitB = buy != null && cur != null && cur <= buy;
-      var hitC = sellC != null && cur != null && cur >= sellC;
-      var hitF = sellF != null && cur != null && cur >= sellF;
-      return '<div class="sc-ref" data-s="buy-' + k + '">' +
-        '<em>' + names[i] + '</em>' +
-        '<span class="r-buy' + (hitB ? ' r-hit' : '') + '">买 ' + (buy == null ? '-' : fmtNum(buy)) + '</span>' +
-        '<span class="r-sell' + (hitC ? ' r-hit-s' : '') + '">保卖 ' + (sellC == null ? '-' : fmtNum(sellC)) + '</span>' +
-        '<span class="r-sell' + (hitF ? ' r-hit-s' : '') + '">公卖 ' + (sellF == null ? '-' : fmtNum(sellF)) + '</span>' +
-        '</div>';
-    }).join('') + '</div>';
-    return h + '</div>';
-  }
-
-  /* ---------------- 列表条件筛选 ---------------- */
-
-  // 筛选数值输入渲染值（空值显示占位符）
-  function fltVal(v) { return v == null ? '' : v; }
-
-  // 买点/卖点复选框 HTML（勾选状态从 state.flt 回显）
-  function fltCb(kind, k, label) {
-    var arr = kind === 'buy' ? state.flt.buys : state.flt.sells;
-    return '<label class="s-flt-cb"><input type="checkbox" data-flt-' + kind + '="' + k + '"' +
-      (arr.indexOf(k) >= 0 ? ' checked' : '') + '>' + label + '</label>';
-  }
-
-  // 0~上限正整数钳制（默认上限 100）：空/非法值返回 null（不过滤），越界钳到边界（输入框 min/max 双重保险）
-  function clampInt(v, max) {
-    if (v == null || String(v).trim() === '') return null;
-    var n = parseInt(v, 10);
-    if (isNaN(n)) return null;
-    return Math.max(0, Math.min(max == null ? 100 : max, n));
-  }
-
-  // 数组勾选切换（防重复）
-  function fltToggleArr(arr, k, checked) {
-    var i = arr.indexOf(k);
-    if (checked && i < 0) arr.push(k);
-    if (!checked && i >= 0) arr.splice(i, 1);
-  }
-
-  function fltActive() {
-    var f = state.flt;
-    return f.fraudMax != null || f.mgmtMin != null || f.buys.length > 0 || f.sells.length > 0;
-  }
-
-  // 移动端筛选面板触发按钮文案：收起态显示已启用条件摘要（未启用则提示），
-  // 展开态仅“收起筛选”——箭头由 .s-tgl-arw 元素按 aria-expanded 翻转，不进文案
-  function fltToggleLabel() {
-    if (state.fltOpen) return '收起筛选';
-    var f = state.flt, parts = [];
-    if (f.fraudMax != null) parts.push('造假≤' + f.fraudMax);
-    if (f.mgmtMin != null) parts.push('管理≥' + f.mgmtMin);
-    if (f.buys.length) parts.push(f.buys.length + '个买点' + (f.discount != null ? '×' + f.discount + '%' : ''));
-    if (f.sells.length) parts.push(f.sells.length + '个卖点');
-    return parts.length ? '筛选：' + parts.join(' · ') : '筛选条件';
-  }
-
-  // 单家公司是否通过筛选（各条件取交集）；依赖的评分/参考价/现价缺失时视为不满足自动排除。
-  // 买点：现价 ≤ 买价×折扣%；卖点：现价须同时 ≥ 保守卖价与公允卖价（任一缺失即不满足）
-  function passFilter(c) {
-    if (!fltActive()) return true;
-    var f = state.flt;
-    var sc = state.scores[c.code] || null;
-    if (f.fraudMax != null) {
-      var fz = dispFraud(c);
-      if (fz == null || fz > f.fraudMax) return false;
-    }
-    if (f.mgmtMin != null) {
-      var mz = dispMgmt(c);
-      if (mz == null || mz < f.mgmtMin) return false;
-    }
-    var refs = sc ? sc.priceRefs : null;
-    var cur = c.price;
-    var disc = (f.discount != null && f.buys.length) ? f.discount / 100 : 1;
-    var i, r;
-    for (i = 0; i < f.buys.length; i++) {
-      r = refs && refs[f.buys[i]] ? refs[f.buys[i]] : null;
-      if (!r || r.buy == null || cur == null || cur > r.buy * disc) return false;
-    }
-    for (i = 0; i < f.sells.length; i++) {
-      r = refs && refs[f.sells[i]] ? refs[f.sells[i]] : null;
-      if (!r || cur == null || r.sellCons == null || r.sellFair == null ||
-        cur < r.sellCons || cur < r.sellFair) return false;
-    }
-    return true;
-  }
-
-  // 关键词 + 筛选条件统一应用到当前列表所有行（宽表 tr 与移动端卡片共用 .stock-row），
-  // 同步刷新“未找到匹配的公司”提示；评分渐进加载完成后也会重调本函数逐步放行满足的行
-  function applyFilters() {
-    var box = $('stock-list');
-    if (!box) return;
-    var q = (state.keyword || '').trim().toLowerCase();
-    var byCode = {};
-    state.companies.forEach(function (c) { byCode[c.code] = c; });
-    var shown = 0;
-    box.querySelectorAll('.stock-row').forEach(function (row) {
-      var code = row.getAttribute('data-code');
-      var kwHit = !q || (row.getAttribute('data-k') || '').indexOf(q) >= 0;
-      var hit = kwHit && (!byCode[code] || passFilter(byCode[code]));
-      row.style.display = hit ? '' : 'none';
-      if (hit) shown++;
-    });
-    var empty = $('stock-search-empty');
-    if (empty) empty.style.display = shown ? 'none' : '';
-  }
-
-  /* ---------------- 列表评分预载与排序 ---------------- */
-
-  // 排序按钮 HTML（当前选中标准高亮并显示升降箭头）
-  function sortBtn(key, label) {
-    var active = state.sortKey === key;
-    return '<button data-sort="' + key + '" title="按' + label + '排序，再点同列切换升/降序"' + (active ? ' class="active"' : '') + '>' +
-      label + (active ? (state.sortDir === 'desc' ? ' ↓' : ' ↑') : '') + '</button>';
-  }
-
-  // 排序项 → 展示名（折叠面板摘要用；含宽表表头入口的键）
-  var SORT_LABELS = {
-    'score-grahamAgg': '格·进取', 'score-grahamDef': '格·防御',
-    'score-schloss': '施洛斯', 'score-buffett': '巴菲特',
-    'buy-grahamAgg': '进取买', 'buy-grahamDef': '防御买',
-    'buy-schloss': '施洛斯买', 'buy-buffett': '巴菲特买',
-    'sellC-grahamAgg': '进取保卖', 'sellC-grahamDef': '防御保卖',
-    'sellC-schloss': '施洛斯保卖', 'sellC-buffett': '巴菲特保卖',
-    'sellF-grahamAgg': '进取公卖', 'sellF-grahamDef': '防御公卖',
-    'sellF-schloss': '施洛斯公卖', 'sellF-buffett': '巴菲特公卖',
-    'name': '名称', 'code': '代码', 'industry': '行业', 'price': '现价', 'liq': '清算价值',
-    'netcash': '净现金/市值', 'fraud': '造假风险', 'mgmt': '管理水平', 'cycle': '周期位置'
-  };
-
-  // 移动端排序面板触发按钮文案：收起态显示当前排序摘要（无则提示选择），
-  // 展开态仅“收起排序”——升降序箭头与展开箭头均由 CSS/方向符号单独处理
-  function sortToggleLabel() {
-    if (state.sortOpen) return '收起排序';
-    var label = SORT_LABELS[state.sortKey];
-    return label ? '排序：' + label + (state.sortDir === 'desc' ? ' ↓' : ' ↑') : '选择排序方式';
-  }
-
-  // 表头排序单元格 HTML（可点击；激活列高亮并显示箭头；cls 追加样式如 stick，attrs 追加属性如 rowspan；
-  // hint 用于替换排序语义说明，如买入/卖出列按性价比排）
-  function thSort(key, label, cls, attrs, hint) {
-    // 合并参考格内点卖出小字按 sellC-/sellF- 排序时，归一到 buy- 键，高亮仍落在该流派列头
-    var normKey = (state.sortKey || '').replace(/^sell[CcFf]-/, 'buy-');
-    var active = key === normKey;
-    var title = hint
-      ? '点击按' + label + '排序（' + hint + '），再点切换升/降序'
-      : '点击按' + label + '排序，再点切换升/降序';
-    return '<th' + (attrs || '') + ' data-sort="' + key + '" class="th-sort' +
-      (active ? ' active' : '') + (cls ? ' ' + cls : '') + '" title="' + title + '">' + label +
-      (active ? (state.sortDir === 'desc' ? ' ↓' : ' ↑') : '') + '</th>';
-  }
-
-  // 统一排序入口：首次点击数值列降序（高分/高价在前）、文本列升序；再点同列切换升/降
-  function applySort(key) {
-    if (state.sortKey === key) {
-      state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
-    } else {
-      state.sortKey = key;
-      state.sortDir = (key === 'name' || key === 'code' || key === 'industry') ? 'asc' : 'desc';
-    }
-    renderList();
-  }
-
-  // 取公司排序值：基础列直接读字段；评分/价格参考从预计算 scores（缺则 null 排最后）
-  function sortVal(c, key) {
-    if (key === 'name' || key === 'code' || key === 'industry') return c[key] || '';
-    if (key === 'price') return c.price;
-    if (key === 'liq') {
-      var sc0 = state.scores[c.code];
-      return sc0 && sc0.priceRefs ? sc0.priceRefs.fairLiq : null;
-    }
-    if (key === 'netcash') {
-      var scN = state.scores[c.code];
-      return scN && scN.priceRefs ? scN.priceRefs.netCashRatio : null;
-    }
-    if (key === 'fraud') return dispFraud(c);
-    if (key === 'mgmt') return dispMgmt(c);
-    if (key === 'cycle') {
-      var scC = state.scores[c.code];
-      return scC && scC.cycle != null ? scC.cycle : null;  // 非周期性公司为 null 排最后
-    }
-    var sc = state.scores[c.code];
-    if (!sc) return null;
-    if (key.indexOf('score-') === 0) return sc[key.slice(6)];
-    var refs = sc.priceRefs;
-    if (!refs) return null;
-    var k = key.slice(key.indexOf('-') + 1);
-    var r = refs[k];
-    if (!r) return null;
-    if (key.indexOf('buy-') === 0) return ratio(r.buy, c.price);
-    if (key.indexOf('sellC-') === 0) return ratio(r.sellCons, c.price);
-    if (key.indexOf('sellF-') === 0) return ratio(r.sellFair, c.price);
-    return null;
-  }
-
-  // 性价比 = 参考价 ÷ 现价（倍数）：越大说明相对现价的空间/折价越足；任一缺失返回 null
-  function ratio(a, b) {
-    return (a == null || b == null || b === 0) ? null : a / b;
-  }
-
-  // 按当前排序标准返回公司列表（无排序时保持原顺序；缺值排最后）
-  function sortCompanies() {
-    var key = state.sortKey;
-    if (!key) return state.companies.slice();
-    return state.companies.slice().sort(function (a, b) {
-      var sa = sortVal(a, key);
-      var sb = sortVal(b, key);
-      if (sa == null && sb == null) return 0;
-      if (sa == null) return 1;
-      if (sb == null) return -1;
-      var r;
-      if (typeof sa === 'number' && typeof sb === 'number') r = sa - sb;
-      else r = String(sa).localeCompare(String(sb), 'zh-Hans-CN');
-      return state.sortDir === 'asc' ? r : -r;
-    });
-  }
-
-  // 并行预载全部公司详细数据并计算四大评分（渐进填充；数据缓存供详情页复用）
-  function fetchScores() {
-    state.scoresLoaded = true;
-    state.companies.forEach(function (c) {
-      fetch(DATA_BASE + 'companies/' + c.code + '.json')
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function (d) {
-          state.details[c.code] = d;
-          try {
-            var va = valueAnalysis(d);
-            var v = valueScores(d, va);
-            var fa = null;
-            try { fa = fraudAnalysis(d); } catch (e) { /* 造假分缺失不影响评分 */ }
-            var ma = null;
-            try { ma = managementAnalysis(d); } catch (e) { /* 管理分缺失不影响评分 */ }
-            var ca = null;
-            try { ca = cycleAnalysis(d); } catch (e) { /* 周期分缺失不影响评分 */ }
-            var cycTrend = null;
-            if (ca && ca.total != null) {
-              try { cycTrend = cycleTrendOf(cycleHistory(d)); } catch (e) { /* 趋势缺失不影响评分 */ }
-            }
-            state.scores[c.code] = {
-              grahamAgg: v.grahamAgg.total, grahamDef: v.grahamDef.total,
-              schloss: v.schloss.total, buffett: v.buffett.total,
-              priceRefs: priceReferences(d, va),
-              fraud: fa ? fa.total : null,
-              mgmt: ma ? ma.total : null,
-              cycle: ca ? ca.total : null,
-              cyclical: ca ? ca.cyclical : null,
-              cycleTrend: cycTrend
-            };
-          } catch (e) { /* 单家计算失败不影响其他公司 */ }
-          fillRowScores(c.code);
-        })
-        .catch(function () { /* 单家加载失败跳过 */ });
-    });
-  }
-
-  // 单行渐进补填评分与价格参考（不重建整个表格）
-  function fillRowScores(code) {
-    var row = document.querySelector('.stock-row[data-code="' + code + '"]');
-    if (!row) return;
-    var sc = state.scores[code] || null;
-    var refs = sc ? sc.priceRefs : null;
-    var cur = row.getAttribute('data-price');
-    cur = cur === '' || cur == null ? null : Number(cur);
-    row.querySelectorAll('[data-s]').forEach(function (td) {
-      var m = td.getAttribute('data-s').split('-');
-      var kind = m[0], k = m[1], p = null;
-      if (kind === 'score') {
-        p = sc ? sc[k] : null;
-        td.className = 'c-num sc-' + gradeOf(p);
-        td.title = gradeText(gradeOf(p));
-      } else if (kind === 'liq') {
-        // 公允清算价值：现价 ≤ 清算价（跌破清算价值）标绿；宽表 td 与移动端卡片 span 共用
-        p = refs ? refs.fairLiq : null;
-        var liqHit2 = p != null && cur != null && cur <= p;
-        if (td.tagName === 'TD') {
-          td.className = 'c-num' + (liqHit2 ? ' r-hit' : '');
-        } else {
-          var liqBox = td.closest('.sc-liq');
-          if (liqBox) {
-            liqBox.classList.toggle('sc-liq-hit', liqHit2);
-            var liqTag = liqBox.querySelector('b');
-            if (liqTag) liqTag.textContent = liqHit2 ? '跌破' : '';
-          }
-        }
-      } else if (kind === 'netcash') {
-        // 净现金/市值：分支内完成格式化不走通用 fmtNum；宽表 td 同步刷新代入公式提示，
-        // 移动端 data-s 在卡片 div 上，只更新内部 span 文本避免覆盖结构
-        p = refs ? refs.netCashRatio : null;
-        var ncrTxt = p == null ? '-' : (p * 100).toFixed(1) + '%';
-        if (td.tagName === 'TD') {
-          var ncrF = netCashFormula(refs);
-          td.innerHTML = ncrTxt;
-          td.setAttribute('title', ncrF || '净现金/市值：(类现金加权−负债合计)/总市值');
-        } else {
-          var ncrSp = td.querySelector('span');
-          if (ncrSp) ncrSp.textContent = ncrTxt;
-        }
-        return;
-      } else if (kind === 'fraud') {
-        // 造假风险：Wind 档取优化分；PC 宽表 td 重设等级色；移动端 .sc-fraud 徽标保留结构类只换等级色与数值
-        p = dispFraudCode(code);
-        var fg = fraudGradeOf(p);
-        if (td.tagName === 'TD') {
-          td.className = 'c-num sc-' + fg;
-          td.innerHTML = p == null ? '-' : fmtNum(p);
-        } else {
-          td.classList.remove('sc-good', 'sc-mid', 'sc-low', 'sc-bad', 'sc-na');
-          td.classList.add('sc-' + fg);
-          var fb = td.querySelector('b');
-          if (fb) fb.textContent = p == null ? '-' : fmtNum(p);
-        }
-        return;
-      } else if (kind === 'mgmt') {
-        // 管理水平：Wind 档取优化分；方向与价值评分同向（越高越好），复用等级色；移动端徽标同造假分处理
-        p = dispMgmtCode(code);
-        var mg = gradeOf(p);
-        if (td.tagName === 'TD') {
-          td.className = 'c-num sc-' + mg;
-          td.innerHTML = p == null ? '-' : fmtNum(p);
-        } else {
-          td.classList.remove('sc-good', 'sc-mid', 'sc-low', 'sc-bad', 'sc-na');
-          td.classList.add('sc-' + mg);
-          var mb = td.querySelector('b');
-          if (mb) mb.textContent = p == null ? '-' : fmtNum(p);
-        }
-        return;
-      } else if (kind === 'cycle') {
-        // 周期位置：低分=接近底部=机会=绿（同造假分方向）；非周期性显示“非周期”灰；
-        // 宽表 td 重建“分数+趋势图标”结构；移动端徽标保持结构只换等级色/数值/图标（避免破坏卡片布局）
-        p = sc ? sc.cycle : null;
-        var ct = sc ? sc.cycleTrend : null;
-        var nonCyc = sc && sc.cyclical === false;
-        var cg = nonCyc ? 'na' : fraudGradeOf(p);
-        if (td.tagName === 'TD') {
-          td.className = 'c-num sc-' + cg;
-          if (nonCyc) {
-            td.innerHTML = '非周期';
-            td.setAttribute('title', '非周期性/弱周期行业（周期强度 < 40），不适用周期位置评分');
-          } else {
-            td.innerHTML = (p == null ? '-' : fmtNum(p)) + cycleTrendIcon(ct);
-            td.setAttribute('title', (ct ? cycleTrendText(ct) + '（最新年分数相对上一年）；' : '') +
-              '周期位置 ' + (p == null ? '-' : fmtNum(p)) + ' 分（0-100，越低越接近周期底部）');
-          }
-        } else {
-          td.classList.remove('sc-good', 'sc-mid', 'sc-low', 'sc-bad', 'sc-na');
-          td.classList.add('sc-' + cg);
-          var cb = td.querySelector('b');
-          if (cb) cb.textContent = nonCyc ? '非周期' : (p == null ? '-' : fmtNum(p));
-          var oldI = td.querySelector('i.cy-t');
-          if (oldI) oldI.parentNode.removeChild(oldI);
-          if (!nonCyc && ct) td.insertAdjacentHTML('beforeend', cycleTrendIcon(ct));
-        }
-        return;
-      } else {
-        if (refs && refs[k]) p = refs[k][kind === 'buy' ? 'buy' : kind === 'sellC' ? 'sellCons' : 'sellFair'];
-        var hit = '';
-        if (p != null && cur != null) {
-          if (kind === 'buy' && cur <= p) hit = ' r-hit';
-          if (kind !== 'buy' && cur >= p) hit = ' r-hit-s';
-        }
-        if (kind === 'buy') {
-          // 合并参考格：绿标只落在买入价上，不污染卖价小字；宽表 td 重建三档结构，
-          // 移动端 sc-ref 块保留原结构仅刷三个价位的类与文本（避免降级路径破坏卡片布局）
-          var r = refs && refs[k] ? refs[k] : null;
-          var b = r ? r.buy : null;
-          var pc = r ? r.sellCons : null;
-          var pf = r ? r.sellFair : null;
-          var hb = b != null && cur != null && cur <= b ? ' r-hit' : '';
-          var hc = pc != null && cur != null && cur >= pc;
-          var hf = pf != null && cur != null && cur >= pf;
-          if (td.tagName === 'TD') {
-            td.className = 'c-num c-ref';
-            td.innerHTML = '<span class="rf-buy' + hb + '">' + (b == null ? '-' : fmtNum(b)) + '</span>' +
-              '<span class="rf-sell">' +
-              '<span class="sl-c' + (hc ? ' r-hit-s' : '') + '" data-s="sellC-' + k + '" data-sort="sellC-' + k + '" title="保守卖出参考，点击按保守价排序">' + (pc == null ? '-' : fmtNum(pc)) + '</span>' +
-              '<span class="sl-f' + (hf ? ' r-hit-s' : '') + '" data-s="sellF-' + k + '" data-sort="sellF-' + k + '" title="公允卖出参考，点击按公允价排序">' + (pf == null ? '' : fmtNum(pf)) + '</span>' +
-              '</span>';
-          } else {
-            var ms = td.querySelectorAll('span');
-            if (ms.length >= 3) {
-              ms[0].className = 'r-buy' + hb;
-              ms[0].textContent = '买 ' + (b == null ? '-' : fmtNum(b));
-              ms[1].className = 'r-sell' + (hc ? ' r-hit-s' : '');
-              ms[1].textContent = '保卖 ' + (pc == null ? '-' : fmtNum(pc));
-              ms[2].className = 'r-sell' + (hf ? ' r-hit-s' : '');
-              ms[2].textContent = '公卖 ' + (pf == null ? '-' : fmtNum(pf));
-            }
-          }
-          return;
-        }
-        // 降级路径单次命中 sellC/sellF span（buy 分支已重建整格，此处仅兜底刷色）：
-        // 只切换命中类，保留 sl-c/sl-f 结构类
-        td.classList.remove('r-hit', 'r-hit-s');
-        if (hit) td.classList.add(hit.trim());
-        td.innerHTML = p == null ? (td.classList.contains('sl-f') ? '' : '-') : fmtNum(p);
-      }
-    });
-    // 评分补填完成后重新应用筛选：满足条件的行逐步放行，依赖缺失的行保持隐藏（仅在筛选已启用时才有实际开销）
-    if (fltActive()) applyFilters();
-  }
-
-  function fetchIndex() {
-    show('stock-loading');
-    // 加时间戳避免浏览器缓存旧列表（数据由 Actions 定期更新）
-    fetch(DATA_BASE + 'index.json?t=' + Date.now())
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function (data) {
-        state.companies = data.companies || [];
-        state.indexUpdatedAt = data.updated_at;
-        // 后端已预计算评分（scoring.py），直接使用免去逐家下载全量数据（卡顿优化）；
-        // 旧 index.json 缺 scores 时视为未加载，走 fetchScores() 降级路径
-        var have = 0, total = state.companies.length;
-        state.companies.forEach(function (c) {
-          if (c.scores) { state.scores[c.code] = c.scores; have++; }
-        });
-        state.scoresLoaded = total > 0 && have === total;
-        // 加载 Wind 事件覆盖层（events/index.json，一次性抓取；缺失/404 静默，列表仅用基础分）
-        fetchOverlayThenShowList();
-      })
-      .catch(function () { fail('公司列表加载失败，请稍后刷新重试'); });
-  }
-
-  // 拉取事件覆盖层后再渲染列表；无事件数据不阻断主流程
-  function fetchOverlayThenShowList() {
-    fetch(DATA_BASE + 'events/index.json?t=' + Date.now())
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-      .then(function (ov) { state.eventOverlay = (ov && ov.byCode) || null; state.overlayLoaded = true; })
-      .catch(function () { state.eventOverlay = null; state.overlayLoaded = true; })
-      .then(function () { showList(); });
-  }
-
   /* ---------------- 公司详情 ---------------- */
 
   // 拉单家事件明细（events/<code>.json）；404 / 失败 → null（静默，无事件模块不显示）
@@ -1182,7 +308,7 @@
       .catch(function () { return null; });
   }
 
-  // 确保事件覆盖层已加载（深链直达详情时 fetchIndex 未跑）；用 overlayLoaded 避免反复请求
+  // 确保事件覆盖层已加载（详情页按需自取，不依赖任何列表预载）；用 overlayLoaded 避免反复请求
   function fetchOverlayOnce() {
     if (state.overlayLoaded) return Promise.resolve(state.eventOverlay);
     return fetch(DATA_BASE + 'events/index.json?t=' + Date.now())
@@ -1508,10 +634,10 @@
     var ind = d.indicators || [];
     var annual = annualRows(ind); // 年报，升序
     var cfList = (d.cashflow || []).slice().sort(function (a, b) {
-      return a['报告日'] < b['报告日'] ? -1 : 1;
+      return cmpKey(a['报告日'], b['报告日']);
     });
     var baList = (d.balance || []).slice().sort(function (a, b) {
-      return a['报告日'] < b['报告日'] ? -1 : 1;
+      return cmpKey(a['报告日'], b['报告日']);
     });
     var divs = d.dividends || [];
     var s = d.snapshot || {};
@@ -1728,6 +854,50 @@
     return ma + (v - a) / (b - a) * (mb - ma);
   }
 
+  // 定义域为正数的“越小越好”项（PE/PB 等，ma > mb）的符号护栏：v ≤ 0 是亏损/资不抵债的
+  // “不达标”而非数据缺失，直接给最低分 mb；否则 lerpScore 的 v <= a 分支会把负值夹到满分端
+  function lerpScoreNonneg(v, a, b, ma, mb) {
+    if (v == null || isNaN(v)) return null;
+    return v <= 0 ? mb : lerpScore(v, a, b, ma, mb);
+  }
+
+  // 同比增长率：基期为负时用 |基期| 作分母，使亏损扩大→负、亏损收窄/扭亏→正；
+  // 基期为正时与 cur/pre-1 完全等价，基期为 0 或缺失时无定义返回 null
+  function yoyOf(cur, prev) {
+    if (cur == null || prev == null || prev === 0) return null;
+    return (cur - prev) / Math.abs(prev);
+  }
+
+  // 周期位置分 8 维权重：cycleAnalysis 阶段二与 cycleHistory 必须同尺度。
+  // 合计 105 而非 100 —— 这正是旧代码要靠 Math.min(100, sum) 硬夹的原因，归一化后不再需要
+  var CYCLE_POS_W = [25, 15, 15, 10, 10, 10, 10, 10];
+
+  // scored = [[得分 or null, 该项满分权重]] → 按“可用项的有效满分”归一到 0~100。
+  // 不能直接 sum(可用项)：造假分与周期位置分都是越低越好，缺一项就少扣一项，
+  // 数据不全的公司反而显得更干净、更接近周期底部（实测 1620 家亏损公司缺造假分里
+  // 25 分的净现比项）。归一化让缺项变成中性，而不是占便宜。
+  function weightedTotal(scored) {
+    var wsum = 0, ssum2 = 0, any = false;
+    for (var i = 0; i < scored.length; i++) {
+      if (scored[i][0] == null) continue;
+      any = true;
+      ssum2 += scored[i][0];
+      wsum += scored[i][1];
+    }
+    if (!any || wsum <= 0) return null;
+    return Math.min(100, ssum2 / wsum * 100);
+  }
+
+  // row 之前最多 3 个年报的资本开支（按 row 在年报序列中的实际位置开窗）。
+  // 不能硬切 annualCf.slice(-4,-1)（默认现金流表末年即当年，报表错位就取错窗口），
+  // 也不能裸用 indexOf（row 不在序列中时返回 -1，切片退化成“全部历史除最后一行”）
+  function capexPrevOf(annualCf, row, key) {
+    var ci = row == null ? -1 : annualCf.indexOf(row);
+    if (ci < 0) return [];
+    return annualCf.slice(Math.max(0, ci - 3), ci)
+      .map(function (r) { return r[key]; }).filter(function (v) { return v != null; });
+  }
+
   // 总分 → 等级（优秀/良好/一般/较差/数据不足）
   function gradeOf(total) {
     if (total == null) return 'na';
@@ -1807,7 +977,7 @@
     var last = annual[annual.length - 1];
     var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
     var lastYear = lastDate ? Number(lastDate.slice(0, 4)) : null;
-    var baList = (d.balance || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
+    var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var lastBa = lastDate ? sheetRowByDate(baList, lastDate) : null;
     var s = d.snapshot || {};
     var mcap = s.market_cap, pe = s.pe_ttm, pb = s.pb;
@@ -1947,8 +1117,8 @@
       it('盈利稳定（近5年净利为正）', posN + '/5 年', '5 年全部为正', 15, posN >= 5 ? 15 : posN === 4 ? 9 : posN === 3 ? 4 : -5),
       it('连续分红年数', (divConsecutive || 0) + ' 年', '≥ 10 年', 15, divScore10(divConsecutive || 0)),
       it('近5年净利累计增长', fmtPct(grow5), '≥ 33%', 10, grow5 == null ? null : (grow5 >= 0.33 ? 10 : grow5 >= 0 ? lerpScore(grow5, 0, 0.33, 0, 10) : -5)),
-      it('市盈率（TTM）', fmtNum(pe), '≤ 15', 5, lerpScore(pe, 15, 25, 5, 0)),
-      it('PE × PB', pepb == null ? '-' : fmtNum(pepb), '≤ 22.5', 5, pepb != null ? (pepb <= 22.5 ? 5 : (pepb <= 45 ? lerpScore(pepb, 22.5, 45, 5, 0) : 0)) : null)
+      it('市盈率（TTM）', pe == null ? '-' : (pe > 0 ? fmtNum(pe) : 'PE 为负（亏损）'), '≤ 15', 5, lerpScoreNonneg(pe, 15, 25, 5, 0)),
+      it('PE × PB', pepb == null ? '-' : ((pe > 0 && pb > 0) ? fmtNum(pepb) : 'PE/PB 为负'), '≤ 22.5', 5, pepb != null ? ((pe <= 0 || pb <= 0) ? 0 : (pepb <= 22.5 ? 5 : (pepb <= 45 ? lerpScore(pepb, 22.5, 45, 5, 0) : 0))) : null)
     ];
     var gDTotal = sum(gD.map(function (x) { return x.score; }));
 
@@ -1979,7 +1149,8 @@
     // 应收账款/营收 3 年年报均值（位置对齐，缺失年忽略；港股“应收帐款”科目兼容）
     var ar3 = baAnnual.slice(-3).map(arOf);
     var rev3 = inAnnual.slice(-3).map(function (r) { return r['营业总收入']; });
-    var arRev3 = (ar3.length === 3 && rev3.length === 3) ? sum(ar3) / sum(rev3) : null;
+    var ar3Sum = ar3.length === 3 ? sum(ar3) : null, rev3Sum = rev3.length === 3 ? sum(rev3) : null;
+    var arRev3 = (ar3Sum != null && rev3Sum != null && rev3Sum > 0) ? ar3Sum / rev3Sum : null;
     // 近3年累计经营现金流 vs 累计利息费用
     var ocf3 = cfAnnual.slice(-3).map(function (r) { return r['经营活动产生的现金流量净额']; });
     var intExp3 = inAnnual.slice(-3).map(function (r) { return r['利息费用']; });
@@ -1998,6 +1169,10 @@
     var revGrow = (revNow != null && revEarliest != null && revEarliest > 0) ? revNow / revEarliest - 1 : null;
     var gMarginDelta = (gMarginNow != null && gMarginEarliest != null) ? gMarginNow - gMarginEarliest : null;
     var gwIntSum = (goodwill != null ? goodwill : 0) + (intang != null ? intang : 0);
+    // 负权益有两种，不能一律豁免：回购把权益打成负数而公司仍在赚钱（达美乐/HCA 这类）
+    // 属正常资本结构；亏损导致的资不抵债、账上却还压着商誉无形，才是本项最该扣的情形
+    // ——比值在负权益下算不出来，但实质是"无形压在已被抹平的权益基数上"，按最重档处理
+    var eqDistress = lastEq != null && lastEq <= 0 && gwIntSum > 0 && !(netProfit != null && netProfit > 0);
     var inv = lastBa ? lastBa['存货'] : null;
     // 9 个量化扣分项：危险信号触发负分（与正向分叠加），数据不足给 0 不误伤
     var riskItems = [
@@ -2005,8 +1180,8 @@
         eqGrow == null ? 0 : (eqGrow <= -0.4 ? -5 : eqGrow <= -0.2 ? -3 : 0)),
       it('近5年扣非亏损年数', adjValid < 3 ? '-' : adjLossN + '/5 年', '≤ 1 年（扣非口径）', 5,
         adjValid < 3 ? 0 : (adjLossN >= 3 ? -5 : adjLossN === 2 ? -3 : 0)),
-      it('(商誉+无形资产)/归母权益', (lastEq != null && lastEq > 0) ? fmtPct(gwIntSum / lastEq) : '-', '≤ 30%（减值风险）', 4,
-        (lastEq != null && lastEq > 0) ? (gwIntSum / lastEq > 0.6 ? -4 : gwIntSum / lastEq > 0.3 ? -2 : 0) : 0),
+      it('(商誉+无形资产)/归母权益', (lastEq != null && lastEq > 0) ? fmtPct(gwIntSum / lastEq) : (eqDistress ? '资不抵债' : '-'), '≤ 30%（减值风险）', 4,
+        (lastEq != null && lastEq > 0) ? (gwIntSum / lastEq > 0.6 ? -4 : gwIntSum / lastEq > 0.3 ? -2 : 0) : (eqDistress ? -4 : 0)),
       it('应收账款/营收（3年年报均值）', arRev3 == null ? '-' : fmtPct(arRev3), '≤ 40%（坏账风险）', 3,
         arRev3 == null ? 0 : (arRev3 > 0.6 ? -3 : arRev3 > 0.4 ? -1.5 : 0)),
       it('存货/总资产（最新年报）', (inv != null && assets != null && assets > 0) ? fmtPct(inv / assets) : '-', '≤ 35%（跌价风险）', 2,
@@ -2023,8 +1198,8 @@
 
     // ---- 施洛斯烟蒂（资产折扣 + 低估值 + 低负债 + 股息）----
     var sItems = [
-      it('市净率', fmtNum(pb), '≤ 0.75（资产折扣）', 25, lerpScore(pb, 0.75, 1.5, 25, 0)),
-      it('市盈率（TTM）', fmtNum(pe), '≤ 10', 20, lerpScore(pe, 10, 20, 20, 0)),
+      it('市净率', pb == null ? '-' : (pb > 0 ? fmtNum(pb) : 'PB 为负（资不抵债）'), '≤ 0.75（资产折扣）', 25, lerpScoreNonneg(pb, 0.75, 1.5, 25, 0)),
+      it('市盈率（TTM）', pe == null ? '-' : (pe > 0 ? fmtNum(pe) : 'PE 为负（亏损）'), '≤ 10', 20, lerpScoreNonneg(pe, 10, 20, 20, 0)),
       it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2', 20, lerpScore(liqRatio, 1, 2, 0, 20)),
       it('股息率（近12月）', fmtPct(divYield), '≥ 3%', 15, lerpScore(divYield, 0, 0.03, 0, 15)),
       it('最新年报净利润', fmtMoney(netProfit), '> 0', 10, netProfit != null && netProfit > 0 ? 10 : 0),
@@ -2097,8 +1272,8 @@
     var prev = annual.length >= 2 ? annual[annual.length - 2] : null;
     var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
     var prevDate = prev ? String(prev['报告期']).slice(0, 10) : null;
-    var baList = (d.balance || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
-    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
+    var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
+    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var lastBa = lastDate ? sheetRowByDate(baList, lastDate) : null;
     var prevBa = prevDate ? sheetRowByDate(baList, prevDate) : null;
     var lastCf = lastDate ? sheetRowByDate(cfList, lastDate) : null;
@@ -2165,14 +1340,14 @@
       it('（商誉＋无形资产）÷总资产（资产偏软）', fmtPct(softShare), '≤ 10%', 5, w(sev(softShare, 0.10, 0.20, 0.35), 5)),
       it('销售收现比（销售收现÷营收）', fmtPct(collect), '≥ 100%', 5, w(s8, 5))
     ];
-    var avail = items.filter(function (x) { return x.score != null; });
-    var total = avail.length ? Math.min(100, avail.reduce(function (s, x) { return s + x.score; }, 0)) : null;
+    // 归一化：本分越低越可疑，缺项若只从总分里少加一笔，等于数据不全反而“更干净”
+    var total = weightedTotal(items.map(function (x) { return [x.score, x.max]; }));
     return {
       title: '财务报表造假可能性 · 量化红旗筛查',
       basis: '评分基准：' + (lastYear || '-') + ' 年报（同比项对比 ' + (prevDate ? prevDate.slice(0, 4) : '-') + ' 年报）',
       total: total == null ? null : Math.round(total * 10) / 10,
       items: items,
-      note: '借鉴 Beneish M-Score 思路：将净现背离、高应计、应收/存货增速背离营收、毛利率逆势上升、其他应收款占用、资产偏软、收现不足等量化红旗按严重度加权为 0~100 分，分数越高造假可能性越大。数据不足的项计 0 分不误伤；本分为量化筛查信号，不构成对造假的认定，需结合审计意见、监管问询等定性信息综合判断。'
+      note: '借鉴 Beneish M-Score 思路：将净现背离、高应计、应收/存货增速背离营收、毛利率逆势上升、其他应收款占用、资产偏软、收现不足等量化红旗按严重度加权为 0~100 分，分数越高造假可能性越大。总分按“可算出的项”归一，缺数据的项既不加罚也不免罚；本分为量化筛查信号，不构成对造假的认定，需结合审计意见、监管问询等定性信息综合判断。'
     };
   }
 
@@ -2203,9 +1378,9 @@
     var last = annual.length ? annual[annual.length - 1] : null;
     var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
     var lastYear = lastDate ? lastDate.slice(0, 4) : null;
-    var incList = (d.income || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
-    var baList = (d.balance || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
-    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
+    var incList = (d.income || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
+    var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
+    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var lastInc = lastDate ? sheetRowByDate(incList, lastDate) : null;
     var lastBa = lastDate ? sheetRowByDate(baList, lastDate) : null;
 
@@ -2221,8 +1396,11 @@
 
     // 1. 三费率（销售＋管理＋财务费用）÷营收，越低越好（费用纪律/代理成本控制）；
     // 三费科目全缺（港股/美股报表口径）时回退替代科目近似计算：美股“营业费用”（销售+管理+研发合计）、
-    // 港股“销售及分销费用”，避免整维缺失，口径为近似值（与三费合计不完全可比）
-    var feeSum = (sellExp != null || admExp != null || finExp != null)
+    // 港股“销售及分销费用”，避免整维缺失，口径为近似值（与三费合计不完全可比）。
+    // 只有财务费用时不算三费率：财务费用为净收益（利息收入>支出）会把费率压成负数，
+    // 而本项“越低越好”，负值直接拿满 15 分（实测友邦保险 feeRatio=-0.0031 → 15/15），
+    // 等于用一个与费用纪律无关的科目发满分。此时按三费全缺处理，交给替代科目兜底。
+    var feeSum = (sellExp != null || admExp != null)
       ? (sellExp || 0) + (admExp || 0) + (finExp || 0) : null;
     var feeLabel = '费用纪律：三费率（销售＋管理＋财务费用）÷营收';
     if (feeSum == null && lastInc != null) {
@@ -2281,14 +1459,14 @@
       it('股东回报：现金分红率（每股分红÷每股收益）', fmtPct(payout), '≥ 50%', 10, lerpScore(payout, 0, 0.50, 0, 10)),
       it('治理诚信：财报造假风险反向（100−造假分）', fraud == null ? '-' : fmtNum(fraud), '造假分 0（最诚信）', 10, fraud == null ? null : lerpScore(fraud, 0, 100, 10, 0))
     ];
-    var avail = items.filter(function (x) { return x.score != null; });
-    var total = avail.length ? Math.min(100, avail.reduce(function (s, x) { return s + x.score; }, 0)) : null;
+    // 归一化：本分越高越好，缺项若只是少几笔加分，数据不全的公司就被系统性压低
+    var total = weightedTotal(items.map(function (x) { return [x.score, x.max]; }));
     return {
       title: '管理层管理水平 · 投入产出效率量化',
       basis: '评分基准：' + (lastYear || '-') + ' 年报（比率类按年报口径，成长/现金流按近5年累计，分红取最近一次）',
       total: total == null ? null : Math.round(total * 10) / 10,
       items: items,
-      note: '借鉴 DEA 数据包络分析的“投入→产出”效率思想，将管理层能力拆为 8 个可量化维度加权 0~100 分：费用纪律/资产周转/资本回报/成长质量/营运资金/现金流质量/股东回报/治理诚信，分数越高管理水平越好。纯 DEA 相对效率依赖同行业大样本且为黑盒、无法逐项展示，故采用其效率内核的透明加权替代；数据不足的项不计分不误伤。本分为量化参考，需结合公司治理结构、股权激励、管理层履历等定性信息综合判断。'
+      note: '借鉴 DEA 数据包络分析的“投入→产出”效率思想，将管理层能力拆为 8 个可量化维度加权 0~100 分：费用纪律/资产周转/资本回报/成长质量/营运资金/现金流质量/股东回报/治理诚信，分数越高管理水平越好。纯 DEA 相对效率依赖同行业大样本且为黑盒、无法逐项展示，故采用其效率内核的透明加权替代；总分按“可算出的项”归一，缺数据的项不会把公司整体压低。本分为量化参考，需结合公司治理结构、股权激励、管理层履历等定性信息综合判断。'
     };
   }
 
@@ -2484,8 +1662,8 @@
   // ②周期性公司才打周期位置分（利润/毛利率/营收位置 + 同比动能 + 现金流 + 库存/资本开支周期 + 单季环比）。
   function cycleAnalysis(d) {
     var annual = annualRows(d.indicators || []);
-    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
-    var baList = (d.balance || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
+    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
+    var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var last = annual.length ? annual[annual.length - 1] : null;
     var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
     var lastYear = lastDate ? Number(lastDate.slice(0, 4)) : null;
@@ -2509,11 +1687,14 @@
       if (denom > 0) cvNet = sd(nets) / denom;
     }
     // 1b 利润深度下滑频率：年度净利同比 ≤ -30% 的年数（同比自算，与报表口径一致）
-    var drops = 0, yoyHist = [], hitDrop = false;
+    // 此处只在基期为正时计算：“下滑 30%”对盈利基数才有意义；若把亏损扩大也算进来，
+    // 尚未盈利的生物医药/新经济公司会被误判为周期性行业（实测 166 家误判）。
+    // 阶段二“利润动能”用 yoyOf（基期为负按 |基期|）——那里问的是“是否在离开底部”，亏损收窄正是信号。
+    var drops = 0, hitDrop = false;
     for (var ci = 1; ci < annual.length; ci++) {
       var nCur = annual[ci]['净利润'], nPre = annual[ci - 1]['净利润'];
       var yoy = (nCur != null && nPre != null && nPre > 0) ? nCur / nPre - 1 : null;
-      if (yoy != null) { yoyHist.push(yoy); hitDrop = true; if (yoy <= -0.3) drops++; }
+      if (yoy != null) { hitDrop = true; if (yoy <= -0.3) drops++; }
     }
     // 1c 毛利率波动 = 年度毛利率标准差（价格驱动型周期行业毛利率大起大落）
     var gmSd = gms.length >= 3 ? sd(gms) : null;
@@ -2554,7 +1735,8 @@
     var revs = w8.map(function (r) { return r['营业总收入']; });
     var revPct = pctOf(revLast, revs);
     // 2b 最新年报净利同比（深负=底部区域，过热=远离底部）
-    var netYoy = yoyHist.length ? yoyHist[yoyHist.length - 1] : null;
+    // 必须用最新年报自身同比：上年净利缺失/为 0 时置空，不能回退到历史同比序列末位（那是数年前的值）
+    var netYoy = annual.length >= 2 ? yoyOf(netLast, annual[annual.length - 2]['净利润']) : null;
     // 2e 最新年报净现比（底部常伴随现金流恶化）
     var lastCf = lastDate ? sheetRowByDate(cfList, lastDate) : null;
     var ocfLast = lastCf ? lastCf['经营活动产生的现金流量净额'] : null;
@@ -2570,7 +1752,7 @@
     var CAPEX_K = '购建固定资产、无形资产和其他长期资产所支付的现金';
     var annualCf = cfList.filter(function (r) { return String(r['报告日'] || '').slice(5) === '12-31'; });
     var capexNow = lastCf ? lastCf[CAPEX_K] : null;
-    var capexPrev = annualCf.slice(-4, -1).map(function (r) { return r[CAPEX_K]; }).filter(function (v) { return v != null; });
+    var capexPrev = capexPrevOf(annualCf, lastCf, CAPEX_K);
     var capexRatio = null;
     if (capexNow != null && capexPrev.length >= 2) {
       var capexAvg = capexPrev.reduce(function (s, x) { return s + x; }, 0) / capexPrev.length;
@@ -2578,7 +1760,7 @@
     }
     // 2h 最新单季营收环比（仍在回落 → 未到底；环比回升 → 开始离开底部）
     var qRows = (d.indicators || []).filter(function (r) { return String(r['报告期'] || '').slice(5) !== '12-31'; })
-      .sort(function (a, b) { return String(a['报告期']) < String(b['报告期']) ? -1 : 1; });
+      .sort(function (a, b) { return cmpKey(String(a['报告期']), String(b['报告期'])); });
     var qrev = qRows.map(function (r) { return r['营业总收入_单季']; });
     var qoq = (qrev.length >= 2 && qrev[qrev.length - 2] != null && qrev[qrev.length - 2] > 0 && qrev[qrev.length - 1] != null)
       ? qrev[qrev.length - 1] / qrev[qrev.length - 2] - 1 : null;
@@ -2593,15 +1775,16 @@
       it('资本开支周期：当年购建支出÷近3年均值（收缩→出清）', capexRatio == null ? '-' : fmtNum(capexRatio), '≤ 0.7 收缩', 10, lerpScore(capexRatio, 0.7, 1.3, 0, 10)),
       it('单季环比：最新单季营收环比（回升→离开底部）', qoq == null ? '-' : fmtPct(qoq), '≤ -10% 仍在探底', 10, lerpScore(qoq, -0.10, 0.05, 0, 10))
     ];
-    var avail = items.filter(function (x) { return x.score != null; });
-    var total = avail.length ? Math.min(100, avail.reduce(function (s, x) { return s + x.score; }, 0)) : null;
+    // 归一化：本分越低越接近底部，缺项若只是少扣一笔，数据不全的公司就被判成“更接近底部”。
+    // 顺带去掉旧代码的 Math.min(100, sum) 硬夹 —— 8 维权重合计 105，归一化后天然不越界
+    var total = weightedTotal(items.map(function (x) { return [x.score, x.max]; }));
     return {
       cyclical: true, cyclicalScore: cyc, cyclicalItems: cItems,
       total: total == null ? null : Math.round(total * 10) / 10,
       items: items,
       title: '周期位置 · 周期性行业判定与底部概率量化',
       basis: '周期强度 ' + fmtNum(cyc) + '（≥ 40 判为周期性）；位置评分基准：' + (lastYear || '-') + ' 年报 + 最新单季',
-      note: '两阶段量化：①周期强度（净利变异系数 40 + 深度下滑频率 35 + 毛利率波动 25，≥ 40 判为周期性，非周期性不打分）；②周期位置 0~100，分数越低越接近周期底部（利润/毛利率/营收处于历史低位、同比深负、现金流承压、去库存、资本开支收缩、单季仍在回落均为底部特征）。已知局限：基于约 8 年样本的相对位置，近 8 年单边景气期的典型周期股会被判为“非周期”；无历史市价分位数据故未纳入估值维度；周期位置低≠立即反转，需结合行业供需与产能数据确认，仅供研究参考。'
+      note: '两阶段量化：①周期强度（净利变异系数 40 + 深度下滑频率 35 + 毛利率波动 25，≥ 40 判为周期性，非周期性不打分）；②周期位置 0~100，分数越低越接近周期底部（利润/毛利率/营收处于历史低位、同比深负、现金流承压、去库存、资本开支收缩、单季仍在回落均为底部特征）。已知局限：位置分按“可算出的维度”归一，缺数据的维度既不加罚也不免罚，维度很少时该分只反映已测得的部分；基于约 8 年样本的相对位置，近 8 年单边景气期的典型周期股会被判为“非周期”；无历史市价分位数据故未纳入估值维度；周期位置低≠立即反转，需结合行业供需与产能数据确认，仅供研究参考。'
     };
   }
 
@@ -2650,12 +1833,12 @@
   // 单季环比逐年参与：历史年用该年自身单季营收环比，末年用全局最新单季环比（与当期总分口径对齐），故各年均为满 8 维、同口径可比。
   function cycleHistory(d) {
     var annual = annualRows(d.indicators || []);
-    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
-    var baList = (d.balance || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
+    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
+    var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var CAPEX_K = '购建固定资产、无形资产和其他长期资产所支付的现金';
     var annualCf = cfList.filter(function (r) { return String(r['报告日'] || '').slice(5) === '12-31'; });
     var qRows = (d.indicators || []).filter(function (r) { return String(r['报告期'] || '').slice(5) !== '12-31'; })
-      .sort(function (a, b) { return String(a['报告期']) < String(b['报告期']) ? -1 : 1; });
+      .sort(function (a, b) { return cmpKey(String(a['报告期']), String(b['报告期'])); });
     var qrev = qRows.map(function (r) { return r['营业总收入_单季']; });
     var qoq = (qrev.length >= 2 && qrev[qrev.length - 2] != null && qrev[qrev.length - 2] > 0 && qrev[qrev.length - 1] != null)
       ? qrev[qrev.length - 1] / qrev[qrev.length - 2] - 1 : null;
@@ -2687,7 +1870,7 @@
       var gms = win.map(function (r) { return r['销售毛利率']; });
       var revs = win.map(function (r) { return r['营业总收入']; });
       var net = row['净利润'], prev = annual[i - 1]['净利润'];
-      var yoy = (net != null && prev != null && prev > 0) ? net / prev - 1 : null;
+      var yoy = yoyOf(net, prev);
       var date = String(row['报告期']).slice(0, 10);
       var cf = sheetRowByDate(cfList, date);
       var ba = sheetRowByDate(baList, date);
@@ -2698,8 +1881,7 @@
       var invPrev = baPrev ? baPrev['存货'] : null;
       var invGrow = (invNow != null && invPrev != null && invPrev > 0) ? invNow / invPrev - 1 : null;
       var capexNow = cf ? cf[CAPEX_K] : null;
-      var capexPrev = annualCf.slice(Math.max(0, annualCf.indexOf(cf) - 3), annualCf.indexOf(cf))
-        .map(function (r) { return r[CAPEX_K]; }).filter(function (v) { return v != null; });
+      var capexPrev = capexPrevOf(annualCf, cf, CAPEX_K);
       var capexRatio = null;
       if (capexNow != null && capexPrev.length >= 2) {
         var capexAvg = capexPrev.reduce(function (s, x) { return s + x; }, 0) / capexPrev.length;
@@ -2717,8 +1899,9 @@
         lerpScore(capexRatio, 0.7, 1.3, 0, 10),
         lerpScore(qoqI, -0.10, 0.05, 0, 10)
       ];
-      var avail = scores.filter(function (s) { return s != null; });
-      var sc = avail.length ? Math.round(Math.min(100, avail.reduce(function (s, x) { return s + x; }, 0)) * 10) / 10 : null;
+      // 与阶段二同口径归一化：各年可用维度数不同，不归一就没法逐年比（cycleTrendOf 正是逐年比）
+      var tot = weightedTotal(scores.map(function (s, j) { return [s, CYCLE_POS_W[j]]; }));
+      var sc = tot == null ? null : Math.round(tot * 10) / 10;
       out.push({ year: year, score: sc });
     }
     return out;
@@ -2728,16 +1911,18 @@
   // 反转=上一年还在底部区（≤30）且最新分明显回升；上行=持续回升；筑底=低位（≤40）横盘；下行=分数走低（基本面恶化）
   function cycleTrendOf(hist) {
     var h = (hist || []).filter(function (x) { return x.score != null; });
-    if (h.length < 2) return null;
-    var d1 = h[h.length - 1].score - h[h.length - 2].score;
-    if (d1 > 5) return h[h.length - 2].score <= 30 ? 'rev' : 'up';
+    if (!h.length) return null;
+    var cur = h[h.length - 1], prev = null;
+    // 必须取“上一年”而非“上一条有分的年”：中间年缺分时两者跨年，会把两年前的分当成上一年
+    for (var i = h.length - 2; i >= 0; i--) {
+      if (h[i].year === cur.year - 1) { prev = h[i]; break; }
+    }
+    if (prev == null) return null;
+    var d1 = cur.score - prev.score;
+    if (d1 > 5) return prev.score <= 30 ? 'rev' : 'up';
     if (d1 < -5) return 'down';
-    if (h[h.length - 1].score <= 40) return 'flat';
+    if (cur.score <= 40) return 'flat';
     return d1 >= 0 ? 'up' : 'down';
-  }
-
-  function cycleTrendText(t) {
-    return { up: '上行', rev: '反转', flat: '筑底', down: '下行' }[t] || '';
   }
 
   // 详情页历年周期位置分趋势图（仅周期性公司且 ≥2 个有效年份才显示；曲线下探=接近底部）
@@ -2752,7 +1937,7 @@
     var chart = echarts.init(el);
     state.charts.push(chart);
     chart.setOption({
-      grid: { left: 44, right: 18, top: 32, bottom: 30 },
+      grid: mqMobile.matches ? { left: 38, right: 14, top: 28, bottom: 26 } : { left: 44, right: 18, top: 32, bottom: 30 },
       tooltip: { trigger: 'axis', valueFormatter: function (v) { return v == null ? '-' : v + ' 分'; } },
       xAxis: { type: 'category', data: hist.map(function (x) { return x.year; }) },
       yAxis: { type: 'value', min: 0, max: 100, name: '周期位置分', splitLine: { lineStyle: { type: 'dashed' } } },
@@ -2766,14 +1951,6 @@
         markArea: { silent: true, itemStyle: { color: 'rgba(30,126,68,0.08)' }, data: [[{ yAxis: 0 }, { yAxis: 30 }]] }
       }]
     });
-  }
-
-  // 趋势图标（列表宽表/移动端徽标共用）：反转/上行 ▲绿、筑底 ◆琥珀、下行 ▼红；无趋势返回空串
-  function cycleTrendIcon(t, title) {
-    if (!t) return '';
-    var sym = (t === 'up' || t === 'rev') ? '▲' : (t === 'down' ? '▼' : '◆');
-    var cls = (t === 'up' || t === 'rev') ? 'cy-up' : (t === 'down' ? 'cy-down' : 'cy-flat');
-    return '<i class="cy-t ' + cls + '" title="' + (title || cycleTrendText(t)) + '">' + sym + '</i>';
   }
 
   // ---- 价格参考（买入/保守卖出/公允卖出）----
@@ -2809,54 +1986,6 @@
     return lines.join('\n');
   }
 
-  // 点击处弹出代入计算式浮层（桌面/移动端共用；点空白处或滚动时关闭）
-  function showNetFormulaPop(anchor) {
-    var row = anchor.closest('.stock-row');
-    if (!row) return;
-    var code = row.getAttribute('data-code');
-    var sc = state.scores[code];
-    var text = sc ? netCashFormula(sc.priceRefs) : '';
-    if (!text) return;
-    var name = null;
-    state.companies.forEach(function (cc) { if (cc.code === code) name = cc.name; });
-    if (name) text = name + '\n' + text;
-    var pop = document.getElementById('sc-net-pop');
-    if (!pop) {
-      pop = document.createElement('div');
-      pop.id = 'sc-net-pop';
-      pop.className = 'sc-net-pop';
-      pop.addEventListener('click', function (e) { e.stopPropagation(); });
-      document.body.appendChild(pop);
-    }
-    pop.textContent = text;
-    pop.style.display = 'block';
-    var r = anchor.getBoundingClientRect();
-    var pw = Math.min(window.innerWidth - 16, 460), ph = pop.offsetHeight;
-    var x = Math.min(Math.max(8, r.left + r.width / 2 - pw / 2), window.innerWidth - pw - 8);
-    var y = (r.bottom + ph + 12 > window.innerHeight) ? Math.max(8, r.top - ph - 10) : r.bottom + 10;
-    pop.style.left = x + 'px';
-    pop.style.top = y + 'px';
-    setTimeout(function () {
-      document.addEventListener('click', closeNetFormulaPop);
-      document.addEventListener('keydown', escNetFormulaPop);
-      window.addEventListener('resize', closeNetFormulaPop);
-      window.addEventListener('scroll', closeNetFormulaPop, true);
-    }, 0);
-  }
-
-  function escNetFormulaPop(e) {
-    if (e.key === 'Escape') closeNetFormulaPop();
-  }
-
-  function closeNetFormulaPop() {
-    var pop = document.getElementById('sc-net-pop');
-    if (pop) pop.style.display = 'none';
-    document.removeEventListener('click', closeNetFormulaPop);
-    document.removeEventListener('keydown', escNetFormulaPop);
-    window.removeEventListener('resize', closeNetFormulaPop);
-    window.removeEventListener('scroll', closeNetFormulaPop, true);
-  }
-
   // 巴菲特合理市盈率 = 净利5年CAGR×100，夹在 [8, 25]；无数据取 15
   function fairPe(netCagr5) {
     if (netCagr5 == null) return 15;
@@ -2877,6 +2006,11 @@
       var mid = (lo + hi) / 2;
       if (scoreFn(mid) >= tgt) lo = mid; else hi = mid;
     }
+    // 买入价不足现价 1%（需跌 99%）时，二分给出的已经不是价格而是判决：任何现实价位都到不了
+    // 目标分。实测 16627 次二分里 610 次落在此区，买入价从 1e-8 元到 1.3 元、对应现价 5~956 元，
+    // 没有一条能当参考价用，还会污染“按买入价排序”。这类里 493 次是 tMax<90 的平台塌缩，
+    // 另 117 次目标可达却同样给出 0.0015 元这种数，所以只按 tMax 分流并不够，统一按 lo 切。
+    if (lo < 0.01) return null;
     return price0 * lo;
   }
 
@@ -2894,7 +2028,7 @@
     var annual = annualRows(d.indicators || []);
     var last = annual[annual.length - 1];
     var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
-    var baList = (d.balance || []).slice().sort(function (a, b) { return a['报告日'] < b['报告日'] ? -1 : 1; });
+    var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var lastBa = lastDate ? sheetRowByDate(baList, lastDate) : null;
     var ca = lastBa ? lastBa['流动资产合计'] : null;
     var tl = lastBa ? lastBa['负债合计'] : null;
@@ -3021,7 +2155,7 @@
     state.charts.push(ch1);
     ch1.setOption({
       tooltip: { trigger: 'axis', valueFormatter: function (v) { return v == null ? '-' : v + ' 元'; } },
-      grid: { left: 46, right: 16, top: 24, bottom: 30 },
+      grid: mqMobile.matches ? { left: 40, right: 10, top: 22, bottom: 26 } : { left: 46, right: 16, top: 24, bottom: 30 },
       xAxis: { type: 'category', data: divYears, axisLabel: { fontSize: 11 } },
       yAxis: { type: 'value', axisLabel: { fontSize: 11, formatter: function (v) { return v + ' 元'; } } },
       series: [{ type: 'bar', barMaxWidth: 28, itemStyle: { color: '#61c0a8' },
@@ -3033,7 +2167,7 @@
     state.charts.push(ch2);
     ch2.setOption({
       tooltip: { trigger: 'axis', valueFormatter: function (v) { return v == null ? '-' : v; } },
-      grid: { left: 46, right: 16, top: 24, bottom: 30 },
+      grid: mqMobile.matches ? { left: 40, right: 10, top: 22, bottom: 26 } : { left: 46, right: 16, top: 24, bottom: 30 },
       xAxis: { type: 'category', data: cf5.map(function (r) { return r.year; }), axisLabel: { fontSize: 11 } },
       yAxis: { type: 'value', axisLabel: { fontSize: 11 } },
       series: [{
@@ -3060,6 +2194,36 @@
   }
 
   /* ---------------- 指标趋势图（3 个独立图表，支持季/年视图切换） ---------------- */
+
+  // 具名监听 + 守卫：早先这里是 window.onresize 赋值，会直接覆盖农化/EDB 模块挂的 resize 处理
+  var resizeBound = false;
+  var wasNarrow = null;
+
+  function resizeStockCharts() {
+    state.charts.forEach(function (c) { try { c.resize(); } catch (e) {} });
+  }
+
+  function onStockResize() {
+    // 推进宏任务：图表容器高度与折叠标记都要等这一轮 DOM 落地后再量
+    setTimeout(function () {
+      if (!resizeBound || !state.current) return;
+      var n = mqMobile.matches;
+      // grid 边距与移动端折叠结构都是渲染期烘死的，跨断点必须整体重建，单靠 resize 会留下桌面边距
+      if (n !== wasNarrow) {
+        wasNarrow = n;
+        if ($('stock-detail-body')) renderDetail(state.current);
+        return;
+      }
+      resizeStockCharts();
+    }, 0);
+  }
+
+  // 详情路由卸载后容器消失，必须摘掉监听（StockDetailView 的 onBeforeUnmount 调用）
+  function unbindResize() {
+    if (!resizeBound) return;
+    resizeBound = false;
+    window.removeEventListener('resize', onStockResize);
+  }
 
   function renderCharts(indicators) {
     if (typeof echarts === 'undefined') {
@@ -3090,9 +2254,8 @@
       ['stock-chart-revenue', 'stock-chart-margin', 'stock-chart-roe'].forEach(function (id) {
         state.charts.push(echarts.init($(id)));
       });
-      window.onresize = function () {
-        state.charts.forEach(function (c) { c.resize(); });
-      };
+      wasNarrow = mqMobile.matches;
+      if (!resizeBound) { resizeBound = true; window.addEventListener('resize', onStockResize); }
     }
 
     // 通用配置：图例 + 缩放条 + 双 Y 轴（左=指标值，右=增长率 %）
@@ -3105,7 +2268,9 @@
           valueFormatter: function (v) { return v == null ? '-' : (yFormatter ? yFormatter(v) : v); }
         },
         legend: { data: legendData, top: 0 },
-        grid: { left: 60, right: 56, top: 34, bottom: 46 },
+        // bottom 两端都留 46：dataZoom 滑块要占位；移动端只收紧左右与顶部
+        grid: mqMobile.matches ? { left: 46, right: 44, top: 30, bottom: 46 }
+          : { left: 60, right: 56, top: 34, bottom: 46 },
         xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 11 } },
         yAxis: [
           { type: 'value', name: yName, axisLabel: { fontSize: 11, formatter: yFormatter } },
@@ -3291,7 +2456,7 @@
     var rpt = {};
     ['income', 'balance', 'cashflow'].forEach(function (sec) {
       rpt[sec] = ((d[sec] || []).slice()).sort(function (x, y) {
-        return x['报告日'] < y['报告日'] ? -1 : 1;
+        return cmpKey(x['报告日'], y['报告日']);
       });
     });
     var indBy = {};
@@ -3462,4 +2627,5 @@
   /* ---------------- 启动(已移交 Vue 组件) ---------------- */
 
   export { renderDetail, showDetail, state, valueAnalysis, valueScores, priceReferences,
-    cycleAnalysis, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends };
+    cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
+    unbindResize };

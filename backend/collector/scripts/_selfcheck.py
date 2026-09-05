@@ -25,6 +25,12 @@ def check(cond, msg):
 
 
 # ---------- 1) 数据完整性 ----------
+idx = json.loads(io.open(DATA / 'index.json', encoding='utf-8').read())
+cfg = {c[0]: c for c in DEFAULT_COMPANIES}
+# index.json 是全市场（数千家），DEFAULT_COMPANIES 只是自选清单：
+# 市场归属必须以 index 条目为准，否则非自选的港股/美股会被兜底成 'A' 并按 A 股期数下限误报
+mkt_by_code = {c['code']: c.get('market') for c in idx['companies']}
+
 companies = {}
 for f in sorted((DATA / 'companies').glob('*.json')):
     d = json.loads(f.read_text(encoding='utf-8'))
@@ -32,7 +38,7 @@ for f in sorted((DATA / 'companies').glob('*.json')):
     companies[code] = d
     if d.get('errors'):
         fails.append(f'{code} errors={d["errors"]}')
-    mkt = next((c[2] for c in DEFAULT_COMPANIES if c[0] == code), 'A')
+    mkt = mkt_by_code.get(code) or next((c[2] for c in DEFAULT_COMPANIES if c[0] == code), 'A')
     # 期数下限：A股三大报表及指标均≥10；港股东财源指标仅≈9期；美股无公告列表
     for k, mn in (('indicators', 6 if mkt != 'A' else 10),
                   ('income', 8 if mkt != 'A' else 10),
@@ -45,22 +51,27 @@ for f in sorted((DATA / 'companies').glob('*.json')):
     snap = d.get('snapshot') or {}
     check(float(snap.get('price') or 0) > 0, f'{code} snapshot.price 异常: {snap.get("price")}')
 
-idx = json.loads(io.open(DATA / 'index.json', encoding='utf-8').read())
-cfg = {c[0]: c for c in DEFAULT_COMPANIES}
-check(idx.get('count') == len(idx.get('companies') or []) == len(cfg),
-      f'count 不一致: idx.count={idx.get("count")} len={len(idx.get("companies") or [])} config={len(cfg)}')
+check(idx.get('count') == len(idx.get('companies') or []),
+      f'count 不一致: idx.count={idx.get("count")} len={len(idx.get("companies") or [])}')
 codes_idx = {c['code'] for c in idx['companies']}
-check(codes_idx == set(cfg), f'名单不匹配: 仅index={sorted(codes_idx - set(cfg))} 仅config={sorted(set(cfg) - codes_idx)}')
+# 全市场索引远大于自选清单，不能再要求两者相等；只校验任何规模下都该成立的不变量
+missing_file = sorted(codes_idx - set(companies))
+check(not missing_file, f'索引里有但缺数据文件 {len(missing_file)} 家: {missing_file[:10]}')
+check(set(cfg) <= codes_idx, f'自选清单未进索引: {sorted(set(cfg) - codes_idx)}')
 for c in idx['companies']:
-    d = companies[c['code']]
-    # 名字/市场与 config 一致
-    cc = cfg[c['code']]
-    check(c.get('name') == d.get('name') == cc[1], f'{c["code"]} 名称不一致: idx={c.get("name")} file={d.get("name")} cfg={cc[1]}')
-    # 分数范围
+    d = companies.get(c['code'])
+    if d is None:
+        continue            # 已记为失败，跳过以免 KeyError 打断后续所有检查
+    check(c.get('name') == d.get('name'),
+          f'{c["code"]} 名称不一致: idx={c.get("name")} file={d.get("name")}')
+    cc = cfg.get(c['code'])
+    if cc is not None:
+        check(c.get('name') == cc[1], f'{c["code"]} 名称与自选清单不一致: idx={c.get("name")} cfg={cc[1]}')
+    # 分数范围（防御型/施洛斯按设计含负分惩罚项，下限不是 0）
     s = c.get('scores') or {}
-    for k in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
+    for k, lo in (('grahamAgg', 0), ('grahamDef', -30), ('schloss', -37), ('buffett', 0)):
         v = s.get(k)
-        check(v is None or 0 <= v <= 100 + 1e-9, f'{c["code"]} {k} 超范围: {v}')
+        check(v is None or lo - 1e-9 <= v <= 100 + 1e-9, f'{c["code"]} {k} 超范围: {v}')
 
 # ---------- 2) priceRefs 内部一致性 ----------
 n_fairliq = 0
@@ -120,7 +131,10 @@ for c in idx['companies']:
 # ---------- 3) 重算一致性（index 与最新算法同步） ----------
 mismatch = []
 for c in idx['companies']:
-    py = compute_scores(companies[c['code']])
+    dfile = companies.get(c['code'])
+    if dfile is None:
+        continue                      # 缺数据文件已在第 1 节记为失败
+    py = compute_scores(dfile)
     stored = c.get('scores') or {}
 
     def cmp_val(path, a, b):
@@ -174,6 +188,15 @@ for code in ('600741', '600585', '601163', '000726', '601717'):
 
 print()
 print(f'== 汇总 == 公司数 {len(companies)} | fairLiq 有值 {n_fairliq} 家 | 净现金/市值有值 {n_netcash} 家 | 失败 {len(fails)} 项')
-for x in fails[:30]:
-    print('  FAIL:', x)
+# 全市场语料下失败可达数千条，逐条打印没有诊断价值：按“去掉代码、数字归一”的同类聚合
+groups = {}
+for x in fails:
+    # 只剥掉开头的公司代码，保留其后的字段路径（重算不一致形如 "000001.priceRefs.schloss.buy: ..."）
+    body = re.sub(r'^[A-Za-z0-9]+', '', x)
+    groups.setdefault(re.sub(r'-?\d+(\.\d+)?', 'N', body), []).append(x)
+for key in sorted(groups, key=lambda k: -len(groups[k])):
+    sample = groups[key]
+    print(f'  [{len(sample):5d} 项] {key[:110]}')
+    for x in sample[:3]:
+        print(f'             例: {x[:150]}')
 sys.exit(1 if fails else 0)
