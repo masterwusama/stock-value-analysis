@@ -125,12 +125,34 @@ SORT_COLS = {
     "fair_liq": ScoreDaily.fair_liq,
     "net_cash_ratio": ScoreDaily.net_cash_ratio,
 }
-# 四派参考价三档(买入/保守卖/公允卖)共 12 列同样可排序：原站语义是"列头按买入价、
-# 格内保守/公允小字按各自卖价"，键名与 score_daily 列/SecurityItem 字段一致。
+# 四派参考价三档(买入/保守卖/公允卖)：列头按买入性价比、格内保守/公允小字按各自卖价。
+# 买价本身是"每家自己的"绝对值，跨标的比大小没有意义(5 元的票不比 50 元的便宜)，
+# 故 buy_* 排的是折价率 1 - 现价/买价，降序 = 相对买入价打得最深的第一屏。
+_SCHOOLS = ("graham_agg", "graham_def", "schloss", "buffett")
+# 低于一分钱的买价不算参考价：评分公式相减会留下 1e-17 这种浮点零渣，
+# 当分母能把折价率吹到 1e20 量级；而一分以下的价格没有任何标的真能买入。
+MIN_BUY_REF = 0.01
+
+
+def _buy_discount(buy_col):
+    """买入性价比排序表达式：越大越便宜；算不出就不给值(NULL→沉底)
+
+    买价低于 MIN_BUY_REF 时不给值而不是让它参与除法——负的买价会把比率翻成负数，
+    把根本不该买入的标的顶到"最便宜"那一端，近零的买价则在另一端造出天文数字。
+    现价缺失同理(无法定位折价深度)。
+    """
+    return case(
+        (and_(QuoteDaily.price.is_not(None), buy_col.is_not(None), buy_col >= MIN_BUY_REF),
+         1 - QuoteDaily.price / buy_col),
+        else_=None,
+    )
+
+
+SORT_COLS.update({f"buy_{s}": _buy_discount(getattr(ScoreDaily, f"buy_{s}")) for s in _SCHOOLS})
 SORT_COLS.update({
     col: getattr(ScoreDaily, col)
-    for school in ("graham_agg", "graham_def", "schloss", "buffett")
-    for col in (f"buy_{school}", f"sell_cons_{school}", f"sell_fair_{school}")
+    for s in _SCHOOLS
+    for col in (f"sell_cons_{s}", f"sell_fair_{s}")
 })
 
 
@@ -227,7 +249,7 @@ def list_securities(
     buys: str | None = Query(None, max_length=64, description="买点复选(逗号分隔,同时满足)"),
     sells: str | None = Query(None, max_length=64, description="卖点复选(须同时达保守与公允)"),
     discount: float | None = Query(None, gt=0, le=500, description="买点折扣%,仅与 buys 配合"),
-    sort: str = Query("code", description=f"排序字段: {'/'.join(SORT_COLS)}"),
+    sort: str = Query("code", description=f"排序字段: {'/'.join(SORT_COLS)}（buy_* 是折价率 1-现价/买价，降序=相对买入价折得最深）"),
     order: Literal["asc", "desc"] = Query("asc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),

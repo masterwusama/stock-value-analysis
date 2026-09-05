@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.config import LEGACY_DATA_DIR  # 对答案基线 = JSON 工作目录(采集后为 collector/)
+from app.api.securities import MIN_BUY_REF  # 买价门槛与后端排序表达式同源，不在脚本里重抄
 
 BASE = "http://127.0.0.1:8000/api"
 IDX = json.load(io.open(LEGACY_DATA_DIR / "data" / "index.json", encoding="utf-8"))
@@ -253,11 +254,28 @@ sort_keys = (["code", "price", "pe_ttm", "pb", "market_cap", "fair_liq", "net_ca
              + [f"{p}_{c}" for c in SCHOOL_COLS.values()
                 for p in ("buy", "sell_cons", "sell_fair")])
 sort_bad = []
+
+
+def sort_val(it, k):
+    """该排序键在这一行上的期望值。
+
+    buy_* 排的是折价率 1 - 现价/买价（响应里 buy_* 仍是买价绝对值），故按后端
+    _buy_discount 同一公式现算，含买价过低/缺失即 NULL 的那道判定；门槛常量
+    直接取后端的 MIN_BUY_REF，不在这边重抄一遍，免得两边各自改了还互相认为对方错。
+    """
+    if not k.startswith("buy_"):
+        return it.get(k)
+    buy, price = it.get(k), it.get("price")
+    if buy is None or buy < MIN_BUY_REF or price is None:
+        return None
+    return 1 - price / buy
+
+
 for k in sort_keys:
     for od in ("asc", "desc"):
         url = "/securities?" + urllib.parse.urlencode(
             {"sort": k, "order": od, "page_size": 50})
-        vals = [it.get(k) for it in api(url)["items"]]
+        vals = [sort_val(it, k) for it in api(url)["items"]]
         nums = [v for v in vals if v is not None]
         if nums != sorted(nums, reverse=(od == "desc")):
             sort_bad.append(f"{k}/{od} 乱序:{nums[:4]}")

@@ -26,7 +26,8 @@ const COLS = [
   { key: 'fair_liq', label: '清算' },
   { key: 'net_cash_ratio', label: '净现金/市值' },
   // 价格参考合并列:每流派一列,竖排 买→保守/公允(同原站 listCells)
-  // 排序键用列头=买入价(原站 thSort 语义),格内两档卖价由小字各自点击排序
+  // 列头排序键 buy_* 走的是"买入性价比"（现价相对买价的折价深度，后端算），不是买价绝对值；
+  // 格内保守/公允两档小字仍按各自卖价排。键名与 score_daily 列/SecurityItem 字段保持一致。
   { key: 'buy_graham_agg', label: '格进取 买/保/公', ref: true, school: 'grahamAgg' },
   { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef' },
   { key: 'buy_schloss', label: '施洛斯 买/保/公', ref: true, school: 'schloss' },
@@ -206,6 +207,23 @@ const refKey = (k, kind) => snake(kind) + '_' + snake(k)
 const refBuy = (s, k) => s[refKey(k, 'buy')]
 const refCons = (s, k) => s[refKey(k, 'sellCons')]
 const refFair = (s, k) => s[refKey(k, 'sellFair')]
+// 买入性价比：现价相对买入参考价的偏离，负数=已经比建议买价便宜。
+// 后端 buy_* 排序键排的就是这个比率的相反数（折价率），响应里没有对应字段，
+// 故这里用同一公式在前端算出来给 tooltip 和行内展示用——两边口径必须一致，
+// 连 MIN_BUY_REF 这道门槛也要一致，否则被后端判成无值的行会在前端显示出一个假折价。
+const MIN_BUY_REF = 0.01
+const refSpace = (s, k) => {
+  const b = refBuy(s, k)
+  return b == null || b < MIN_BUY_REF || s.price == null ? null : s.price / b - 1
+}
+// 折最深到 100% 有界，溢价无上界：999% 以上统一简写成 溢999%（精确值看悬停），
+// 卡片那一栏只有 68px，多一个 > 就会把末尾的 % 挤出去。
+const refSpaceText = (v) => v == null ? ''
+  : v <= 0 ? '折' + (Math.abs(v) * 100).toFixed(0) + '%'
+    : v >= 9.995 ? '溢999%' : '溢' + (v * 100).toFixed(0) + '%'
+// 当前按哪一列的「买」在排序（排序键是 snake，流派键是驼峰）
+const camel = (v) => v.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+const buySortSchool = computed(() => (sort.value.startsWith('buy_') ? camel(sort.value.slice(4)) : ''))
 // 表头高亮:本流派列的买/保/公任一档被排序都算激活(同原站 thSort 把 sellC-/sellF- 归一到 buy-)
 function sortActive(c) {
   if (!c.ref) return sort.value === c.key
@@ -214,7 +232,9 @@ function sortActive(c) {
 }
 const refTitle = (s, k) => {
   const f = (v) => v == null ? '-' : fmt(v)
-  return `${REF_LABELS[k]}：买 ${f(refBuy(s, k))} / 保卖 ${f(refCons(s, k))} / 公卖 ${f(refFair(s, k))}`
+  const sp = refSpace(s, k)
+  const tail = sp == null ? '' : `｜现价较买价${sp <= 0 ? '折价' : '溢价'} ${sp >= 9.995 ? '>999' : (Math.abs(sp) * 100).toFixed(1)}%`
+  return `${REF_LABELS[k]}：买 ${f(refBuy(s, k))} / 保卖 ${f(refCons(s, k))} / 公卖 ${f(refFair(s, k))}${tail}`
 }
 const cls = (n) => n > 0 ? 'up' : n < 0 ? 'down' : 'flat'
 const MARKET_NAME = { A: 'A股', HK: '港股', US: '美股' }
@@ -245,7 +265,7 @@ function toggleSort() {
 
 // 排序 chip 的键直接从 COLS 派生，与桌面表头可排序列一一对应，后端 sort= 白名单不会失配。
 // 保守/公允卖价不进面板，靠卡片里点卖价小字触发（同桌面表格格内小字）。
-const SORT_CHIPS = COLS.filter((c) => c.key).map((c) => [c.key, c.ref ? c.label.split(' ')[0] + '买' : c.label])
+const SORT_CHIPS = COLS.filter((c) => c.key).map((c) => [c.key, c.ref ? c.label.split(' ')[0] + '折价' : c.label])
 const SORT_NAME = Object.fromEntries(SORT_CHIPS)
 
 // 收起态按钮文案：把“已启用了哪些条件”直接写在按钮上，省得为了确认状态反复展开
@@ -397,7 +417,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
 
           <div class="sc-refs">
             <div v-for="c in REF_COLS" :key="c.school" class="sc-ref" :title="refTitle(s, c.school)">
-              <em>{{ REF_LABELS[c.school] }}</em>
+              <em>{{ REF_LABELS[c.school] }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></em>
               <span class="r-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">买 {{ fmt(refBuy(s, c.school)) }}</span>
               <!-- 卖出价可点排序（.stop 挡住卡片的跳转）；公允缺失显示 - 而非留空，
                    四列等高对齐，缺一行会让整排参差 -->
@@ -417,7 +437,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         <thead>
           <tr>
             <th v-for="c in COLS" :key="c.label" :class="{ l: c.l, unsort: !c.key, stick: c.stick }"
-                :title="c.ref ? '按买入参考价排序（保守/公允价点格内小字），再点切换升/降序'
+                :title="c.ref ? '按买入性价比排序：现价相对买入参考价的折价越深越靠前（保守/公允价点格内小字），再点切换升/降序'
                              : (c.key ? '点击排序，再点切换升/降序' : '')"
                 @click="c.key && setSort(c.key)">
               {{ c.label }}<template v-if="sortActive(c)">{{ order === 'desc' ? ' ▼' : ' ▲' }}</template>
@@ -446,7 +466,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                 title="净现金/市值（最近一期财报），≥100% 表示扣除全部负债后的类现金仍高于市值">{{ score2(s.net_cash_ratio) }}</td>
             <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :title="refTitle(s, c.school)">
-              <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}</span>
+              <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>
               <span class="rf-sell">
                 <span class="sl-sort" :class="{ 'r-hit-s': refCons(s, c.school) != null && s.price != null && s.price >= refCons(s, c.school) }"
                       title="按保守卖出价排序" @click.stop="setSort(refKey(c.school, 'sellCons'))">{{ fmt(refCons(s, c.school)) }}</span>
@@ -542,6 +562,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
 /* 价格参考合并列(移植原站 .c-ref 竖排样式) */
 .c-ref { white-space: nowrap; }
 .c-ref .rf-buy { display: block; }
+/* 表格有宽度余量，标签不必压到卡片的 9px，与保/公允小字同级即可读 */
+.c-ref .rf-sp { font-size: 11px; }
 .c-ref .rf-sell { display: flex; flex-direction: column; font-size: 11px; line-height: 1.3; opacity: 0.78; }
 /* 格内保/公允卖价：可点排序（不靠色块区分，靠下划线提示） */
 .c-ref .sl-sort { cursor: pointer; }
@@ -636,6 +658,11 @@ table.grid-list .ind {
   gap: 3px;
 }
 .sc-ref .r-buy, .sc-ref .r-sell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 题头行带折价标签时同样绝不折行——折成两行会把该列撑高、与邻列的买/保/公错位 */
+.sc-ref em { white-space: nowrap; overflow: hidden; }
+/* 折价标签 .rf-sp 只在按该流派「买」排序的那一列渲染（见 buySortSchool），四列同时摊开会破坏表宽。
+   卡片放题头行（价格行只有 ≈68px 内容区，接在买价后面会被省略号吃掉），表格放买入价后面 */
+.rf-sp { font-style: normal; font-size: 9px; opacity: 0.78; margin-left: 2px; }
 /* 卖价小字是可点的排序入口：桌面靠下划线提示，触屏没有 hover，改按压反馈 + 加高点击区 */
 .sc-ref .sl-sort { cursor: pointer; padding: 2px 0; }
 .sc-ref .sl-sort:active { text-decoration: underline; }

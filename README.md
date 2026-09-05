@@ -115,7 +115,7 @@ cd frontend ; npm run dev      # → http://localhost:5173
 cd backend
 python -X utf8 -m scripts.verify_import     # 16 表行数 + 逐字段断言
 python -X utf8 -m scripts.verify_api        # API 响应 vs 源 JSON
-python -X utf8 -m scripts.verify_filters    # 列表筛选与排序 23 组用例，源↔库集合级比对
+python -X utf8 -m scripts.verify_filters    # 列表筛选与排序 35 组用例，源↔库集合级比对
 python -X utf8 scripts\verify_writer.py     # 离线：写入层行为
 python -X utf8 scripts\verify_edb_merge.py  # 离线：EDB 合并防线与增量窗口
 ```
