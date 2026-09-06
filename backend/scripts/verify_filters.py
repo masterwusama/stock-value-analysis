@@ -27,7 +27,8 @@ def api(path):
         return json.load(r)
 
 
-def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, buys=None, sells=None, discount=None,
+def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, ncr_min=None, ncr_max=None,
+              buys=None, sells=None, discount=None,
               market=None, board=None, st=None, industry=None, ex_industry=None):
     """复刻原 stock.js passFlt(base 分口径,windMode 关)。"""
     out = []
@@ -62,6 +63,13 @@ def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, buys=No
         if cap_min is not None and (cap is None or cap < cap_min):
             continue
         if cap_max is not None and (cap is None or cap > cap_max):
+            continue
+        # 净现金/市值门槛：小数比率、含边界，与后端 ScoreDaily.net_cash_ratio 同一列同一单位；
+        # 这列算不出来的公司（None）不进区间，和“无行情行不参与市值门槛”同一语义
+        ncr = refs.get("netCashRatio")
+        if ncr_min is not None and (ncr is None or ncr < ncr_min):
+            continue
+        if ncr_max is not None and (ncr is None or ncr > ncr_max):
             continue
         cur = c.get("price")
         disc = (discount / 100) if (discount is not None and buys) else 1
@@ -136,6 +144,20 @@ _capped = sorted((c for c in IDX["companies"] if (c.get("quote") or {}).get("mar
 CAP_MID = _capped[len(_capped) // 2]["quote"]["market_cap"] if _capped else 1e12
 CAP_TOP = _capped[-1]["quote"]["market_cap"] if _capped else 1e12
 
+# 净现金/市值阈值同样现算。取 p50/p90/p99，唯独不取 p75——实测 p75 落在 −0.001 上，
+# 正卡在这列的零 crossing 密集区，index.json 与库里差到 1e-6 量级就能把一家顶过边界，
+# 集合对账会红在筛选之外的原因上。判空一律 is not None：这列 0 是合法值（现金恰好等于负债）。
+_ncrd = sorted((c for c in IDX["companies"]
+                if ((c.get("scores") or {}).get("priceRefs") or {}).get("netCashRatio") is not None),
+               key=lambda c: c["scores"]["priceRefs"]["netCashRatio"])
+
+
+def _ncr(p):
+    return _ncrd[int(len(_ncrd) * p)]["scores"]["priceRefs"]["netCashRatio"]
+
+
+NCR_MED, NCR_P90, NCR_P99 = _ncr(0.5), _ncr(0.9), _ncr(0.99)
+
 # 行业名一律现取：字典有 123 项且跟着采集源变，写死名字在换版后会退成空集而“测过”
 _ind_n = {}
 for _c in IDX["companies"]:
@@ -159,6 +181,9 @@ cases_list = [
     {"cap_min": CAP_MID}, {"cap_max": CAP_MID}, {"cap_min": CAP_MID, "cap_max": CAP_TOP},
     {"cap_min": 5e11, "market": "A"}, {"cap_max": 5e9, "market": "A"},
     {"cap_min": 1e11, "cap_max": 5e11, "st": False, "fraud_max": 40},
+    # 净现金/市值区间：单侧 ×2 + 双侧 + 与市场叠加 + 定义分界 0（净现金 vs 净负债，专门捞净负债那侧）
+    {"ncr_min": NCR_P90}, {"ncr_max": NCR_MED}, {"ncr_min": NCR_MED, "ncr_max": NCR_P90},
+    {"ncr_min": NCR_P99, "market": "US"}, {"ncr_max": 0, "market": "A", "st": False},
     # 行业：单选包含 + 多选排除（含排两个、与市场叠加、包含与排除同一项）
     {"industry": TOP_IND}, {"industry": TOP_IND, "market": "A"},
     {"ex_industry": [TOP_IND]}, {"ex_industry": [TOP_IND, TOP_IND2]},
@@ -182,6 +207,23 @@ if _capped:
         for _k in ("cap_min", "cap_max"):
             _ok = _pc in api_flt({_k: _pv, "market": _pm})
             print(("OK  " if _ok else "FAIL") + f" 市值边界含等号 {_k}={_pv / 1e8:.2f}亿({_pc})")
+            if not _ok:
+                fails += 1
+
+# 净现金/市值的等号探针另起一块，不扩用上面那个 for：那块三处都是市值专用（探针取自市值中位数、
+# 取的是 market_cap、打印除 1e8），而市值中位数那家完全可能算不出这列比率。
+if _ncrd:
+    _nprobe = _ncrd[len(_ncrd) // 2]
+    _nc, _nm = _nprobe["code"], _nprobe.get("market", "A")
+    # 阈值用 API 原值而非列面值：列面按一位小数显示，屏幕上读到的 12.9% 背后可能是 0.128509，
+    # 拿 0.129 当门槛会把探针自己筛掉——那是假红。
+    _nv = (api_flt_items({"keyword": _nc, "market": _nm}).get(_nc) or {}).get("net_cash_ratio")
+    if _nv is None:  # 不能用 not _nv：这列 0 合法，会被当成拿不到值
+        print("FAIL 净现金/市值边界探针拿不到 net_cash_ratio"); fails += 1
+    else:
+        for _k in ("ncr_min", "ncr_max"):
+            _ok = _nc in api_flt({_k: _nv, "market": _nm})
+            print(("OK  " if _ok else "FAIL") + f" 净现金/市值边界含等号 {_k}={_nv * 100:.2f}%({_nc})")
             if not _ok:
                 fails += 1
 
@@ -256,6 +298,20 @@ except urllib.error.HTTPError as e:
     if e.code != 400:
         fails += 1
 
+# 非有限浮点不能漏到 SQL：float("NaN") 不抛、pydantic 也认，过去要一路走到 MySQL 驱动才炸成 500。
+# 带 ge/le 的参数顺带挡住了 NaN，但净现金/市值刻意不结界、cap_min 只界了下界（inf 照样漏），
+# 故三个参数各探两值，期望全部 422 而不是 500。
+_nf_bad = []
+for _p in ("ncr_min", "ncr_max", "cap_min"):
+    for _v in ("NaN", "Infinity"):
+        try:
+            api(f"/securities?{_p}={_v}&page_size=1")
+            _nf_bad.append(f"{_p}={_v} 未被拒")
+        except urllib.error.HTTPError as _e:
+            if _e.code != 422:
+                _nf_bad.append(f"{_p}={_v} -> {_e.code}")
+check("非有限浮点在参数层 422（不落到 SQL 变 500）", set(), set(_nf_bad))
+
 # 无行业标注的标的必须活下来：MySQL 的 industry NOT IN (...) 对 NULL 求值为 NULL，
 # 少了后端那支 IS NULL，这一批会被整批静默丢掉（集对比也会红，但看不出是这个原因）
 if not NO_IND:
@@ -290,6 +346,21 @@ for c in IDX["companies"]:
         if (a is None) != (b is None) or (a is not None and b is not None and abs(a - b) > 1e-6):
             ref_bad.append((c["code"], a, b))
 check(f"价格参考字段一致({ref_n}项)", set(), set(f"{x}" for x in ref_bad) if ref_bad else set())
+
+# 算不出净现金/市值比率的行（NULL）在两个方向都必须被门槛排除，且不设门槛时它们仍在结果里。
+# 期望值拿当次 API 自己返回的空值数算，不拿 index.json 对：后者把“评分行落在 RECENT_DATES 窗口外”
+# 的公司也算作有值/无值，会让这条红在筛选之外的原因上。
+_n_null = sum(1 for it in all_items.values() if it.get("net_cash_ratio") is None)
+_n_exp = len(all_items) - _n_null
+_extreme = (("ncr_min", -1e9), ("ncr_max", 1e9))
+_n_tots = {k: api("/securities?" + urllib.parse.urlencode({k: v, "page_size": 1}))["total"]
+           for k, v in _extreme}
+_n_ok = all(t == _n_exp for t in _n_tots.values())
+print(("OK  " if _n_ok else "FAIL") + " 净现金/市值门槛两向都排除算不出比率的行: "
+      + " ".join(f"{k}={v}->{_n_tots[k]}" for k, v in _extreme)
+      + f" 期望={_n_exp}(总 {len(all_items)} − 空值 {_n_null})")
+if not _n_ok:
+    fails += 1
 
 # 表头排序：前端可发的每个 sort 键都要 200 + 单调有序 + NULL 不占首页。
 # 曾经的 bug：列表 COLS 拿流派驼峰键（grahamAgg）当排序键，而后端白名单只有列名，

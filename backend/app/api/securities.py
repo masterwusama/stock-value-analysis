@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """证券接口:分页列表 + 详情(响应结构与原 companies/*.json 对齐,降低前端移植成本)。"""
 from datetime import date, datetime
-from typing import Literal
+from math import isfinite
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import AfterValidator, BaseModel
 from sqlalchemy import and_, case, func, not_, or_, select
 from sqlalchemy.orm import Session
 
@@ -205,6 +206,19 @@ def _wind_score(base, delta):
     )
 
 
+def _finite(v: float) -> float:
+    """挡 NaN/Infinity：float("NaN") 不抛，pydantic 也认，一路走到 MySQL 驱动才炸成 500。
+    带 ge/le 的参数顺带被拦（NaN 与任何数比较都不为真），但净现金/市值刻意不结界，
+    所以这道判断挂在参数类型上，而不是靠每个参数各自补一个假的界。
+    带界的几个也一并换用：浮点筛选参数只留一条规则，将来谁放宽了界也不会重新开出口子。"""
+    if not isfinite(v):
+        raise ValueError("必须是有限数值")
+    return v
+
+
+FiniteF = Annotated[float, AfterValidator(_finite)]
+
+
 def _flt_keys(raw: str | None, valid: dict | set, name: str) -> list[str]:
     """逗号分隔复选键解析 + 白名单校验(非法直接 400,不做静默丢弃)。"""
     if not raw:
@@ -254,10 +268,17 @@ def list_securities(
     ex_industry: str | None = Query(
         None, max_length=1024,
         description="排除行业复选(逗号分隔,同时排除;无行业标注的标的不受排除影响)"),
-    fraud_max: float | None = Query(None, ge=0, le=100, description="造假风险≤(wind=1 时按增强分)"),
-    mgmt_min: float | None = Query(None, ge=0, le=100, description="管理能力≥(wind=1 时按增强分)"),
-    cap_min: float | None = Query(None, ge=0, description="总市值≥(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
-    cap_max: float | None = Query(None, ge=0, description="总市值≤(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
+    fraud_max: FiniteF | None = Query(None, ge=0, le=100, description="造假风险≤(wind=1 时按增强分)"),
+    mgmt_min: FiniteF | None = Query(None, ge=0, le=100, description="管理能力≥(wind=1 时按增强分)"),
+    cap_min: FiniteF | None = Query(None, ge=0, description="总市值≥(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
+    cap_max: FiniteF | None = Query(None, ge=0, description="总市值≤(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
+    # 净现金/市值门槛：与响应 net_cash_ratio 同为小数比率(0.35=35%)，只有列面按百分比显示。
+    # 刻意不设 ge/le：造假与管理有 0~100 的定义域、市值恒正，这列三者都不是——实测全市场
+    # −87.7~1.73（深负集中在地产/建筑/AMC），A 股上限 0.71，负数是“净负债”的真实值不是缺失，
+    # 编一个界只会把合法的深负区间挡在门外。填错单位(把 50% 手填成 50)表现为结果偏少，
+    # 看得见，不靠 422 兜；非有限值(NaN/inf)是另一回事，会一路炸到 SQL 变 500，故由 FiniteF 拦下。
+    ncr_min: FiniteF | None = Query(None, description="净现金/市值≥(小数比率,0.35=35%;负数=净负债;含边界)"),
+    ncr_max: FiniteF | None = Query(None, description="净现金/市值≤(小数比率,0.35=35%;用于专门捞净负债标的;含边界)"),
     wind: bool = Query(False, description="事件增强分档：造假/管理两列的筛选与排序改用基础分+Wind 事件增量（响应里两列仍为基础分，显示值由前端叠 wind_* 字段换算）"),
     buys: str | None = Query(None, max_length=64, description="买点复选(逗号分隔,同时满足)"),
     sells: str | None = Query(None, max_length=64, description="卖点复选(现价≥公允卖价即命中,公允恒高于保守)"),
@@ -337,6 +358,14 @@ def list_securities(
         conds.append(QuoteDaily.market_cap >= cap_min)
     if cap_max is not None:
         conds.append(QuoteDaily.market_cap <= cap_max)
+    # 净现金/市值：与上面市值两条共用三值逻辑——没有评分行、或财报科目不足以算出这列的公司
+    # (实测 121 家，港股占比最高)是 NULL，比较不为真→自动排除，不额外兼容。
+    # 这里不补 IS NULL 那半边(与 ex_industry 相反)：被去掉的是“算不出来的人”而不是“没被点到的人”。
+    # 于是 ≤ 那侧的语义是“算得出来且净负债”，不是“所有不净现金的公司”——这差别写进筛选栏提示。
+    if ncr_min is not None:
+        conds.append(ScoreDaily.net_cash_ratio >= ncr_min)
+    if ncr_max is not None:
+        conds.append(ScoreDaily.net_cash_ratio <= ncr_max)
     factor = (discount if discount is not None else 100.0) / 100.0
     for k in _flt_keys(buys, FLT_BUY_COLS, "buys"):
         conds.append(QuoteDaily.price <= FLT_BUY_COLS[k] * factor)

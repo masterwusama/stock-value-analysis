@@ -60,9 +60,9 @@ const loading = ref(false)
 const error = ref('')
 
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(现价≥公允卖价即命中,公允恒高于保守);空值=不限
-// 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)
+// 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)、净现金/市值区间(%)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
-const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', buys: [], discount: '', sells: [] })
+const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', buys: [], discount: '', sells: [] })
 // 市值框让用户填“亿”(与列头 市值(亿) 同口径),发请求时转回接口单位元：
 // 接口接受本币元、响应 market_cap 也是本币元,两处同一单位才能拿着返回值直接核对边界。
 // Math.round 而非直乘：1.1 * 1e8 = 110000000.00000001 这种尾差会把恰好在边上的票顶出筛选。
@@ -71,6 +71,22 @@ const capYiToYuan = (v) => Math.round(Number(v) * 1e8)
 const CAP_TIP = '总市值区间（单位：亿，按各市场本币计价——A股人民币、港股港元、美股美元，不折算）：'
   + '“全部”tab 下三个市场混在一起比数值没有意义，要跨市场比体量请切到对应市场 tab 分开筛；'
   + '无最新行情的公司（市值列显示 -）不进区间，设任一门槛即被排除'
+// 净现金/市值框填百分数（与列面 8.5% 一致），接口与库里都是小数比率，所以只在发请求前折一次。
+// 别照抄 capYiToYuan 的 Math.round：比率是 0.x，取整会把每个 <50% 的门槛压成 0、≥50% 压成 1，
+// 整列筛选静默变成“净现金≥0”而毫无报错。也不能一律 /100：实测两位小数的百分数里约 27%
+// 会差 1 ulp（-199.98/100 = -1.9997999999999998），把十进制串成字面量才精确落到目标 double。
+// 串字面量这招对自带指数的数会失效（框绑的是 number，1e-7 串出来是 "1e-7"，拼成 "1e-7e-2" → NaN，
+// 实测真会把 ncr_min=NaN 发出去），故那种量级退回除法——尾差在 1e-9 上，筛出来的还是同一批。
+const pctToRatio = (v) => {
+  const n = Number(`${v}e-2`)
+  return Number.isNaN(n) ? Number(v) / 100 : n
+}
+const NCR_TIP = '净现金/市值区间（单位：%）：≥0 表示加权类现金已够覆盖全部负债，≥100% 才是格雷厄姆意义上的 net-net'
+  + '（全市场仅个位数且全在美股，A股 tab 下填 100 必为空）；负数是净负债的真实值，最深实测到 -8768%，'
+  + '集中在预收/合同负债庞大的地产建筑与 AMC，所以“≤0”捞到的不是便宜的反面；'
+  + '算不出这列的公司（列面显示 -，实测 121 家、港股占比最高）不进区间，设任一门槛即被排除'
+// 这一列取值本身的悬浮说明：桌面表格格与移动端卡片徽标共用，不写成两份
+const NCR_CELL_TIP = '净现金/市值（最近一期财报），≥100% 表示扣除全部负债后的类现金仍高于市值'
 
 // Wind 事件增强分档：造假/管理两列在“基础财报分”与“基础分 + 一次性 Wind 事件增量”之间切换，
 // 显示值在本页算（dispScore），筛选与排序把 wind=1 透给后端用同一公式的 SQL 表达式，
@@ -115,7 +131,7 @@ function toggleFlt(arr, key, on) {
   if (!on && i >= 0) arr.splice(i, 1)
 }
 function resetFlt() {
-  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', buys: [], discount: '', sells: [] })
+  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', buys: [], discount: '', sells: [] })
   industry.value = ''
   exIndustries.value = []
   exKw.value = ''
@@ -129,6 +145,7 @@ function applyFlt() {
 const fltCount = () =>
   (flt.fraudMax !== '' ? 1 : 0) + (flt.mgmtMin !== '' ? 1 : 0) +
   (flt.capMin !== '' ? 1 : 0) + (flt.capMax !== '' ? 1 : 0) +
+  (flt.ncrMin !== '' ? 1 : 0) + (flt.ncrMax !== '' ? 1 : 0) +
   (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) +
   (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0)
 
@@ -162,6 +179,8 @@ async function load() {
       mgmt_min: flt.mgmtMin === '' ? null : flt.mgmtMin,
       cap_min: flt.capMin === '' ? null : capYiToYuan(flt.capMin),
       cap_max: flt.capMax === '' ? null : capYiToYuan(flt.capMax),
+      ncr_min: flt.ncrMin === '' ? null : pctToRatio(flt.ncrMin),
+      ncr_max: flt.ncrMax === '' ? null : pctToRatio(flt.ncrMax),
       buys: flt.buys.length ? flt.buys.join(',') : null,
       sells: flt.sells.length ? flt.sells.join(',') : null,
       discount: (flt.discount !== '' && flt.buys.length) ? flt.discount : null,
@@ -318,6 +337,9 @@ const fltSummary = computed(() => {
   if (flt.mgmtMin !== '') parts.push('管理≥' + flt.mgmtMin)
   if (flt.capMin !== '') parts.push('市值≥' + flt.capMin)
   if (flt.capMax !== '') parts.push('市值≤' + flt.capMax)
+  // 带 % 而非裸数字：框里填的就是百分数，摘要省掉单位会被读成倍数（净现金≥12.9）
+  if (flt.ncrMin !== '') parts.push('净现金≥' + flt.ncrMin + '%')
+  if (flt.ncrMax !== '') parts.push('净现金≤' + flt.ncrMax + '%')
   if (flt.buys.length) parts.push(flt.buys.length + '个买点' + (flt.discount !== '' ? '×' + flt.discount + '%' : ''))
   if (flt.sells.length) parts.push(flt.sells.length + '个卖点')
   if (industry.value) parts.push(industry.value)
@@ -408,6 +430,11 @@ const REF_COLS = COLS.filter((c) => c.ref)
         <input v-model="flt.capMin" type="number" min="0" step="0.5" placeholder="不限" @change="applyFlt"></label>
       <label class="num" :title="CAP_TIP">市值≤
         <input v-model="flt.capMax" type="number" min="0" step="0.5" placeholder="不限" @change="applyFlt"></label>
+      <!-- 不写 min：这列负数是“净负债”的真实值，不是非法输入 -->
+      <label class="num" :title="NCR_TIP">净现金/市值≥
+        <input v-model="flt.ncrMin" type="number" step="5" placeholder="不限" @change="applyFlt">%</label>
+      <label class="num" :title="NCR_TIP">净现金/市值≤
+        <input v-model="flt.ncrMax" type="number" step="5" placeholder="不限" @change="applyFlt">%</label>
       <span class="t" title="多选需同时满足:现价 ≤ 买价 × 折扣%">买点</span>
       <label v-for="[k, lab] in SCHOOLS" :key="'b' + k" class="cb">
         <input type="checkbox" :checked="flt.buys.includes(k)"
@@ -421,11 +448,12 @@ const REF_COLS = COLS.filter((c) => c.ref)
                @change="toggleFlt(flt.sells, k, $event.target.checked); applyFlt()">{{ lab }}</label>
       <button type="button" class="rst" @click="resetFlt">重置筛选{{ fltCount() ? `(${fltCount()})` : '' }}</button>
       <!-- 手机没有 hover：桌面靠 title 才看得到的口径说明，触屏上必须常驻可见。
-           文案复用上面的 FRAUD_TIP/MGMT_TIP/CAP_TIP，同一套解释不维护两份。 -->
+           文案复用上面的 FRAUD_TIP/MGMT_TIP/CAP_TIP/NCR_TIP，同一套解释不维护两份。 -->
       <p class="flts-hint">
         {{ FRAUD_TIP }}<br>
         {{ MGMT_TIP }}<br>
         {{ CAP_TIP }}<br>
+        {{ NCR_TIP }}<br>
         买：现价 ≤ 买价×折扣；卖：现价 ≥ 公允卖价（公允恒高于保守卖价，达到公允即两档都过）；缺数据的公司自动排除<br>
         排除行业：勾中的行业整体从结果里摘掉（多选是「都排除」），与「行业」下拉同时用则是 AND；没有行业标注的公司不参与排除、始终保留
       </p>
@@ -472,6 +500,9 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <span class="sc-bd" :class="'sc-' + fraudGradeOf(s.cycle)"
                   :title="'周期位置（0-100，越低越接近周期底部）：' + FRAUD_GRADE_TEXT[fraudGradeOf(s.cycle)]">
               <em>周期</em><b>{{ score(s.cycle) }}</b></span>
+            <span class="sc-bd" :class="{ 'sc-good': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
+                  :title="NCR_CELL_TIP">
+              <em>净现金/市值</em><b>{{ score2(s.net_cash_ratio) }}</b></span>
           </div>
 
           <div class="sc-scores">
@@ -530,7 +561,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td class="c-liq" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
                 :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
-                title="净现金/市值（最近一期财报），≥100% 表示扣除全部负债后的类现金仍高于市值">{{ score2(s.net_cash_ratio) }}</td>
+                :title="NCR_CELL_TIP">{{ score2(s.net_cash_ratio) }}</td>
             <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :title="refTitle(s, c.school)">
               <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>
               <span class="rf-sell">
@@ -729,7 +760,7 @@ table.grid-list .ind {
 .sc-price { margin-left: auto; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .sc-price b { font-size: 11px; font-weight: 500; margin-left: 4px; }
 
-/* 指标条：PE/PB/市值/造假/管理/周期，窄屏自动折成两行 */
+/* 指标条：PE/PB/市值/造假/管理/周期/净现金·市值，按 33.33% 基准自动折行（7 枚＝三行，末行一枚） */
 .sc-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .sc-bd {
   flex: 1 1 calc(33.33% - 6px);
@@ -747,6 +778,9 @@ table.grid-list .ind {
    用户访问过详情页后那张表会留在文档里，不复位就会把灰色小标签也加粗 */
 .sc-bd em, .sc-ref em { font-style: normal; color: var(--sub); font-size: 10px; font-weight: 400; }
 .sc-bd b { font-weight: 600; font-variant-numeric: tabular-nums; }
+/* 末枚独自占一行时不 grow：否则它被拉到整行宽，配上 space-between 会让标签贴左、数值贴右，
+   跟前两行的三列节奏脱节（实测 7 枚时末枚 448px，其余 145px） */
+.sc-badges > .sc-bd:last-child { flex-grow: 0; }
 
 .sc-scores { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 6px; }
 .sc-score {
