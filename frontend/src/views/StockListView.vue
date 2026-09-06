@@ -23,7 +23,8 @@ const COLS = [
   { key: 'fraud', label: '造假' },
   { key: 'mgmt', label: '管理' },
   { key: 'cycle', label: '周期' },
-  { key: 'fair_liq', label: '清算' },
+  // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
+  { key: 'fair_liq', label: '清算', ratio: true },
   { key: 'net_cash_ratio', label: '净现金/市值' },
   // 价格参考合并列:每流派一列,竖排 买→保守/公允(同原站 listCells)
   // 列头排序键 buy_* 走的是"买入性价比"（现价相对买价的折价深度，后端算），不是买价绝对值；
@@ -208,14 +209,17 @@ const refBuy = (s, k) => s[refKey(k, 'buy')]
 const refCons = (s, k) => s[refKey(k, 'sellCons')]
 const refFair = (s, k) => s[refKey(k, 'sellFair')]
 // 买入性价比：现价相对买入参考价的偏离，负数=已经比建议买价便宜。
-// 后端 buy_* 排序键排的就是这个比率的相反数（折价率），响应里没有对应字段，
+// 后端 buy_* 与 fair_liq 排序键排的就是这个比率的相反数（折价率），响应里没有对应字段，
 // 故这里用同一公式在前端算出来给 tooltip 和行内展示用——两边口径必须一致，
-// 连 MIN_BUY_REF 这道门槛也要一致，否则被后端判成无值的行会在前端显示出一个假折价。
-const MIN_BUY_REF = 0.01
+// 连 MIN_PRICE_REF 这道门槛也要一致，否则被后端判成无值的行会在前端显示出一个假折价。
+const MIN_PRICE_REF = 0.01
 const refSpace = (s, k) => {
   const b = refBuy(s, k)
-  return b == null || b < MIN_BUY_REF || s.price == null ? null : s.price / b - 1
+  return b == null || b < MIN_PRICE_REF || s.price == null ? null : s.price / b - 1
 }
+// 清算列同理：格内是每股清算价值绝对值，排序用的是现价相对它的偏离
+const liqSpace = (s) => (s.fair_liq == null || s.fair_liq < MIN_PRICE_REF || s.price == null
+  ? null : s.price / s.fair_liq - 1)
 // 折最深到 100% 有界，溢价无上界：999% 以上统一简写成 溢999%（精确值看悬停），
 // 卡片那一栏只有 68px，多一个 > 就会把末尾的 % 挤出去。
 const refSpaceText = (v) => v == null ? ''
@@ -230,11 +234,23 @@ function sortActive(c) {
   const s = snake(c.school)
   return ['buy', 'sell_cons', 'sell_fair'].some((k) => sort.value === `${k}_${s}`)
 }
+// 表头提示：买价与清算价值两档排的都是折价率，要说清「排序看比率、格内是绝对值」
+function thTip(c) {
+  if (!c.key) return ''
+  if (c.ref) return '按买入性价比排序：现价相对买入参考价的折价越深越靠前（保守/公允价点格内小字），再点切换升/降序'
+  if (c.ratio) return '按清算性价比排序：现价相对每股清算价值折得越深越靠前（格内是清算价值本身），再点切换升/降序'
+  return '点击排序，再点切换升/降序'
+}
 const refTitle = (s, k) => {
   const f = (v) => v == null ? '-' : fmt(v)
   const sp = refSpace(s, k)
   const tail = sp == null ? '' : `｜现价较买价${sp <= 0 ? '折价' : '溢价'} ${sp >= 9.995 ? '>999' : (Math.abs(sp) * 100).toFixed(1)}%`
   return `${REF_LABELS[k]}：买 ${f(refBuy(s, k))} / 保卖 ${f(refCons(s, k))} / 公卖 ${f(refFair(s, k))}${tail}`
+}
+const liqTitle = (s) => {
+  const sp = liqSpace(s)
+  const tail = sp == null ? '' : `｜现价较清算价值${sp <= 0 ? '折价' : '溢价'} ${sp >= 9.995 ? '>999' : (Math.abs(sp) * 100).toFixed(1)}%`
+  return `公允清算价值估算：(流动资产合计-负债合计)/股本${tail}`
 }
 const cls = (n) => n > 0 ? 'up' : n < 0 ? 'down' : 'flat'
 const MARKET_NAME = { A: 'A股', HK: '港股', US: '美股' }
@@ -265,7 +281,9 @@ function toggleSort() {
 
 // 排序 chip 的键直接从 COLS 派生，与桌面表头可排序列一一对应，后端 sort= 白名单不会失配。
 // 保守/公允卖价不进面板，靠卡片里点卖价小字触发（同桌面表格格内小字）。
-const SORT_CHIPS = COLS.filter((c) => c.key).map((c) => [c.key, c.ref ? c.label.split(' ')[0] + '折价' : c.label])
+// 按性价比排的两组（四派买价、清算价值）在名字上就标出来，免得看着像按绝对值排
+const SORT_CHIPS = COLS.filter((c) => c.key)
+  .map((c) => [c.key, c.ref ? c.label.split(' ')[0] + '折价' : c.ratio ? c.label + '性价比' : c.label])
 const SORT_NAME = Object.fromEntries(SORT_CHIPS)
 
 // 收起态按钮文案：把“已启用了哪些条件”直接写在按钮上，省得为了确认状态反复展开
@@ -437,8 +455,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         <thead>
           <tr>
             <th v-for="c in COLS" :key="c.label" :class="{ l: c.l, unsort: !c.key, stick: c.stick }"
-                :title="c.ref ? '按买入性价比排序：现价相对买入参考价的折价越深越靠前（保守/公允价点格内小字），再点切换升/降序'
-                             : (c.key ? '点击排序，再点切换升/降序' : '')"
+                :title="thTip(c)"
                 @click="c.key && setSort(c.key)">
               {{ c.label }}<template v-if="sortActive(c)">{{ order === 'desc' ? ' ▼' : ' ▲' }}</template>
             </th>
@@ -461,8 +478,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :title="windTip(s, 'fraud', FRAUD_TIP)">{{ score(dispScore(s, 'fraud')) }}</td>
             <td :title="windTip(s, 'mgmt', MGMT_TIP)">{{ score(dispScore(s, 'mgmt')) }}</td>
             <td>{{ score(s.cycle) }}</td>
-            <td :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
-                title="公允清算价值估算：(流动资产合计-负债合计)/股本">{{ fmt(s.fair_liq) }}</td>
+            <td class="c-liq" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
+                :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                 title="净现金/市值（最近一期财报），≥100% 表示扣除全部负债后的类现金仍高于市值">{{ score2(s.net_cash_ratio) }}</td>
             <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :title="refTitle(s, c.school)">
@@ -576,6 +593,8 @@ table.grid th.unsort { cursor: default; }
 /* 表头允许折行：列宽改由数值决定（“格进取 买/保/公”不再硬撑一行的宽度），CJK 可任意断字 */
 table.grid-list th { white-space: normal; line-height: 1.25; }
 table.grid-list th, table.grid-list td { padding: 6px 6px; }
+/* 清算列按性价比排序时数字后面还跟着折价小标签，不约束会折成两行把整行撑高 */
+table.grid-list .c-liq { white-space: nowrap; }
 /* 行业名最长 20 字（“铁路、船舶、航空航天和其他运输设备制造业”），不约束会单列吃掉 260px；截断后完整名走 title */
 table.grid-list .ind {
   display: inline-block;
@@ -660,8 +679,8 @@ table.grid-list .ind {
 .sc-ref .r-buy, .sc-ref .r-sell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 题头行带折价标签时同样绝不折行——折成两行会把该列撑高、与邻列的买/保/公错位 */
 .sc-ref em { white-space: nowrap; overflow: hidden; }
-/* 折价标签 .rf-sp 只在按该流派「买」排序的那一列渲染（见 buySortSchool），四列同时摊开会破坏表宽。
-   卡片放题头行（价格行只有 ≈68px 内容区，接在买价后面会被省略号吃掉），表格放买入价后面 */
+/* 折价标签 .rf-sp 只在按性价比排的那几列渲染（四派「买」见 buySortSchool、清算见 sort 判断），
+   全列同时摊开会破坏表宽。卡片放题头行（价格行只有 ≈68px 内容区，接在买价后面会被省略号吃掉），表格放数字后面 */
 .rf-sp { font-style: normal; font-size: 9px; opacity: 0.78; margin-left: 2px; }
 /* 卖价小字是可点的排序入口：桌面靠下划线提示，触屏没有 hover，改按压反馈 + 加高点击区 */
 .sc-ref .sl-sort { cursor: pointer; padding: 2px 0; }

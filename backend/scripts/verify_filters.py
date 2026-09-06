@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.config import LEGACY_DATA_DIR  # 对答案基线 = JSON 工作目录(采集后为 collector/)
-from app.api.securities import MIN_BUY_REF  # 买价门槛与后端排序表达式同源，不在脚本里重抄
+from app.api.securities import MIN_PRICE_REF  # 参考值门槛与后端排序表达式同源，不在脚本里重抄
 
 BASE = "http://127.0.0.1:8000/api"
 IDX = json.load(io.open(LEGACY_DATA_DIR / "data" / "index.json", encoding="utf-8"))
@@ -259,16 +259,16 @@ sort_bad = []
 def sort_val(it, k):
     """该排序键在这一行上的期望值。
 
-    buy_* 排的是折价率 1 - 现价/买价（响应里 buy_* 仍是买价绝对值），故按后端
-    _buy_discount 同一公式现算，含买价过低/缺失即 NULL 的那道判定；门槛常量
-    直接取后端的 MIN_BUY_REF，不在这边重抄一遍，免得两边各自改了还互相认为对方错。
+    buy_* 与 fair_liq 排的都是折价率 1 - 现价/参考值（响应里这些字段仍是绝对值），
+    故按后端 _discount 同一公式现算，含参考值过低/缺失即 NULL 的那道判定；门槛常量
+    直接取后端的 MIN_PRICE_REF，不在这边重抄一遍，免得两边各自改了还互相认为对方错。
     """
-    if not k.startswith("buy_"):
+    if not (k.startswith("buy_") or k == "fair_liq"):
         return it.get(k)
-    buy, price = it.get(k), it.get("price")
-    if buy is None or buy < MIN_BUY_REF or price is None:
+    ref, price = it.get(k), it.get("price")
+    if ref is None or ref < MIN_PRICE_REF or price is None:
         return None
-    return 1 - price / buy
+    return 1 - price / ref
 
 
 for k in sort_keys:
