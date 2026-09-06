@@ -333,9 +333,24 @@ def value_scores(d, va):
     if len(net5) >= 2 and net5[0] is not None and net5[-1] is not None and net5[0] > 0:
         grow5 = net5[-1] / net5[0] - 1.0
 
-    # ROE 近5年均值（披露口径）
+    # ---- ROE 近 5 年年报序列：水平取中位数，持续性取「达标（≥10%）年数占比」----
+    # 不用均值：披露口径的 ROE 在薄权益/负权益处会炸到 ±几千个百分点（实测 155 家有单年 >100%，
+    # 美股 90 家最集中），均值与中位数在这份数据上的相关系数只有 0.2486，6912 家里 402 家
+    # （5.8%）两种算法会跨过 15% 这条线，且错的方向随机：Home Depot 均值 −4357%（某年权益为负）
+    # 而中位 +385%，被误判 0 分；O'Reilly 均值 984% 而中位 −168%，白拿满分。中位数只取中间那一年，
+    # 炸群的一年进不了统计量。早先这两个 ROE 项（护城河 4 + 盈利质量 25）同用这一个均值，
+    # 实测相关 0.9801，等于 29/100 押在同一个数上——现拆成「水平」与「持续」两个量。
     roe_vals = [v for v in va['dupontRoe'] if v is not None]
-    roe5 = ssum(roe_vals) / len(roe_vals) if roe_vals else None
+    n_roe = len(roe_vals)
+    roe_med5 = None
+    roe_ok_frac = None
+    if n_roe:
+        sv = sorted(roe_vals)
+        mid = n_roe // 2
+        roe_med5 = sv[mid] if n_roe % 2 else (sv[mid - 1] + sv[mid]) / 2.0
+    # 不足 3 年无从谈「持续」，按缺失处理（_school_total 会把它当中性，不虚给也不白扣）
+    if n_roe >= 3:
+        roe_ok_frac = len([v for v in roe_vals if v >= 0.10]) / float(n_roe)
 
     # ---- 格雷厄姆 · 进取型烟蒂 ----
     g_a_items = (
@@ -513,17 +528,17 @@ def value_scores(d, va):
         share = (intang_share or 0.0) + (goodwill_share or 0.0)
     moat_items = (
         lerp_score(g_margin, 0.2, 0.4, 0, 5),          # 销售毛利率 ≥ 40%
-        lerp_score(roe5, 0.08, 0.15, 0, 4),            # ROE ≥ 15%（护城河档，8% 起给分）
+        # 近5年 ROE ≥ 10% 的达标年数占比：2/5 起给分，5/5 满分（护城河看的是持续，不是某一年）
+        lerp_score(roe_ok_frac, 0.4, 1.0, 0, 4),
         lerp_score(share, 0, 0.1, 0, 3),               # 无形+商誉占比 ≥ 10%
         # 连续分红 ≥ 5 年且分红率 ≤ 70%
         (3.0 if (va['payout'] is not None and va['payout'] <= 0.7) else 1.5)
         if div_consecutive >= 5 else 0.0,
     )
     b_items = (
-        # ROE 在巴菲特派计两次（护城河 4 分 + 盈利质量 25 分 = 29/100），是有意设计：
-        # 两档起给分不同（8% / 10%）。实测两项相关系数 0.9801，无一家「一项满分另一项不满分」，
-        # 故前端把档位写进标签与阈值，并在卡片备注里说明，避免看起来像重复录入。
-        lerp_score(roe5, 0.10, 0.15, 0, 25),           # ROE ≥ 15%（盈利质量档，10% 起给分）
+        # ROE 水平档：与护城河那 4 分测的不是同一个量（一边是近5年中位数是否 ≥15%，
+        # 一边是达标年数占比），实测 corr(中位数, 达标占比) = 0.1012，不再是一个变量押 29 分
+        lerp_score(roe_med5, 0.10, 0.15, 0, 25),       # ROE 近5年中位数 ≥ 15%
         lerp_score(n_margin, 0.05, 0.10, 0, 15),       # 净利率 ≥ 10%
         lerp_score(debtr, 0.5, 0.75, 15, 0),           # 负债率 ≤ 50%
         lerp_score(va['ratio5'], 0.5, 1, 0, 15),       # 5年净现比 ≥ 1
@@ -546,6 +561,11 @@ def value_scores(d, va):
 #   保守卖 = 该派核心估值锚：格攻 每股净流动资产、格防 15×EPS、施洛斯 每股净资产、巴菲特 公允PE×EPS
 #   公允卖 = 保守卖上浮：格攻/施洛斯 1.5 倍（正是价格项归零点）、格防 4/3 倍（PE 20，半分位）、
 #            巴菲特 1.3 倍（无对应评分项）
+# 两条限制：
+#   ① 收益派的 EPS 锚先用四道可信度门槛过滤（符号、隐含 PE、量级背离、经常性口径），过不了
+#      就没有锚，三档一起空；
+#   ② 账面派的三档里只有买点是「无条件目标价」，两档卖价只在该派估值射程（现价 ≤ SELL_BAND×
+#      资产锚）内给出——资产锚是清算底，对 99% 的市场它不构成卖出参考。
 # 曾用「二分反推使总分 ≥ 90 的最高价」，实测 6939 家里 56%~96% 的公司分数上限本就不足
 # 90，tgt = min(90, t_max) 把目标悄悄降级成公司自己的上限，产出的买价与 90 分再无关系；
 # 且买价中位数只有现价的 8%（格攻）~40%（格防），即要跌 60%~92% 才触发，不是参考价。
@@ -557,12 +577,36 @@ S_PB_FULL = 0.75          # 施洛斯：市净率 ≤ 0.75 拿满 25 分，亦�
 # 「折价率 1-现价/买价」吹到 1e20 量级。EPS 的滚动 TTM 是三项相减，留得住浮点零渣
 # （实测 3 家：比依股份 5.6e-17、安旭生物 5.6e-17、中科通达 1.7e-18）。
 MIN_PRICE_REF = 0.01
-# EPS 锚可信度：符号相反只是其中一种坏法，量级差一个数量级同样是坏锚（一次性损益、
+# 收益锚可信度：符号相反只是其中一种坏法，量级差一个数量级同样是坏锚（一次性损益、
 # 股本口径错、年报窗口与快照 TTM 错配）。坏锚会占满「买入性价比」榜首：*ST华幸 买价
 # 55.81 对现价 1.08、金科股份 46.4 倍、BKNG 13.9 倍、和黄医药 买价 28.91 对现价 19.14。
-EPS_PE_MIN = 1.0          # 隐含 PE（现价/EPS）低于 1 倍：持续经营不可能，EPS 口径错
+# 隐含 PE 下限取 3 倍：一家持续经营的公司不可能长期只值自己三年利润，市场按这个价位
+# 报价就是在说这笔盈利不可重复。现行流水线实测，下限从 1 倍提到 3 倍多拦 3 家：碧桂园
+# 1.54（债务重组收益）、RIGEL 2.42、天立国际 2.71。3~5 倍带内还有 32 家有锚公司，中国铁建
+# 3.76、中国中铁 3.96、新华保险 4.08 是低 PE 常态化的真深度价值，诺比侃 3.13、天能动力 3.27
+# 则是 EPS 字段与快照 PE 背离 8~9 倍的坏锚——那类归量级门槛（gate ③）管：年报窗口容忍从 10 倍
+# 收到 5 倍能多砍 17 家锚，但会连带 Merck、太古这类年报 EPS 与快照真实差 5~10 倍的转折公司，
+# 故不靠本下限去拦。
+EPS_PE_MIN = 3.0          # 隐含 PE（现价/EPS）低于 3 倍：这笔盈利不可重复，锚作废
 EPS_MAG_TTM = 3.0         # 自算值与快照同为 TTM 口径时，隐含 PE 允许的最大倍数差
 EPS_MAG_ANNUAL = 10.0     # 最新报告期是年报（自算值为上一财年）时放宽到 10 倍，只砍数量级背离
+# 经常性收益门槛：扣非后不足报告净利润一半，说明报告利润的大头来自非经常项目（处置资产、
+# 政府补助、债务重组收益），按扣非后的规模重定锚；扣非转负则该派没有可资本化的盈利，锚作废。
+# 只压缩不放大：扣非高于报告（一次性亏损压住报表）时维持报告口径，让锚停在偏保守一侧。
+# 现行流水线实测：4655 家有收益锚的公司里 297 家被压缩、3 家归零（安达科技、地纬智能、张裕Ａ）。
+# 两道覆盖边界写在前面，别把「没触发」当成「没问题」：① 扣非是 A 股科目，港美股不披露、门槛
+# 不介入，那侧全靠上面的隐含 PE 下限；② 券商保险的公允价值变动损益按准则不计入非经常性损益
+# （中国人寿 TTM 扣非/报告 = 1.001），投资浮盈撑高 TTM 盈利的场景本门槛结构上抓不到。
+RECURRING_MIN_RATIO = 0.5
+# 资产派（格攻/施洛斯）卖价射程：现价超过 2× 资产锚就不再给卖出参考。资产锚是清算底/
+# 账面底，健康持续经营的公司现价本就常年在其 5~10 倍处，把它当「卖到这就该减仓」的触发线，
+# 等于对几乎整个市场亮红灯。实测（6939 家，有锚家数 → 其中现价≥保守卖价的比例）：
+#   格攻   4435 → 245 家，命中率 99.2% → 84.9%
+#   施洛斯 6809 → 2337 家，命中率 90.6% → 72.7%
+# 收益派两派不套射程（现价高于 15×EPS 或公允 PE 是有意义的信号），命中率仍为 83% 左右——
+# 市场确实长期站在格雷厄姆的 PE 15 线之上，这是口径本身的性质，不是缺陷。
+# 取 2 倍是为了让账面派的公允卖价（1.5× 锚，即评分里价格项的归零点）留在射程内。
+SELL_BAND = 2.0
 
 
 def _fair_pe(net_cagr5):
@@ -572,14 +616,14 @@ def _fair_pe(net_cagr5):
     return max(8.0, min(25.0, net_cagr5 * 100.0))
 
 
-def _ttm_net_profit(rows):
-    """滚动 TTM 净利润（利润表为累计口径）：最新报告期累计 + 上年年报 - 上年同期累计；
+def _ttm_net_profit(rows, field='净利润'):
+    """滚动 TTM 利润（利润表为累计口径）：最新报告期累计 + 上年年报 - 上年同期累计；
     最新报告期为年报时直接取年报数；任一要素缺失返回 None"""
     by_date = {}
     for r in (rows or []):
         p = str(r.get('报告期') or '')
         if len(p) >= 10:
-            by_date[p[:10]] = r.get('净利润')
+            by_date[p[:10]] = r.get(field)
     if not by_date:
         return None
     latest_p = max(by_date)  # YYYY-MM-DD 字符串排序即时间序
@@ -731,8 +775,9 @@ def price_references(d, va):
     if (eps_ttm is not None and pe0 is not None and pe0 != 0 and not is_annual
             and (eps_ttm > 0) != (pe0 > 0)):
         eps_ttm = None
-    # ② 隐含 PE（现价/EPS）低于 1 倍：持续经营的公司不可能一年赚回自己的市值，
-    # 是 EPS 单位/口径错（实测 3 家，含金科股份快照 PE 与自算 EPS 同给 0.36）
+    # ② 隐含 PE（现价/EPS）低于 EPS_PE_MIN 倍：一家持续经营的公司不可能长期只值自己三年
+    # 利润，市场按这个价位报价就是在说这笔盈利不可重复（下限 1→3 倍多拦的 3 家见常量注释）。
+    # 旧值 1 倍时只拦得住金科股份一家单位/口径错（快照 PE 与自算 EPS 同给 0.36）。
     if eps_ttm is not None and eps_ttm > 0 and price0 / eps_ttm < EPS_PE_MIN:
         eps_ttm = None
     # ③ 量级背离：同 TTM 口径差 3 倍以上、年报窗口差 10 倍以上（实测 7 + 8 家）。
@@ -742,6 +787,16 @@ def price_references(d, va):
         mag = EPS_MAG_ANNUAL if is_annual else EPS_MAG_TTM
         if not (1.0 / mag <= (price0 / eps_ttm) / pe0 <= mag):
             eps_ttm = None
+    # ④ 经常性收益：报告利润的大头来自非经常项目时，按扣非后的规模重定锚。实测 4655 家有收益锚
+    # 的公司里 297 家被压缩、3 家归零（安达科技、地纬智能、张裕Ａ——扣非转负，报表盈利靠处置与
+    # 补助撑起）。只压缩不放大：扣非高于报告时维持报告口径，让锚停在偏保守一侧。
+    # 抓不到的两类写在常量注释里：港美股不披露扣非，券商保险的公允价值变动损益不计入非经常。
+    if eps_ttm is not None and eps_ttm > 0:
+        ttm_net = _ttm_net_profit(d.get('indicators') or [])
+        adj_net = _ttm_net_profit(d.get('indicators') or [], '扣非净利润')
+        if ttm_net is not None and adj_net is not None and ttm_net > 0:
+            if adj_net < RECURRING_MIN_RATIO * ttm_net:
+                eps_ttm = (eps_ttm * adj_net / ttm_net) if adj_net > 0 else None
     # 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
     # 类现金保守折算：货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产×0.3；
     # 分子随财报更新（含季报），分母随行情快照，缺失科目按 0 折入
@@ -777,23 +832,31 @@ def price_references(d, va):
         """低于一分钱（含负值与浮点零渣）的参考价一律视为无"""
         return v if (v is not None and v >= MIN_PRICE_REF) else None
 
-    gA_cons = ref(ncav_ps)
+    def band(anchor):
+        """资产派卖价只在估值射程内给出：现价已在 anchor 的 SELL_BAND 倍之外，说明该派的
+        资产口径对这只股票没有「该卖」的意见（它从来不是这只股票的估值方法），留空。
+        现价无快照的情形已在函数开头整体返回空，这里不必再判"""
+        return anchor if anchor is None or price0 <= SELL_BAND * anchor else None
+
+    ncav_ref = ref(ncav_ps)
+    s_ref = ref(bps)
     # TTM 每股亏损（≤0）时基于 EPS 的估值锚无意义，锚位与买入价一并置空（避免负价/误导价）
     eps_ok = eps_ttm is not None and eps_ttm > 0
+    gA_cons = band(ncav_ref)
     gD_cons = ref(G_D_PE_FULL * eps_ttm) if eps_ok else None
-    s_cons = ref(bps)
+    s_cons = band(s_ref)
     b_cons = ref(fair_pe * eps_ttm) if eps_ok else None
 
     # 公允卖价跟着保守卖价同生同灭：每派公允都是保守的 ≥1.3 倍，保守过了一分钱下限
     # 公允必然也过；但若各自独立套下限，会在保守差一点、公允刚过点时只留半档，
     # 而卖点筛选要求「同时 ≥ 保守与公允」，半档等于把这家公司永久排除。
-    # 买点同理挂在保守卖价上：锚为空就没有买点，不会出现「有买价没卖价」的半档。
+    # 买点不挂卖点：锚为空才没有买点；资产派「出射程」只抹掉两档卖价，买点作为目标价照旧给出。
     return {
-        'fairLiq': gA_cons,
+        'fairLiq': ncav_ref,
         'netCashRatio': net_cash_ratio,
         'netCashCalc': net_cash_calc,
         'grahamAgg': {
-            'buy': ref(G_A_PNCAV_FULL * ncav_ps) if gA_cons is not None else None,
+            'buy': ref(G_A_PNCAV_FULL * ncav_ref) if ncav_ref is not None else None,
             'sellCons': gA_cons,
             'sellFair': (1.5 * gA_cons) if gA_cons is not None else None,
         },
@@ -803,7 +866,7 @@ def price_references(d, va):
             'sellFair': (20.0 * eps_ttm) if gD_cons is not None else None,
         },
         'schloss': {
-            'buy': ref(S_PB_FULL * s_cons) if s_cons is not None else None,
+            'buy': ref(S_PB_FULL * s_ref) if s_ref is not None else None,
             'sellCons': s_cons,
             'sellFair': (1.5 * s_cons) if s_cons is not None else None,
         },

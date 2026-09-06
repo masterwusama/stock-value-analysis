@@ -92,14 +92,16 @@
     return best;
   }
 
-  // 滚动 TTM 净利润（利润表为累计口径）：最新累计 + 上年年报 - 上年同期累计；最新为年报时直接用年报数
-  function ttmNetProfit(indicators) {
+  // 滚动 TTM 利润（利润表为累计口径）：最新累计 + 上年年报 - 上年同期累计；最新为年报时直接用年报数
+  // field 可换成「扣非净利润」，让两个口径在同一 TTM 窗口下可比（经常性收益门槛用）
+  function ttmNetProfit(indicators, field) {
+    var key = field || '净利润';
     var byDate = {}, latest = null, cur = null;
     (indicators || []).forEach(function (r) {
       var p = String(r['报告期'] || '').slice(0, 10);
       if (p.length === 10) {
-        byDate[p] = r['净利润'];
-        if (latest == null || p > latest) { latest = p; cur = r['净利润']; }
+        byDate[p] = r[key];
+        if (latest == null || p > latest) { latest = p; cur = r[key]; }
       }
     });
     if (!latest) return null;
@@ -996,9 +998,9 @@
     }).join('');
     var refs = priceRefs || {};
     var pricesHtml = '<div class="score-prices">' +
-      _priceTag('买入参考', refs.buy, curPrice, 'buy', '该流派估值锚打折后的价格（账面派为资产折价线，收益派为保守卖价×2/3 安全边际）；现价不高于此价时进入买入参考区') +
-      _priceTag('保守卖出', refs.sellCons, curPrice, 'sell', '核心估值锚位；现价不低于此价时进入保守卖出参考区') +
-      _priceTag('公允卖出', refs.sellFair, curPrice, 'sell', '估值锚位上浮后的价格；现价不低于此价时进入公允卖出参考区') +
+      _priceTag('买入参考', refs.buy, curPrice, 'buy', '该流派估值锚打折后的价格（账面派为资产折价线，收益派为保守卖价×2/3 安全边际）；现价不高于此价时进入买入参考区。账面派这格是目标价、与现价无关，只要有锚就给') +
+      _priceTag('保守卖出', refs.sellCons, curPrice, 'sell', '核心估值锚位；现价不低于此价时进入保守卖出参考区。空值两种情形：收益派＝每股盈利锚不可信（亏损或口径异常），账面派＝现价已在资产锚 2 倍之外，清算/账面口径对这只股票没有「该卖」的意见') +
+      _priceTag('公允卖出', refs.sellFair, curPrice, 'sell', '估值锚位上浮后的价格；现价不低于此价时进入公允卖出参考区。空值与保守卖出同生同灭') +
       '</div>';
     return '<div class="score-card-head"><h4>' + title + '</h4>' +
       '<div class="score-circle va-grade-' + g + '"><span>总分</span><b>' + (total == null ? '-' : fmtNum(total)) + '</b><i>' + gradeText(g) + '</i></div></div>' +
@@ -1020,6 +1022,11 @@
   //   保守卖 = 该派核心估值锚：格攻 每股净流动资产、格防 15×EPS、施洛斯 每股净资产、巴菲特 公允PE×EPS
   //   公允卖 = 保守卖上浮：格攻/施洛斯 1.5 倍（正是价格项归零点）、格防 4/3 倍（PE 20，半分位）、
   //            巴菲特 1.3 倍（无对应评分项）
+  // 两条限制：
+  //   ① 收益派的 EPS 锚先用四道可信度门槛过滤（符号、隐含 PE、量级背离、经常性口径），过不了
+  //      就没有锚，三档一起空；
+  //   ② 账面派的三档里只有买点是「无条件目标价」，两档卖价只在该派估值射程（现价 ≤ SELL_BAND×
+  //      资产锚）内给出——资产锚是清算底，对 99% 的市场它不构成卖出参考。
   // 曾用「二分反推使总分 ≥ 90 的最高价」，实测 6939 家里 56%~96% 的公司分数上限本就不足
   // 90，tgt = min(90, tMax) 把目标悄悄降级成公司自己的上限，产出的买价与 90 分再无关系；
   // 且买价中位数只有现价的 8%（格攻）~40%（格防），即要跌 60%~92% 才触发，不是参考价。
@@ -1027,12 +1034,35 @@
   var G_A_PNCAV_FULL = 0.67;   // 格攻：市值/净流动资产 ≤ 0.67 拿满 30 分，亦是买点倍数
   var G_D_PE_FULL = 15;        // 格防：市盈率 ≤ 15 拿满 5 分，亦是保守卖价倍数
   var S_PB_FULL = 0.75;        // 施洛斯：市净率 ≤ 0.75 拿满 25 分，亦是买点倍数
-  // EPS 锚可信度：符号相反只是其中一种坏法，量级差一个数量级同样是坏锚（一次性损益、
+  // 收益锚可信度：符号相反只是其中一种坏法，量级差一个数量级同样是坏锚（一次性损益、
   // 股本口径错、年报窗口与快照 TTM 错配）。坏锚会占满「买入性价比」榜首：*ST华幸 买价
   // 55.81 对现价 1.08、金科股份 46.4 倍、BKNG 13.9 倍、和黄医药 买价 28.91 对现价 19.14。
-  var EPS_PE_MIN = 1;          // 隐含 PE（现价/EPS）低于 1 倍：持续经营不可能，EPS 口径错
+  // 隐含 PE 下限取 3 倍：一家持续经营的公司不可能长期只值自己三年利润，市场按这个价位
+  // 报价就是在说这笔盈利不可重复。现行流水线实测，下限从 1 倍提到 3 倍多拦 3 家：碧桂园
+  // 1.54（债务重组收益）、RIGEL 2.42、天立国际 2.71。3~5 倍带内还有 32 家有锚公司，中国铁建
+  // 3.76、中国中铁 3.96、新华保险 4.08 是低 PE 常态化的真深度价值，诺比侃 3.13、天能动力 3.27
+  // 则是 EPS 字段与快照 PE 背离 8~9 倍的坏锚——那类归量级门槛（gate ③）管：年报窗口容忍从 10 倍
+  // 收到 5 倍能多砍 17 家锚，但会连带 Merck、太古这类年报 EPS 与快照真实差 5~10 倍的转折公司。
+  var EPS_PE_MIN = 3;          // 隐含 PE（现价/EPS）低于 3 倍：这笔盈利不可重复，锚作废
   var EPS_MAG_TTM = 3;         // 自算值与快照同为 TTM 口径时，隐含 PE 允许的最大倍数差
   var EPS_MAG_ANNUAL = 10;     // 最新报告期是年报（自算值为上一财年）时放宽到 10 倍，只砍数量级背离
+  // 经常性收益门槛：扣非后不足报告净利润一半，说明报告利润的大头来自非经常项目（处置资产、
+  // 政府补助、债务重组收益），按扣非后的规模重定锚；扣非转负则该派没有可资本化的盈利，锚作废。
+  // 只压缩不放大：扣非高于报告时维持报告口径，让锚停在偏保守一侧。
+  // 现行流水线实测：4655 家有收益锚的公司里 297 家被压缩、3 家归零（安达科技、地纬智能、张裕Ａ）。
+  // 两道覆盖边界：① 扣非是 A 股科目，港美股不披露、门槛不介入，那侧全靠隐含 PE 下限；
+  // ② 券商保险的公允价值变动损益按准则不计入非经常性损益（中国人寿 TTM 扣非/报告 = 1.001），
+  // 投资浮盈撑高 TTM 盈利的场景本门槛结构上抓不到。
+  var RECURRING_MIN_RATIO = 0.5;
+  // 资产派（格攻/施洛斯）卖价射程：现价超过 2× 资产锚就不再给卖出参考。资产锚是清算底/
+  // 账面底，健康持续经营的公司现价本就常年在其 5~10 倍处，把它当触发线等于对几乎整个市场亮红灯。
+  // 实测（6939 家，有锚家数 → 其中现价≥保守卖价的比例）：
+  //   格攻   4435 → 245 家，命中率 99.2% → 84.9%
+  //   施洛斯 6809 → 2337 家，命中率 90.6% → 72.7%
+  // 收益派不套射程（现价高于 15×EPS 或公允 PE 是有意义的信号），命中率仍是 83% 左右——
+  // 市场确实长期站在格雷厄姆的 PE 15 线之上，这是口径本身的性质。
+  // 取 2 倍是为了让账面派的公允卖价（1.5× 锚，即评分里价格项的归零点）留在射程内。
+  var SELL_BAND = 2;
 
   // 三大流派评分汇总（格雷厄姆进取/防御、施洛斯、巴菲特芒格），以最新年报为基础
   // 估值量一律取快照 market_cap/pe_ttm/pb（当期评分口径）。曾有 k（市值缩放）与
@@ -1102,9 +1132,26 @@
     var grow5 = (net5.length >= 2 && net5[0] != null && net5[net5.length - 1] != null && net5[0] > 0)
       ? net5[net5.length - 1] / net5[0] - 1 : null;
 
-    // ROE 近5年均值（披露口径）
+    // ---- ROE 近 5 年年报序列：水平取中位数，持续性取「达标（≥10%）年数占比」----
+    // 不用均值：披露口径的 ROE 在薄权益/负权益处会炸到 ±几千个百分点（实测 155 家有单年 >100%，
+    // 美股 90 家最集中），均值与中位数在这份数据上的相关系数只有 0.2486，6912 家里 402 家
+    // （5.8%）两种算法会跨过 15% 这条线，且错的方向随机：Home Depot 均值 −4357%（某年权益为负）
+    // 而中位 +385%，被误判 0 分；O'Reilly 均值 984% 而中位 −168%，白拿满分。中位数只取中间那一年，
+    // 炸群的一年进不了统计量。早先这两个 ROE 项（护城河 4 + 盈利质量 25）同用这一个均值，
+    // 实测相关 0.9801，等于 29/100 押在同一个数上——现拆成「水平」与「持续」两个量。
     var roeVals = va.dupont.map(function (r) { return r.roeReported; }).filter(function (v) { return v != null; });
-    var roe5 = roeVals.length ? sum(roeVals) / roeVals.length : null;
+    var nRoe = roeVals.length, roeMed5 = null, roeOkFrac = null, roeOkYears = null;
+    if (nRoe) {
+      // 必须带数值比较器：JS 默认按字符串排序，[0.4, 2, 15] 会排成 [0.4, 15, 2]
+      var roeSorted = roeVals.slice().sort(function (a, b) { return a - b; });
+      var rMid = Math.floor(nRoe / 2);
+      roeMed5 = nRoe % 2 ? roeSorted[rMid] : (roeSorted[rMid - 1] + roeSorted[rMid]) / 2;
+    }
+    // 不足 3 年无从谈「持续」，按缺失处理（缺数据项在归一化时当中性，不虚给也不白扣）
+    if (nRoe >= 3) {
+      roeOkYears = roeVals.filter(function (v) { return v >= 0.10; }).length;
+      roeOkFrac = roeOkYears / nRoe;
+    }
 
     var basis = '评分基准：' + (lastYear ? lastYear + ' 年报' : '最新财报') +
       (s.time ? ' + ' + fmtDate(s.time) + ' 收盘价/市值' : '') +
@@ -1249,14 +1296,15 @@
     // ---- 巴菲特芒格（优质企业 + 护城河）----
     var moatItems = [
       it('销售毛利率', fmtPct(gMargin), '≥ 40%（定价权迹象）', 5, lerpScore(gMargin, 0.2, 0.4, 0, 5)),
-      it('ROE（近5年均值）· 护城河', fmtPct(roe5), '≥ 15%（8% 起给分）', 4, lerpScore(roe5, 0.08, 0.15, 0, 4)),
+      it('近5年 ROE ≥ 10% 达标年数 · 护城河', roeOkFrac == null ? '-' : roeOkYears + '/' + nRoe + ' 年', '5/5 年达标（2/5 起给分）', 4,
+        lerpScore(roeOkFrac, 0.4, 1.0, 0, 4)),
       it('无形资产+商誉 / 总资产', fmtPct((intangShare != null || goodwillShare != null) ? (intangShare || 0) + (goodwillShare || 0) : null), '≥ 10%（品牌/专利/特许权）', 3,
         lerpScore((intangShare != null || goodwillShare != null) ? (intangShare || 0) + (goodwillShare || 0) : null, 0, 0.1, 0, 3)),
       it('连续分红且分红率 ≤ 70%', (divConsecutive || 0) + ' 年 / ' + fmtPct(va.payout), '≥ 5 年且 ≤ 70%', 3,
         divConsecutive >= 5 ? (va.payout != null && va.payout <= 0.7 ? 3 : 1.5) : 0)
     ];
     var bItems = [
-      it('ROE（近5年均值）· 盈利质量', fmtPct(roe5), '≥ 15%（10% 起给分）', 25, lerpScore(roe5, 0.10, 0.15, 0, 25)),
+      it('ROE（近5年中位数）· 盈利质量', fmtPct(roeMed5), '≥ 15%（10% 起给分）', 25, lerpScore(roeMed5, 0.10, 0.15, 0, 25)),
       it('销售净利率（最新年报）', fmtPct(nMargin), '≥ 10%', 15, lerpScore(nMargin, 0.05, 0.10, 0, 15)),
       it('资产负债率', fmtPct(debtr), '≤ 50%', 15, lerpScore(debtr, 0.5, 0.75, 15, 0)),
       it('5年累计净现比', fmtNum(va.ratio5), '≥ 1', 15, lerpScore(va.ratio5, 0.5, 1, 0, 15)),
@@ -1269,9 +1317,9 @@
     var moatNote = '';
     if (intang != null || goodwill != null) {
       moatNote = '无形资产 ' + fmtMoney(intang) + '（占总资产 ' + fmtPct(intangShare) + '），商誉 ' + fmtMoney(goodwill) + '（占 ' + fmtPct(goodwillShare) + '）。';
-      if (gMargin != null && gMargin >= 0.4 && roe5 != null && roe5 >= 0.15) {
-        moatNote += '高毛利率（≥40%）+ 高 ROE（≥15%）组合通常意味着品牌溢价或特许经营（定价权）等护城河，是无形资产创造超额回报的量化证据；若该特征为行业通性（如医药/软件），则更多体现行业属性而非个体优势，需结合行业地位判断。';
-      } else if (gMargin != null && gMargin >= 0.4 || roe5 != null && roe5 >= 0.15) {
+      if (gMargin != null && gMargin >= 0.4 && roeMed5 != null && roeMed5 >= 0.15) {
+        moatNote += '高毛利率（≥40%）+ 高 ROE（近5年中位 ≥15%）组合通常意味着品牌溢价或特许经营（定价权）等护城河，是无形资产创造超额回报的量化证据；若该特征为行业通性（如医药/软件），则更多体现行业属性而非个体优势，需结合行业地位判断。';
+      } else if (gMargin != null && gMargin >= 0.4 || roeMed5 != null && roeMed5 >= 0.15) {
         moatNote += '毛利率或 ROE 单项突出，特许经营/品牌优势的证据不完全，需结合行业地位判断其可持续性。';
       } else {
         moatNote += '毛利率与 ROE 均未达强护城河量化线（40%/15%），暂未见品牌溢价或特许经营定价权证据。';
@@ -1281,11 +1329,11 @@
     } else {
       moatNote = '最新年报未披露无形资产/商誉明细，无法量化评估特许经营资产。';
     }
-    // ROE 在本卡出现两行，标签与阈值原先完全相同而「符合度」不同（实测 10.76% 显示 15% 与 39%），
-    // 看上去像重复录入。两档起给分本就不同（护城河 8%、盈利质量 10%），故把档位写进标签与阈值，
-    // 并在此说明合计权重。实测两项相关系数 0.9801，没有一家「一项满分另一项不满分」。
-    moatNote += 'ROE 在本卡计两次是有意设计：护城河项 4 分（8% 起给分）＋盈利质量项 25 分（10% 起给分），'
-      + '合计占本卡 29/100，两档起给分不同，故同一 ROE 在两行的「符合度」也不同。';
+    // 本卡两行都有 ROE，但测的是两件事（原先同用一个均值，实测相关 0.9801，
+    // 等于 29/100 押在同一个数上）。备注要说清两行各自看什么，免得看上去像重复录入。
+    moatNote += 'ROE 在本卡有两行，看的不是同一件事：护城河项（4 分）看持续，取近 5 年中 ROE ≥ 10% 的'
+      + '达标年数（5/5 年达标才满分）；盈利质量项（25 分）看水平，取近 5 年 ROE 中位数（≥ 15% 满分，'
+      + '10% 起给分）。中位数只取中间那一年，某一年因权益变薄而畸高畸低都进不了统计量。';
 
     // 有效满分/缺维数：数据缺失项不计分也不计入满分，总分实际按有效满分折算，需向用户标注（跨市场可比性）
     function effOf(arr) {
@@ -2080,8 +2128,9 @@
         && (epsTtm > 0) !== (pe0 > 0)) {
       epsTtm = null;
     }
-    // ② 隐含 PE（现价/EPS）低于 1 倍：持续经营的公司不可能一年赚回自己的市值，
-    // 是 EPS 单位/口径错（实测 3 家，含金科股份快照 PE 与自算 EPS 同给 0.36）
+    // ② 隐含 PE（现价/EPS）低于 EPS_PE_MIN 倍：一家持续经营的公司不可能长期只值自己三年
+    // 利润，市场按这个价位报价就是在说这笔盈利不可重复（下限 1→3 倍多拦的 3 家见常量注释）。
+    // 旧值 1 倍时只拦得住金科股份一家单位/口径错（快照 PE 与自算 EPS 同给 0.36）。
     if (epsTtm != null && epsTtm > 0 && price0 / epsTtm < EPS_PE_MIN) epsTtm = null;
     // ③ 量级背离：同 TTM 口径差 3 倍以上、年报窗口差 10 倍以上（实测 7 + 8 家）。
     // 年报窗口放宽是因为真实业绩可以一年翻几倍，但 10 倍以上的背离全是坏锚
@@ -2089,6 +2138,17 @@
     if (epsTtm != null && epsTtm > 0 && pe0 != null && pe0 > 0) {
       var mag = isAnnual ? EPS_MAG_ANNUAL : EPS_MAG_TTM;
       if (!((1 / mag) <= (price0 / epsTtm) / pe0 && (price0 / epsTtm) / pe0 <= mag)) epsTtm = null;
+    }
+    // ④ 经常性收益：报告利润的大头来自非经常项目时，按扣非后的规模重定锚。实测 4655 家有收益锚
+    // 的公司里 297 家被压缩、3 家归零（安达科技、地纬智能、张裕Ａ——扣非转负，报表盈利靠处置与
+    // 补助撑起）。只压缩不放大：扣非高于报告时维持报告口径，让锚停在偏保守一侧。
+    // 抓不到的两类写在常量注释里：港美股不披露扣非，券商保险的公允价值变动损益不计入非经常。
+    if (epsTtm != null && epsTtm > 0) {
+      var ttmNet0 = ttmNetProfit(d.indicators || []);
+      var adjNet = ttmNetProfit(d.indicators || [], '扣非净利润');
+      if (ttmNet0 != null && adjNet != null && ttmNet0 > 0 && adjNet < RECURRING_MIN_RATIO * ttmNet0) {
+        epsTtm = adjNet > 0 ? epsTtm * adjNet / ttmNet0 : null;
+      }
     }
     // 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
     // 类现金保守折算：货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产×0.3；
@@ -2115,22 +2175,28 @@
     var fpe = fairPe(va.netCagr5);
     // 低于一分钱（含负值与浮点零渣）的参考价一律视为无
     function ref(v) { return (v != null && v >= MIN_PRICE_REF) ? v : null; }
-    var gACons = ref(ncavPs);
+    // 资产派卖价只在估值射程内给出：现价已在 anchor 的 SELL_BAND 倍之外，说明该派的资产口径
+    // 对这只股票没有「该卖」的意见（它从来不是这只股票的估值方法），留空。
+    // 现价无快照的情形已在函数开头整体返回空，这里不必再判。
+    function band(anchor) { return (anchor == null || price0 <= SELL_BAND * anchor) ? anchor : null; }
+    var ncavRef = ref(ncavPs);
+    var sRef = ref(bps);
     // TTM 每股亏损（≤0）时基于 EPS 的估值锚无意义，锚位与买入价一并置空（避免负价/误导价）
     var epsOk = epsTtm != null && epsTtm > 0;
+    var gACons = band(ncavRef);
     var gDCons = epsOk ? ref(G_D_PE_FULL * epsTtm) : null;
-    var sCons = ref(bps);
+    var sCons = band(sRef);
     var bCons = epsOk ? ref(fpe * epsTtm) : null;
     // 公允卖价跟着保守卖价同生同灭：每派公允都是保守的 ≥1.3 倍，保守过了一分钱下限
     // 公允必然也过；但若各自独立套下限，会在保守差一点、公允刚过点时只留半档，
     // 而卖点筛选要求「同时 ≥ 保守与公允」，半档等于把这家公司永久排除。
-    // 买点同理挂在保守卖价上：锚为空就没有买点，不会出现「有买价没卖价」的半档。
+    // 买点不挂卖点：锚为空才没有买点；资产派「出射程」只抹掉两档卖价，买点作为目标价照旧给出。
     return {
-      fairLiq: gACons,
+      fairLiq: ncavRef,
       netCashRatio: netCashRatio,
       netCashCalc: netCashCalc,
       grahamAgg: {
-        buy: (gACons != null) ? ref(G_A_PNCAV_FULL * ncavPs) : null,
+        buy: (ncavRef != null) ? ref(G_A_PNCAV_FULL * ncavRef) : null,
         sellCons: gACons,
         sellFair: (gACons != null) ? 1.5 * gACons : null
       },
@@ -2140,7 +2206,7 @@
         sellFair: (gDCons != null) ? 20 * epsTtm : null
       },
       schloss: {
-        buy: (sCons != null) ? ref(S_PB_FULL * sCons) : null,
+        buy: (sRef != null) ? ref(S_PB_FULL * sRef) : null,
         sellCons: sCons,
         sellFair: (sCons != null) ? 1.5 * sCons : null
       },

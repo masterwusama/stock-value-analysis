@@ -86,8 +86,12 @@ for c in idx['companies']:
     if fa is not None:
         n_fairliq += 1
         ga = pr.get('grahamAgg') or {}
-        check(close(fa, ga.get('sellCons')), f'{c["code"]} fairLiq({fa}) != grahamAgg.sellCons({ga.get("sellCons")})')
-        check(close(ga.get('sellFair'), 1.5 * fa), f'{c["code"]} grahamAgg.sellFair != 1.5×fairLiq')
+        # 出射程时格攻两档卖价为空，清算价值本身与现价无关、始终给出（见 scoring.py SELL_BAND）
+        cons_ga = ga.get('sellCons')
+        check(cons_ga is None or close(fa, cons_ga),
+              f'{c["code"]} fairLiq({fa}) 与 grahamAgg.sellCons({cons_ga}) 不符')
+        check(cons_ga is None or close(ga.get('sellFair'), 1.5 * cons_ga),
+              f'{c["code"]} grahamAgg.sellFair != 1.5×sellCons')
     # 净现金/市值：字段存在且是有限数（重负债基建可为深度负值，不设量级硬边界）
     ncr = pr.get('netCashRatio')
     check(ncr is None or (isinstance(ncr, (int, float)) and math.isfinite(ncr)),
@@ -120,7 +124,9 @@ for c in idx['companies']:
         r = pr.get(tag) or {}
         buy, cons, fair = r.get('buy'), r.get('sellCons'), r.get('sellFair')
         if cons is None:
-            check(buy is None, f'{c["code"]} {tag} 保守卖价为空却仍给了买点({buy})')
+            # 收益派没有锚就是没有锚，三档一起空；账面派出射程只空卖价，买点是目标价、与现价无关
+            check(buy is None or tag in ('grahamAgg', 'schloss'),
+                  f'{c["code"]} {tag} 保守卖价为空却仍给了买点({buy})')
             continue
         check(close(fair, fm * cons),
               f'{c["code"]} {tag}.sellFair({fair}) != {fm:.4g}×sellCons({cons})')
