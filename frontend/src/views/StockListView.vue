@@ -40,6 +40,11 @@ const market = ref('')
 const BOARDS = [['', '全部板块'], ['shMain', '沪主'], ['szMain', '深主'], ['gem', '创业'], ['star', '科创'], ['bj', '北交']]
 const board = ref('')
 const industry = ref('')
+// 排除行业（多选，与上面的单选包含是 AND）：行业是上百项的长尾维度，逐个"包含"看不现实，
+// 一次摘掉几个不关心的才是常用路径。展开态与搜索词只服务这个控件本身。
+const exIndustries = ref([])
+const exOpen = ref(false)
+const exKw = ref('')
 const noSt = ref(false)
 const industries = ref([])
 const keyword = ref('')
@@ -112,6 +117,8 @@ function toggleFlt(arr, key, on) {
 function resetFlt() {
   Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', buys: [], discount: '', sells: [] })
   industry.value = ''
+  exIndustries.value = []
+  exKw.value = ''
   noSt.value = false
   applyFlt()
 }
@@ -123,7 +130,18 @@ const fltCount = () =>
   (flt.fraudMax !== '' ? 1 : 0) + (flt.mgmtMin !== '' ? 1 : 0) +
   (flt.capMin !== '' ? 1 : 0) + (flt.capMax !== '' ? 1 : 0) +
   (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) +
-  (industry.value ? 1 : 0) + (noSt.value ? 1 : 0)
+  (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0)
+
+// 勾选清单过搜索词。只数保持 /securities/industries 的原生顺序（count 降序），
+// 大行业排在前面正是排除操作想要的顺序，不另排。
+const exChoices = computed(() => {
+  const kw = exKw.value.trim()
+  return kw ? industries.value.filter((i) => i.industry.includes(kw)) : industries.value
+})
+function clearEx() {
+  exIndustries.value = []
+  applyFlt()
+}
 
 // 请求序号守卫：同一轮连改两个相邻筛选框（典型如把市值≥ 清空同时填市值≤）会并发两条请求，
 // 而后发的那条不保证先返回；没守卫时旧结果会后落地把新结果盖掉（实测：表格短暂回到未过滤的
@@ -137,6 +155,7 @@ async function load() {
   try {
     const d = await get('/securities', {
       market: market.value, board: board.value, industry: industry.value,
+      ex_industry: exIndustries.value.length ? exIndustries.value.join(',') : null,
       st: noSt.value ? false : null,
       keyword: kwDebounced.value,
       fraud_max: flt.fraudMax === '' ? null : flt.fraudMax,
@@ -178,7 +197,13 @@ async function loadIndustries() {
 }
 
 // 必须注册在下面 load 的 watch 之前：切市场先把已选行业清掉，同一轮里触发的 load 才带着空行业去请求
-watch(market, () => { industry.value = ''; loadIndustries() })
+// 排除项同理且更必须——三个市场是三套字典（A 国标 / 港股恒生 / 美股东财中文），带过去的名字新市场里不存在
+watch(market, () => {
+  industry.value = ''
+  exIndustries.value = []
+  exKw.value = ''
+  loadIndustries()
+})
 
 // kwDebounced 必须在依赖里：搜索框原本只靠下面防抖回调里的 page=1 间接触发刷新，
 // 而搜索时通常已在第一页，页码不变 → watch 不触发 → 输入了也没发请求（applyFlt 同坑）。
@@ -296,6 +321,8 @@ const fltSummary = computed(() => {
   if (flt.buys.length) parts.push(flt.buys.length + '个买点' + (flt.discount !== '' ? '×' + flt.discount + '%' : ''))
   if (flt.sells.length) parts.push(flt.sells.length + '个卖点')
   if (industry.value) parts.push(industry.value)
+  // 排除项只报数量：行业名最长 20 字且可能同时排好几个，写在按钮上会把摘要撑成一行多
+  if (exIndustries.value.length) parts.push('排除' + exIndustries.value.length + '行业')
   if (noSt.value) parts.push('剔除ST')
   return parts.length ? '筛选：' + parts.join(' · ') : '筛选条件'
 })
@@ -349,8 +376,29 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <label class="t">行业
         <select v-model="industry" @change="applyFlt">
           <option value="">全部</option>
-          <option v-for="i in industries" :key="i.industry" :value="i.industry">{{ i.industry }}（{{ i.count }}）</option>
+          <option v-for="i in industries" :key="i.industry" :value="i.industry">{{ i.industry }}（{{ i.count }}）{{
+            exIndustries.includes(i.industry) ? '（已排除）' : '' }}</option>
         </select></label>
+      <button type="button" class="ex-t" :class="{ on: exIndustries.length }" :aria-expanded="exOpen"
+              title="排除不关心的行业（多选）。与左侧「行业」下拉同时给出时按 AND 处理——选了它又排掉同一个行业，结果自然是空集。没有行业标注的公司不参与排除，始终保留"
+              @click="exOpen = !exOpen">排除行业<span v-if="exIndustries.length">（{{ exIndustries.length }}）</span></button>
+      <div v-show="exOpen" class="ex-box">
+        <input v-model="exKw" class="ex-kw" type="search" placeholder="搜索行业名称" aria-label="搜索行业">
+        <div class="ex-list">
+          <label v-for="i in exChoices" :key="i.industry" class="cb"
+                 :title="`排除「${i.industry}」——该行业在本市场共 ${i.count} 只（只数是本市场全量口径，不随其它筛选变化）`">
+            <input type="checkbox" :checked="exIndustries.includes(i.industry)"
+                   @change="toggleFlt(exIndustries, i.industry, $event.target.checked); applyFlt()">{{ i.industry
+            }}<i class="ex-n">{{ i.count }}</i></label>
+          <span v-if="!exChoices.length" class="ex-none">无匹配行业</span>
+        </div>
+        <div v-if="exIndustries.length" class="ex-tags">
+          <span class="ex-lab">已排除</span>
+          <button v-for="n in exIndustries" :key="n" type="button" class="ex-tag" :title="`不再排除「${n}」`"
+                  @click="toggleFlt(exIndustries, n, false); applyFlt()">{{ n }} ×</button>
+          <button type="button" class="ex-clear" @click="clearEx">清空排除</button>
+        </div>
+      </div>
       <label class="cb" title="名称含 ST/*ST 的公司（退市风险与财务造假高发区）"><input type="checkbox" v-model="noSt" @change="applyFlt">剔除ST</label>
       <label class="num" title="财报造假可能性(0-100,越高越可疑),只保留 ≤ 该分的公司">造假≤
         <input v-model="flt.fraudMax" type="number" min="0" max="100" step="1" placeholder="不限" @change="applyFlt"></label>
@@ -378,7 +426,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
         {{ FRAUD_TIP }}<br>
         {{ MGMT_TIP }}<br>
         {{ CAP_TIP }}<br>
-        买：现价 ≤ 买价×折扣；卖：现价 ≥ 公允卖价（公允恒高于保守卖价，达到公允即两档都过）；缺数据的公司自动排除
+        买：现价 ≤ 买价×折扣；卖：现价 ≥ 公允卖价（公允恒高于保守卖价，达到公允即两档都过）；缺数据的公司自动排除<br>
+        排除行业：勾中的行业整体从结果里摘掉（多选是「都排除」），与「行业」下拉同时用则是 AND；没有行业标注的公司不参与排除、始终保留
       </p>
     </div>
 
@@ -549,8 +598,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
 .flts .cb { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
 /* 触屏专用的口径说明：桌面已有 title 悬浮，不再重复占位；手机端由 @media 打开 */
 .flts-hint { display: none; }
-/* Wind 事件增强分切换档：选中时边框与文字走主题色（不加底色，与筛选栏其它控件一致） */
-.flts .wind {
+/* Wind 事件增强分切换档 / 排除行业切换钮：选中时边框与文字走主题色（不加底色，与筛选栏其它控件一致） */
+.flts .wind, .flts .ex-t {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -563,7 +612,58 @@ const REF_COLS = COLS.filter((c) => c.ref)
   font-size: 13px;
 }
 .flts .wind b { font-weight: 600; }
-.flts .wind.on { border-color: var(--accent); color: var(--accent); }
+.flts .wind.on, .flts .ex-t.on { border-color: var(--accent); color: var(--accent); }
+/* 排除行业展开块：行业名 2~20 字、上百项，独占一行铺开勾选清单才点得动（原生 select multiple 触屏无法多选） */
+.flts .ex-box {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+}
+.flts .ex-kw {
+  width: 220px;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--txt);
+}
+.flts .ex-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 2px 10px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+/* 清单项：字号比筛选栏小一档（一屏要塞几十个行业名），只数用 margin-left:auto 顶到行尾 */
+.flts .ex-list .cb { min-width: 0; font-size: 12px; color: var(--txt); }
+.flts .ex-n { margin-left: auto; padding-left: 6px; font-style: normal; color: var(--sub); opacity: .8; }
+.flts .ex-none { color: var(--sub); font-size: 12px; }
+.flts .ex-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.flts .ex-lab { color: var(--sub); font-size: 12px; }
+.flts .ex-tag {
+  padding: 2px 7px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+}
+.flts .ex-clear {
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--sub);
+  cursor: pointer;
+  font-size: 12px;
+}
+.flts .ex-clear:hover, .flts .ex-tag:hover { border-color: var(--accent); color: var(--accent); }
 .flts .disc { margin-left: 2px; }
 .flts .rst {
   margin-left: auto;
@@ -723,13 +823,17 @@ table.grid-list .ind {
      改成两列折行（小控件半宽，下拉/按钮/说明整行），限高内滚不吃掉首屏。 */
   .flts { gap: 8px; max-height: 52vh; overflow-y: auto; padding-right: 2px; }
   .flts > * { flex: 1 1 calc(50% - 5px); min-width: 0; }
-  .flts .t, .flts .wind, .flts .disc, .flts .rst, .flts-hint { flex: 1 1 100%; }
+  .flts .t, .flts .wind, .flts .ex-t, .flts .ex-box, .flts .disc, .flts .rst, .flts-hint { flex: 1 1 100%; }
   .flts .t { margin-left: 0; }
   .flts label.t { display: flex; align-items: center; gap: 6px; }
   .flts .num { justify-content: space-between; }
   .flts .num input { flex: 1; width: auto; min-width: 0; }
   .flts select { width: 100%; max-width: none; }
-  .flts .cb, .flts .wind, .flts .num, .flts .rst, .flts .num input, .flts select { min-height: 32px; }
+  .flts .cb, .flts .wind, .flts .ex-t, .flts .num, .flts .rst, .flts .num input, .flts select { min-height: 32px; }
+  /* 排除行业展开块在手机上：搜索框跟着盒宽走；清单行高被上面 .flts .cb 顶到 32px，
+     168px 只够五个行业，得放高些（.flts 本身限高 52vh 内滚，不会吃掉整屏） */
+  .flts .ex-kw { width: auto; min-height: 32px; }
+  .flts .ex-list { max-height: 216px; }
   /* 重置按钮桌面靠 margin-left:auto 顶到最右；折行后那个 auto 会让它缩到半宽并错位 */
   .flts .rst { margin-left: 0; padding: 9px 12px; }
   /* 桌面靠 title 悬浮看的口径说明，触屏上转成常驻段落 */

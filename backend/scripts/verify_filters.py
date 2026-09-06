@@ -28,7 +28,7 @@ def api(path):
 
 
 def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, buys=None, sells=None, discount=None,
-              market=None, board=None, st=None):
+              market=None, board=None, st=None, industry=None, ex_industry=None):
     """复刻原 stock.js passFlt(base 分口径,windMode 关)。"""
     out = []
     for c in IDX["companies"]:
@@ -41,6 +41,12 @@ def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, buys=No
         if st is not None:
             if ("ST" in str(c.get("name") or "").upper()) != st:
                 continue
+        ind = c.get("industry") or None
+        if industry and ind != industry:
+            continue
+        # 无行业标注的标的不属于任何被排除的行业，必须活下来（后端为此单开 IS NULL 一支）
+        if ex_industry and ind is not None and ind in ex_industry:
+            continue
         sc = c.get("scores") or {}
         refs = sc.get("priceRefs") or {}
         if fraud_max is not None:
@@ -84,6 +90,8 @@ def _api_pages(cases):
         q["buys"] = ",".join(q["buys"])
     if q.get("sells"):
         q["sells"] = ",".join(q["sells"])
+    if q.get("ex_industry"):
+        q["ex_industry"] = ",".join(q["ex_industry"])
     q["page_size"] = 200
     page, items, total = 1, [], None
     while True:
@@ -128,6 +136,15 @@ _capped = sorted((c for c in IDX["companies"] if (c.get("quote") or {}).get("mar
 CAP_MID = _capped[len(_capped) // 2]["quote"]["market_cap"] if _capped else 1e12
 CAP_TOP = _capped[-1]["quote"]["market_cap"] if _capped else 1e12
 
+# 行业名一律现取：字典有 123 项且跟着采集源变，写死名字在换版后会退成空集而“测过”
+_ind_n = {}
+for _c in IDX["companies"]:
+    _i = _c.get("industry") or None
+    if _i:
+        _ind_n[_i] = _ind_n.get(_i, 0) + 1
+TOP_IND, TOP_IND2 = sorted(_ind_n, key=_ind_n.get, reverse=True)[:2]
+NO_IND = {str(_c["code"]) for _c in IDX["companies"] if not _c.get("industry")}
+
 cases_list = [
     {"fraud_max": 20}, {"fraud_max": 50}, {"mgmt_min": 70}, {"mgmt_min": 60, "market": "A"},
     {"buys": ["grahamAgg"]}, {"buys": ["grahamAgg"], "discount": 120},
@@ -142,9 +159,15 @@ cases_list = [
     {"cap_min": CAP_MID}, {"cap_max": CAP_MID}, {"cap_min": CAP_MID, "cap_max": CAP_TOP},
     {"cap_min": 5e11, "market": "A"}, {"cap_max": 5e9, "market": "A"},
     {"cap_min": 1e11, "cap_max": 5e11, "st": False, "fraud_max": 40},
+    # 行业：单选包含 + 多选排除（含排两个、与市场叠加、包含与排除同一项）
+    {"industry": TOP_IND}, {"industry": TOP_IND, "market": "A"},
+    {"ex_industry": [TOP_IND]}, {"ex_industry": [TOP_IND, TOP_IND2]},
+    {"ex_industry": [TOP_IND], "market": "A"},
+    {"ex_industry": [TOP_IND], "st": False, "fraud_max": 40},
+    {"industry": TOP_IND, "ex_industry": [TOP_IND]},
 ]
 for cs in cases_list:
-    label = "&".join(f"{k}={v}" for k, v in cs.items())
+    label = "&".join(f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in cs.items())
     check(label, local_flt(**cs), api_flt(cs))
 
 # 门槛边界得闭合（后端把 >= 写成 > 就会掉边界那只，上面按集对比未必命中相等情形）：
@@ -221,6 +244,29 @@ try:
 except urllib.error.HTTPError as e:
     print(("OK  " if e.code == 400 else "FAIL") + f" bad buys key -> {e.code}")
     if e.code != 400:
+        fails += 1
+
+# 排除类的非法名同样要 400：静默忽略会得到“看着排除了、实际一片没少”的隐形失败。
+# 探针用「真名 + 不可能出现在行业名里的后缀」，既保证落在字典外，又不必编一个可能撞名的假名
+try:
+    api_flt({"ex_industry": [TOP_IND + "×非法名"]})
+    print("FAIL bad ex_industry no 400"); fails += 1
+except urllib.error.HTTPError as e:
+    print(("OK  " if e.code == 400 else "FAIL") + f" bad ex_industry name -> {e.code}")
+    if e.code != 400:
+        fails += 1
+
+# 无行业标注的标的必须活下来：MySQL 的 industry NOT IN (...) 对 NULL 求值为 NULL，
+# 少了后端那支 IS NULL，这一批会被整批静默丢掉（集对比也会红，但看不出是这个原因）
+if not NO_IND:
+    print("WARN index.json 里没有无行业标注的公司，NULL 存活项未真正覆盖")
+else:
+    _kept = NO_IND & api_flt({"ex_industry": [TOP_IND]})
+    _gone = sorted(NO_IND - _kept)
+    print(("OK  " if not _gone else "FAIL")
+          + f" 排除 {TOP_IND} 后无行业标注的 {len(NO_IND)} 只仍在"
+          + ("" if not _gone else f" 丢失={_gone[:8]}"))
+    if _gone:
         fails += 1
 
 # 列表价格参考字段 vs index.json priceRefs(买/保/公 ×4流派 + 清算/净现金)

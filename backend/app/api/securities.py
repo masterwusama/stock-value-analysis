@@ -205,7 +205,7 @@ def _wind_score(base, delta):
     )
 
 
-def _flt_keys(raw: str | None, valid: dict, name: str) -> list[str]:
+def _flt_keys(raw: str | None, valid: dict | set, name: str) -> list[str]:
     """逗号分隔复选键解析 + 白名单校验(非法直接 400,不做静默丢弃)。"""
     if not raw:
         return []
@@ -214,6 +214,15 @@ def _flt_keys(raw: str | None, valid: dict, name: str) -> list[str]:
     if bad:
         raise HTTPException(status_code=400, detail=f"invalid {name}: {','.join(bad)}")
     return keys
+
+
+def _industry_set(db: Session) -> set[str]:
+    """库里现有行业名全集（排除筛选的白名单）。行业不是写死的枚举，随采集源的字典变（当前 123 个），
+    只能现取；空名与 NULL 同义，都不参与排除，故一并挡在门外。"""
+    rows = db.execute(select(Security.industry)
+                      .where(Security.industry.isnot(None), Security.industry != "")
+                      .distinct()).all()
+    return {r[0] for r in rows}
 
 
 # 全市场 5500 只 × 每日快照：quote_daily/score_daily 一年即百万行，
@@ -242,6 +251,9 @@ def list_securities(
     st: bool | None = Query(None, description="True 仅 ST/*ST,False 排除"),
     keyword: str | None = Query(None, max_length=32, description="代码/名称模糊匹配"),
     industry: str | None = Query(None, max_length=64),
+    ex_industry: str | None = Query(
+        None, max_length=1024,
+        description="排除行业复选(逗号分隔,同时排除;无行业标注的标的不受排除影响)"),
     fraud_max: float | None = Query(None, ge=0, le=100, description="造假风险≤(wind=1 时按增强分)"),
     mgmt_min: float | None = Query(None, ge=0, le=100, description="管理能力≥(wind=1 时按增强分)"),
     cap_min: float | None = Query(None, ge=0, description="总市值≥(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
@@ -261,6 +273,8 @@ def list_securities(
     逐证券 max(trade_date)(对齐原 index.json"各市场各取最近收盘"语义:
     美股在北京时间白天落后一天时仍显示昨收,不被全局快照日剔除);
     筛选语义对齐原前端 passFlt:依赖的价格/参考价缺失(SQL NULL)自动排除。
+    ex_industry 是排除语义:命中名单的行业整体去掉,没有行业标注的标的保留(NULL 不属于任何
+    被排除的行业);与 industry 同时给出时按 AND 处理,自相矛盾的组合结果为空集。
     """
     latest_quote = _latest_sub(db, QuoteDaily, "qdate")
     latest_score = _latest_sub(db, ScoreDaily, "sdate")
@@ -268,6 +282,9 @@ def list_securities(
     # Wind 档下表达式出 NULL，既排到末尾也被 fraud_max/mgmt_min 自动排除，与列页显示“-”一致
     fraud_col = _wind_score(ScoreDaily.fraud, ScoreDaily.wind_fraud_delta) if wind else ScoreDaily.fraud
     mgmt_col = _wind_score(ScoreDaily.mgmt, ScoreDaily.wind_mgmt_delta) if wind else ScoreDaily.mgmt
+    # 排除行业的名校验走白名单：排除类筛选失败是"看不见的失败"，半截名或改过名的旧名若被
+    # 静默忽略，用户看着排除生效了、实际一片都没少。白名单只在参数非空时取，别为普通请求多付一次 distinct。
+    ex_names = _flt_keys(ex_industry, _industry_set(db), "ex_industry") if ex_industry else []
 
     q = (
         select(Security, QuoteDaily, ScoreDaily)
@@ -301,6 +318,10 @@ def list_securities(
         conds.append(is_st if st else not_(is_st))
     if industry:
         conds.append(Security.industry == industry)
+    if ex_names:
+        # 必须补 IS NULL 那半边：NOT IN 遇 NULL 出 NULL，会把 39 家没有行业标注的标的(38 A + 1 美)
+        # 一起静默丢掉，而它们不属于任何被排除的行业。空串在库里不存在(实测 0 家)，不必第三支。
+        conds.append(or_(Security.industry.is_(None), Security.industry.notin_(ex_names)))
     if keyword:
         kw = f"%{keyword}%"
         conds.append(or_(Security.code.like(kw), Security.name.like(kw)))
