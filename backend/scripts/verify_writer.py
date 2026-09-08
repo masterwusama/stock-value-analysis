@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.import_legacy import (  # noqa: E402
-    DIV_KEYS, FIN_KEYS, RPT_KEYS, FIN_SPECS, _Writer, _Stats, coalesce_upd,
+    DIV_KEYS, FIN_KEYS, NOTE_KEYS, RPT_KEYS, FIN_SPECS, _Writer, _Stats, coalesce_upd,
 )
 
 
@@ -53,6 +53,16 @@ wr = _Writer(None, _Stats(), __import__("app.models", fromlist=["x"]).PeriodicRe
              RPT_KEYS, mode="upsert", upd_skip=("sid", "report_date"), upd_coalesce=True)
 check("periodic_report SET 含 audit_opinion",
       "COALESCE(VALUES(`audit_opinion`)" in str(wr.stmt))
+wn = _Writer(None, _Stats(), __import__("app.models", fromlist=["x"]).FinNote,
+             NOTE_KEYS, mode="upsert", upd_skip=("sid", "report_date"),
+             upd_coalesce=True)
+sql_n = str(wn.stmt)
+set_n = sql_n.split("UPDATE")[1]
+check("fin_note 插入列含附注三项",
+      all(("`%s`" % c) in sql_n for c in ("term_deposit", "restricted_cash", "source")))
+check("fin_note SET 走 COALESCE 且不含主键",
+      "COALESCE(VALUES(`term_deposit`)" in set_n and "`sid`=" not in set_n
+      and "`report_date`=" not in set_n)
 check("coalesce_upd 空表返回空", coalesce_upd([]) == "")
 
 # ---- 列宽/量程预处理（以前被 INSERT IGNORE + MySQL 默默钳掉的那些值）----

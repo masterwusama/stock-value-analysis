@@ -1720,6 +1720,10 @@ def fetch_company_a(code: str, name: str):
             merged = notes.setdefault(day, {})
             for k, val in v.items():
                 merged.setdefault(k, val)
+            src = merged.setdefault("source", {})
+            for k, val in (("date", r.get("date")), ("category", r.get("category")),
+                           ("pdf", r.get("pdf_url"))):
+                src.setdefault(k, val)
     result["notes"] = notes or None
 
     result["errors"] = errors if errors else None

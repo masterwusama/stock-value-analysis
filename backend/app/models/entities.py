@@ -152,6 +152,24 @@ class FinCashflow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class FinNote(Base):
+    """财报附注里的现金类构成（定期报告 PDF 解析，报告期维度）。
+
+    科目层给不出「其他流动资产」里是定期存款还是留抵税额，两者在净现金口径里差 3 倍。
+    抽取只认能自我闭合的数，闭合不上就不落行——所以有行即数可信。source 记该数出自
+    哪一份披露（公告日/类别/PDF 直链），便于事后核源。
+    """
+
+    __tablename__ = "fin_note"
+
+    sid: Mapped[int] = mapped_column(primary_key=True)
+    report_date: Mapped[date] = mapped_column(primary_key=True)
+    term_deposit: Mapped[float | None] = mapped_column(Numeric(20, 2))
+    restricted_cash: Mapped[float | None] = mapped_column(Numeric(20, 2))
+    source: Mapped[dict | None] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class ScoreDaily(Base):
     """每日评分快照:四流派分/造假/管理/周期 + 价格参考 + Wind 事件增量。
 

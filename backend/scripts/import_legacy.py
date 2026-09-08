@@ -52,6 +52,7 @@ from app.models import (
     FinCashflow,
     FinIncome,
     FinIndicator,
+    FinNote,
     PeriodicReport,
     QuoteDaily,
     ScoreDaily,
@@ -158,6 +159,9 @@ RPT_KEYS = ("sid", "report_date", "category", "title", "pdf_url", "detail_url",
             "audit_firm", "audit_opinion")
 # 财务四表公共列（各表再拼自己的核心科目列，见 import_companies）
 FIN_KEYS = ("sid", "report_date", "updated_at", "extras")
+# 附注表：定期存款 / 受限货币资金 + 出自哪份披露
+NOTE_KEYS = ("sid", "report_date", "term_deposit", "restricted_cash",
+             "source", "updated_at")
 # 证券主数据：名称/行业/上市日缺失时不用 NULL 覆盖已有值
 SEC_UPD = ("name=VALUES(name), "
            "industry=COALESCE(VALUES(industry), industry), "
@@ -429,6 +433,10 @@ def import_companies(db, stats, only_fresh=None, quiet=False, head=True):
         )
         for spec in FIN_SPECS
     }
+    # 附注表同键；某期本轮没再解析出来（PDF 换链接、闭合不上）时留库里旧值——
+    # 那一期的披露本来就不会变坏
+    w_note = writer("fin_note", FinNote, NOTE_KEYS, mode="upsert",
+                    upd_skip=("sid", "report_date"), upd_coalesce=True)
 
     sids = load_sid_map(db)
     total, t0 = len(files), time.time()
@@ -493,6 +501,16 @@ def import_companies(db, stats, only_fresh=None, quiet=False, head=True):
                 core, extras = split_core(r, core_map)
                 w.add(dict(sid=sid, report_date=rd, updated_at=updated_at,
                            extras=extras, **core))
+
+        for day, v in (d.get("notes") or {}).items():
+            rd = parse_date(day)
+            if not rd:
+                stats["skipped_rows"] += 1
+                continue
+            w_note.add(dict(sid=sid, report_date=rd, updated_at=updated_at,
+                             term_deposit=v.get("termDeposit"),
+                             restricted_cash=v.get("restrictedCash"),
+                             source=v.get("source")))
 
         for r in d.get("dividends") or []:
             w_div.add(dict(
@@ -671,7 +689,8 @@ def import_edb(db, stats):
 
 TABLES = [
     "wind_holder", "wind_event", "score_daily", "periodic_report", "dividend",
-    "fin_cashflow", "fin_balance", "fin_income", "fin_indicator", "quote_daily",
+    "fin_cashflow", "fin_balance", "fin_income", "fin_indicator", "fin_note",
+    "quote_daily",
     "security", "agro_price", "agro_product", "edb_value", "edb_indicator", "etl_job_log",
 ]
 

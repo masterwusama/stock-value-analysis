@@ -99,6 +99,16 @@ CREATE TABLE fin_cashflow (
 	PRIMARY KEY (sid, report_date)
 );
 
+CREATE TABLE fin_note (
+	sid INTEGER NOT NULL, 
+	report_date DATE NOT NULL, 
+	term_deposit NUMERIC(20, 2), 
+	restricted_cash NUMERIC(20, 2), 
+	source JSON, 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (sid, report_date)
+);
+
 CREATE TABLE score_daily (
 	sid INTEGER NOT NULL, 
 	trade_date DATE NOT NULL, 
@@ -135,19 +145,19 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
-CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
-
-CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
+CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 
-CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
+CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
 
-CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
+CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
+
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
 
 CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
 
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
 
 CREATE TABLE dividend (
 	id BIGINT NOT NULL AUTO_INCREMENT, 
