@@ -1092,42 +1092,377 @@ def extract_audit(text: str, is_annual: bool = False):
     return firm, opinion
 
 
-# 审计 PDF 解析范围（全市场扩量开关）：审计意见只供详情页展示,不参与评分,
-# 而每份年报/半年报 PDF 达几 MB——它是全量抓取的最大耗时项。子进程走 spawn 不继
-# 承父进程全局变量,故由主进程写入环境变量后再读。
+# ==================== 定期报告附注：现金类明细 ====================
+# 报表科目只到「其他流动资产 37.02 亿」这一行，里面是定期存款还是留抵税额，上游三
+# 个源都给不出来，而两者对净现金的影响差着 3 倍（广信股份 36.91 亿定期存款 vs 赛轮
+# 轮胎 8.94 亿留抵增值税，现口径一律 ×0.3）。附注正文就在 fetch_audit 已经下载并全
+# 文解析过的那份 PDF 里，顺手抽它不增加一次接口请求。
+#
+# 只认能自我闭合的数。附注表是「项目/期末余额/期初余额」三列**变长行**：某行只有一
+# 个数时，从文本顺序判断不出它属于哪一列——实测广信「在途投资款 21,227,700.00」是期
+# 初数，顺序读会误记成期末。故每列都要求「已归位的行求和 == 本公司同期报表科目」，闭
+# 合不上就整块丢弃，宁缺不错。
+# 只认存款：理财（保本/固定收益型…）不是现金等价物，实测它常占该科目大头，混进来的
+# 代价是把 ×0.3 的行抬成 ×1.0。「存单」覆盖定期存单/银行定期存单，「存款利息」是存款的
+# 应计息，两者与定期存款同质。
+NOTE_DEPOSIT_ROWS = ("定期存款", "结构性存款", "存单", "存款利息")
+# 受限资产附注的标题写法（直接拼进 _note_block 的正则，故「受限的?资产」一并覆盖
+# 「受限的资产」与「受限资产」两种口径）
+NOTE_RESTRICTED_HEADS = ("所有权或使用权受限的?资产", "所有权或使用权受到限制的资产",
+                         "资产权利受限")
+NOTE_NA = ("", "—", "-", "－", "/", "不适用", "无")
+NOTE_NUM_LINE = re.compile(r"[-(]?[\d,]+\.\d{1,6}[)]?|[-(]?\d[\d,]{2,}[)]?")
+# 被排版切断的数字：窄列里一个数会折成多行，断点不固定。200 家普查实测三种——
+# 停在逗号（「1,259,130,」+「665.45」）、停在千分位组中间（「1,285,557,3」+「65.72」）、
+# 停在一位小数（「20,803,508.8」+「9」）。判据统一用「这行像数却成不了数」。
+NOTE_LIKE = re.compile(r"[-(]?\d[\d,]*(?:\.\d*)?")
+NOTE_CONT = re.compile(r"\d[\d,]*(?:\.\d*)?")
+
+
+def _note_frag(s: str) -> bool:
+    """格式不合法的数状串：停在 , 或 .、千分位组不是三位、或小数位不正好两位。"""
+    if not NOTE_LIKE.fullmatch(s):
+        return False
+    core = s.lstrip("(-")
+    if core[-1] in ",.":
+        return True
+    intp, dot, dec = core.partition(".")
+    if dot and len(dec) != 2:
+        return True
+    return any(len(g) != 3 for g in intp.split(",")[1:])
+
+
+def _is_cjk(ch: str) -> bool:
+    return "一" <= ch <= "鿿"
+
+
+def _note_join_cjk(lines):
+    """竖排合并：连续的单字中文行是一列被逐字排版，合成一个词再交给后续解析。
+
+    实测广信年报受限资产表就是「货\\n币\\n资\\n金」——既不成为标签，还把一对数字之间
+    的「受限原因」撑成 7 个单元。行与行之间夹着数字时天然断开，不会跨行误并。
+    """
+    out, run = [], []
+    for s in lines:
+        if len(s) == 1 and _is_cjk(s):
+            run.append(s)
+            continue
+        if run:
+            out.append("".join(run))
+            run = []
+        out.append(s)
+    if run:
+        out.append("".join(run))
+    return out
+
+
+def _note_tidy(blk: str) -> str:
+    """缝合排版断裂：先把竖排单字并成词，再把跨行切断的数字缝回来。"""
+    lines = _note_join_cjk([l.strip() for l in blk.split("\n") if l.strip()])
+    out = []
+    for s in lines:
+        # 断点正好落在千分位逗号上（实测百川股份「1,031,621」+「,633.83」）：
+        # 不缝回去，前半行会被当成一个整数量级的小数
+        if out and s.startswith(",") and NOTE_LIKE.fullmatch(out[-1]):
+            out[-1] += s
+            continue
+        if out and _note_frag(out[-1]):
+            head = NOTE_CONT.match(s)
+            rest = s[head.end():].strip() if head else ""
+            # 整行都是数字 → 直接接力续缝（断成三段以上会一路补下去）；行尾还挂着文字
+            # （实测「644,731.8」+「6 冻结」）→ 只有把断数补成合法数才缝
+            if head and (not rest or not _note_frag(out[-1] + head.group())):
+                out[-1] += head.group()
+                if not rest:
+                    continue
+                s = rest
+        out.append(s)
+    return "\n".join(out)
+
+
+def note_periods(report: dict):
+    """定期报告公告日 + 类别 → (期末报告日, 期初报告日)。季报不附注，返回 None。"""
+    year = int(report["date"][:4])
+    if report["category"] == "半年报":
+        end = f"{year}-06-30"
+    elif report["category"] == "年报":
+        end = f"{year - 1}-12-31"
+    else:
+        return None
+    return end, f"{int(end[:4]) - 1}-12-31"
+
+
+def _note_num(raw: str):
+    """附注单元格 → float；「—」/空/「不适用」→ None；括号负数 → 负值。"""
+    s = (raw or "").strip()
+    if s in NOTE_NA:
+        return None
+    neg = s.startswith("(") and s.endswith(")")
+    try:
+        v = float(s.strip("()").replace(",", ""))
+    except ValueError:
+        return None
+    return -v if neg else v
+
+
+def _note_block(text: str, heading: str):
+    """取「N、<heading>」附注块正文，直到下一个编号标题或收尾说明。"""
+    m = re.search(r"\n\d{1,2}、\s*" + heading + r"[^\n]{0,12}\n", text)
+    if not m:
+        return None
+    end = len(text)
+    for pat in (r"\n\d{1,2}、", "\n其他说明", "\n补偿性资产相关信息"):
+        p = re.search(pat, text[m.end():])
+        if p:
+            end = min(end, m.end() + p.start())
+    return _note_tidy(text[m.end():end])
+
+
+def _note_factor(blk: str) -> float:
+    """块首「单位：元/万元/千元」→ 倍率。读不到按元（合计校验会兜住误读）。"""
+    m = re.search(r"单位[:：]\s*(千|万|亿)?元", blk[:400])
+    return {"千": 1e3, "万": 1e4, "亿": 1e8}.get(m and m.group(1), 1.0)
+
+
+def _note_rows(blk: str):
+    """块 → [(科目名, [数值行,...])]。非数值行一律视作新科目，表头/适用标记自然被吃掉。"""
+    rows, label, vals = [], None, []
+    for line in blk.split("\n"):
+        if not line:
+            continue
+        if NOTE_NUM_LINE.fullmatch(line):
+            vals.append(line)
+            continue
+        if label is not None:
+            rows.append((label, vals))
+        label, vals = line, []
+    if label is not None:
+        rows.append((label, vals))
+    return rows
+
+
+def _tol(target: float) -> float:
+    return max(abs(target) * 1e-4, 1.0)
+
+
+def _note_gap(rows, take, target: float):
+    """两列都有数的行按 take(0/1) 求和，与 target 的差额（元）。"""
+    acc = 0.0
+    for _, vals in rows:
+        if len(vals) >= 2 and _note_num(vals[take]) is not None:
+            acc += _note_num(vals[take])
+    return target - acc
+
+
+def _note_place(lone, gap):
+    """把「只有一列有数」的行归位到 gap 那一列：要求子集和唯一且恰好闭合。
+    返回归入该列的行下标，无解/多解/行数过多返回 None。"""
+    if abs(gap) <= _tol(gap):
+        return set()
+    if len(lone) > 12:
+        return None
+    hit = None
+    for mask in range(1, 1 << len(lone)):
+        picked = {i for i in range(len(lone)) if mask >> i & 1}
+        if abs(sum(lone[i] for i in picked) - gap) <= _tol(gap):
+            if hit is not None:
+                return None      # 多解 → 无法判定，整块不可信
+            hit = picked
+    return hit
+
+
+def extract_notes(text: str, periods, balance_by_date: dict):
+    """抽现金类附注 → {报告期: {termDeposit, restrictedCash, otherCa}}。
+
+    balance_by_date 提供两列的锚点（同公司同期报表「其他流动资产」），缺任一锚点即放弃
+    本块：没有锚点就没有闭合判据，等于把误读直接写成虚高净值。
+    """
+    end_date, begin_date = periods
+    out = {}
+    ca = [_stmt_ca(balance_by_date, d) for d in periods]
+    blk = _note_block(text, "其他流动资产")
+    if blk and all(v is not None for v in ca) and max(ca) > 0:
+        factor = _note_factor(blk)
+        rows = _note_rows(blk)
+        # PDF 自带「合计」先对一遍：抓错块（母公司报表/相似科目）时这一步就该拦下
+        tot = next((r[1] for r in rows if r[0].startswith("合计")), None)
+        target = [v / factor for v in ca]
+        ok = tot and len(tot) >= 2 and all(
+            abs((_note_num(tot[i]) or 0) - target[i]) <= _tol(target[i]) for i in (0, 1))
+        if ok:
+            body = [r for r in rows if not r[0].startswith(("合计", "小计"))]
+            lone = [(lab, _note_num(vals[0])) for lab, vals in body
+                    if len(vals) == 1 and _note_num(vals[0]) is not None]
+            placed_end = _note_place([v for _, v in lone], _note_gap(body, 0, target[0]))
+            # 期末列归位后，剩下的行必须刚好把期初列补平，否则两列一起作废
+            if placed_end is not None and abs(
+                sum(v for i, (_, v) in enumerate(lone) if i not in placed_end)
+                - _note_gap(body, 1, target[1])
+            ) <= _tol(target[1]):
+                acc = {d: {} for d in periods}
+                for lab, vals in body:
+                    for i, d in enumerate(periods[:len(vals)]):
+                        n = _note_num(vals[i])
+                        if n is not None:
+                            acc[d][lab] = n * factor
+                for i, (lab, v) in enumerate(lone):
+                    acc[end_date if i in placed_end else begin_date][lab] = v * factor
+                for i, date in enumerate(periods):
+                    out[date] = {
+                        "otherCa": round(ca[i], 2),
+                        "termDeposit": round(sum(
+                            v for k, v in acc[date].items()
+                            if any(r in k for r in NOTE_DEPOSIT_ROWS)), 2),
+                    }
+    for h in NOTE_RESTRICTED_HEADS:
+        rst = _note_block(text, h)
+        if rst:
+            break
+    if rst:
+        cash = _restricted_cash(rst, _note_factor(rst))
+        total = _stmt_ca(balance_by_date, end_date, "货币资金")
+        # 受限额不可能大于货币资金本身：拦住串行/抓错行，宁缺不错
+        if cash is not None and (total is None or cash <= total * 1.05):
+            out.setdefault(end_date, {})["restrictedCash"] = cash
+    return out or None
+
+
+def _stmt_ca(balance_by_date: dict, date: str, field: str = "其他流动资产"):
+    row = balance_by_date.get(date)
+    v = row.get(field) if row else None
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+NOTE_FOOTER = re.compile(r"\d{4} ?年.{0,6}报告$|^\d{1,4} ?/ ?\d{1,4}$")
+
+
+def _restricted_cash(blk: str, factor: float):
+    """受限资产表里货币资金的期末受限额（元），认不出返回 None。
+
+    只取期末：期末的「账面余额 / 账面价值」两格必相等，这个自等就是行判据；期初那
+    一格要靠「中间隔了几个文字单元格」认行界，而 200 家普查实测受限原因会换行成 8~10
+    行、数字还会和下一个单元格挤在同一行（「38,223 保证及冻」），判不准就宁缺——期初
+    由那一年自己的年报去读它自己的期末。
+
+    同一张表里货币资金常拆多行（保证金 + 质押存款），只取第一对必然少算：实测丸美生
+    物 2025 年报第一对 889.6 万、真实 3.04 亿。故多配对一律交给「合计」裁：各对之和
+    ==合计 → 求和；首对==合计 → 说明其余配对是重复行，取首对；都对不上 → 整块作废。
+    合计罩着全部受限科目（存货/固定资产…），所以它只会否掉我们，不会把非现金行抬进来。
+    """
+    toks = blk.split("\n")
+    pairs = [v for i, t in enumerate(toks)
+             if t.endswith("货币资金") and (v := _note_pair(toks, i)) is not None]
+    if not pairs:
+        return None
+    total = _note_total(toks)
+    if len(pairs) == 1:
+        v = pairs[0]
+    elif total is not None and abs(sum(pairs) - total) <= _tol(total):
+        v = sum(pairs)
+    elif total is not None and abs(pairs[0] - total) <= _tol(total):
+        v = pairs[0]
+    else:
+        v = None          # 多配对又没有合计来裁：分不清是分行还是跨列重复
+    if v is None or (total is not None and v > total + _tol(total)):
+        return None
+    return round(v * factor, 2)
+
+
+def _note_pair(toks, i):
+    """第 i 格之后紧跟的一对相等的数（期末账面余额 == 账面价值），认不出返回 None。"""
+    nums = []
+    for cell in toks[i + 1:i + 8]:
+        if NOTE_FOOTER.search(cell):
+            continue
+        for m in NOTE_NUM_LINE.finditer(cell):   # 一行可能挂着数字加下一个单元格的文字
+            v = _note_num(m.group())
+            if v is not None:
+                nums.append(v)
+        if len(nums) >= 2:
+            break
+    return nums[0] if len(nums) >= 2 and abs(nums[0] - nums[1]) <= _tol(nums[1]) else None
+
+
+def _note_total(toks):
+    """「合计」行的期末数，认不出返回 None。"""
+    for i, t in enumerate(toks):
+        if t.startswith("合计"):
+            return _note_pair(toks, i)
+    return None
+
+
+# 定期报告 PDF 解析范围（全市场扩量开关）：同一份下载既出审计意见（详情页展示）
+# 也出现金类附注（净现金口径）。子进程走 spawn 不继承父进程全局变量,故由主进程写
+# 入环境变量后再读。每份 PDF 几 MB、下载+全文解析中位 1.1 s——它是全量抓取的最大耗时项。
 AUDIT_SCOPES = {"full": ("年报", "半年报"), "annual": ("年报",), "none": ()}
 AUDIT_SCOPE = os.getenv("VA_AUDIT_SCOPE", "full")
+# 附注只认最新一期：一份 PDF 自带期末+期初两个数，年报+半年报即覆盖最近三个报告期。
+# 更早的报告仍解析审计意见（维持现状），但不为它们重下 PDF 抽附注——那是 10 年回溯。
+NOTE_LIMITS = {"年报": 1, "半年报": 1}
+# 静态 PDF 与公告接口是两台主机，公告侧的熔断罩不住它；实测单份 1.0~4.4 MB、
+# 下载+全文解析中位 1.1 s，不限流地连打上万次是给自己招 403。
+PDF_INTERVAL = 0.2
+_PDF_FAILS = 0
 
 
-def fetch_audit(code: str, reports: list, scope: str = None):
-    """解析定期报告 PDF 的审计信息（事务所 + 意见类型），写回 reports 条目。
+def is_chinese_doc(text: str) -> bool:
+    """正文是否为中文版：巨潮把 138 份年报、55 份半年报的标题写成「（英文版）」并
+    给了英文正文（泸州老窖 000568 即一例），中文关键词匹配一律落空，实测导致 A 股
+    533 家年报审计意见为空里有 123 家纯粹踩这个坑。取前 4000 字数 CJK 即可分辨。"""
+    return sum(1 for ch in text[:4000] if "一" <= ch <= "鿿") >= 100
 
-    仅年报/半年报可能附审计报告（季报不审计，保持为空）；
-    已解析且 PDF 链接未变化的条目直接复用旧 JSON 缓存，避免重复下载。
+
+def fetch_audit(code: str, reports: list, balance: list = None, scope: str = None):
+    """解析定期报告 PDF：审计信息（事务所 + 意见类型）+ 现金类附注（定期存款/受限货币
+    资金），写回 reports 条目。两者共用同一次下载，抽附注不增加任何一次接口请求。
+
+    仅年报/半年报有审计报告与财务附注（季报不审计、不单列附注，保持为空）；每类
+    只下最新一份凑附注（NOTE_LIMITS），更早的条目复用旧 JSON 缓存里的审计字段。
+    实测单份下载+解析 1.1 s，全市场一轮即 5553 家 × 2 份。
     返回失败下载数（网络抖动时由调用方记录到 errors）。
     """
+    global _PDF_FAILS
     wanted = AUDIT_SCOPES.get(scope or AUDIT_SCOPE, AUDIT_SCOPES["full"])
-    if not wanted:
+    if not wanted or _PDF_FAILS >= 20:  # 连续失败成灾（多为 static 侧限流）就不再自找
         return 0
+    anchors = {}
+    for row in balance or []:
+        day = str(row.get("报告日") or "")[:10]
+        if day:
+            anchors[day] = row
     old = {}
+    done = set()
     try:
         prev = json.loads((COMPANIES_DIR / f"{code}.json").read_text(encoding="utf-8"))
         for r in prev.get("reports") or []:
-            if r.get("audit_firm") or r.get("audit_opinion"):
+            if r.get("audit_firm") or r.get("audit_opinion") or r.get("audit_lang") \
+                    or "notes" in r:
                 old[r.get("pdf_url")] = {
                     "audit_firm": r.get("audit_firm"),
                     "audit_opinion": r.get("audit_opinion"),
+                    "notes": r.get("notes"),
+                    "audit_lang": r.get("audit_lang"),
                 }
+                if "notes" in r or r.get("audit_lang"):
+                    done.add(r.get("pdf_url"))
     except (OSError, ValueError):
         pass
     headers = {"User-Agent": "Mozilla/5.0"}
     failed = 0
+    counts = {}
     for r in reports:
-        if r["category"] not in wanted:
+        cat = r["category"]
+        if cat not in wanted:
             continue
-        cached = old.get(r.get("pdf_url"))
-        if cached:
+        counts[cat] = order = counts.get(cat, 0) + 1
+        url = r.get("pdf_url")
+        cached = old.get(url)
+        if cached and (url in done or order > NOTE_LIMITS.get(cat, 0)):
             r.update(cached)
+            continue
+        if order > NOTE_LIMITS.get(cat, 0):
+            # 超出附注上限的旧报告，有旧审计字段复用、没有就留空——单为凑一个
+            # 半年报事务所名下一份几 MB 的 PDF，不在本轮范围
             continue
         ok = False
         for attempt in range(2):  # 瞬时网络失败自动重试一次
@@ -1141,17 +1476,30 @@ def fetch_audit(code: str, reports: list, scope: str = None):
                 doc = pymupdf.open(stream=resp.content, filetype="pdf")
                 text = "".join(page.get_text() for page in doc)
                 doc.close()
+                # 英文版：中文关键词一律匹配不上，标一行让它进缓存别再重下，
+                # 主防线是 fetch_reports 里按标题排除英文版
+                if not is_chinese_doc(text):
+                    r["audit_lang"] = "en"
+                    ok = True
+                    break
                 firm, opinion = extract_audit(text, r["category"] == "年报")
                 r["audit_firm"] = firm
                 r["audit_opinion"] = opinion
+                periods = note_periods(r)
+                if periods:
+                    r["notes"] = extract_notes(text, periods, anchors)
                 ok = True
                 break
             except Exception:
                 time.sleep(2)
         if not ok:
             failed += 1
+            _PDF_FAILS += 1
             r["audit_firm"] = None
             r["audit_opinion"] = None
+        else:
+            _PDF_FAILS = 0
+        time.sleep(PDF_INTERVAL)
     return failed
 
 
@@ -1269,7 +1617,8 @@ def fetch_reports(code: str):
                 continue
             for _, row in df.head(MAX_PERIODS).iterrows():
                 title = str(row["公告标题"]).strip()
-                if "摘要" in title:
+                # 「摘要」不含报表附注；「英文」版正文让中文关键词解析全部落空
+                if "摘要" in title or "英文" in title:
                     continue
                 date = str(row["公告时间"])[:10]
                 detail = str(row["公告链接"])
@@ -1356,13 +1705,22 @@ def fetch_company_a(code: str, name: str):
         result["reports"] = []
         errors.append(f"reports: {e}")
 
-    # 审计信息：解析年报/半年报 PDF（事务所 + 意见类型），失败不中断
+    # 审计信息 + 现金类附注：解析年报/半年报 PDF（共用同一次下载），失败不中断
     try:
-        failed = fetch_audit(code, result["reports"])
+        failed = fetch_audit(code, result["reports"], result.get("balance"))
         if failed:
             errors.append(f"audit: {failed} 份报告 PDF 解析失败（下次抓取自动重试）")
     except Exception as e:
         errors.append(f"audit: {e}")
+    # 各份报告的附注按报告期归并；清单是公告日倒序，故 setdefault 留住的正是更新鲜的
+    # 那次披露（半年报的期初 == 上一份年报的期末，重述时以新披露为准）
+    notes = {}
+    for r in result["reports"]:
+        for day, v in (r.get("notes") or {}).items():
+            merged = notes.setdefault(day, {})
+            for k, val in v.items():
+                merged.setdefault(k, val)
+    result["notes"] = notes or None
 
     result["errors"] = errors if errors else None
     return result
