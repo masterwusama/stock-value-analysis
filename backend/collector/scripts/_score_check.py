@@ -70,7 +70,8 @@ for f in sorted(companies_dir.glob('*.json')):
     elif (pc is None) != (jc is None):
         diffs.append((code, 'netCashCalc', bool(pc), bool(jc)))
     else:
-        for k in ('cash', 'fin', 'notes', 'otherCA', 'tl', 'mcap', 'report'):
+        for k in ('cash', 'fin', 'notes', 'otherCA', 'tl', 'mcap', 'report',
+                  'termDeposit', 'restricted', 'noteReport'):
             pv, jv = pc.get(k), jc.get(k)
             if pv == jv:
                 continue

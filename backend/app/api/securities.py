@@ -17,6 +17,7 @@ from app.models import (
     FinCashflow,
     FinIncome,
     FinIndicator,
+    FinNote,
     PeriodicReport,
     QuoteDaily,
     ScoreDaily,
@@ -274,7 +275,8 @@ def list_securities(
     cap_max: FiniteF | None = Query(None, ge=0, description="总市值≤(本币元,与响应 market_cap 同单位;港股/美股是 HKD/USD)"),
     # 净现金/市值门槛：与响应 net_cash_ratio 同为小数比率(0.35=35%)，只有列面按百分比显示。
     # 刻意不设 ge/le：造假与管理有 0~100 的定义域、市值恒正，这列三者都不是——实测全市场
-    # −87.7~1.73（深负集中在地产/建筑/AMC），A 股上限 0.71，负数是“净负债”的真实值不是缺失，
+    # −87.7~1.73（两个极值都是港美股，所以分子改读附注的定期存款/受限货币资金后区间端点不动；
+    # 深负仍是地产/建筑/AMC，A 股最深 −61.4），A 股上限 0.84，负数是“净负债”的真实值不是缺失，
     # 编一个界只会把合法的深负区间挡在门外。填错单位(把 50% 手填成 50)表现为结果偏少，
     # 看得见，不靠 422 兜；非有限值(NaN/inf)是另一回事，会一路炸到 SQL 变 500，故由 FiniteF 拦下。
     ncr_min: FiniteF | None = Query(None, description="净现金/市值≥(小数比率,0.35=35%;负数=净负债;含边界)"),
@@ -359,7 +361,7 @@ def list_securities(
     if cap_max is not None:
         conds.append(QuoteDaily.market_cap <= cap_max)
     # 净现金/市值：与上面市值两条共用三值逻辑——没有评分行、或财报科目不足以算出这列的公司
-    # (实测 121 家，港股占比最高)是 NULL，比较不为真→自动排除，不额外兼容。
+    # (实测 126 家：A 58 / 港股 43 / 美股 25)是 NULL，比较不为真→自动排除，不额外兼容。
     # 这里不补 IS NULL 那半边(与 ex_industry 相反)：被去掉的是“算不出来的人”而不是“没被点到的人”。
     # 于是 ≤ 那侧的语义是“算得出来且净负债”，不是“所有不净现金的公司”——这差别写进筛选栏提示。
     if ncr_min is not None:
@@ -580,6 +582,20 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         ).scalars()
     ]
 
+    # 现金类构成附注（定期报告 PDF 解析）：键是报告期，形状与 companies/{code}.json 的
+    # notes 一致，前端 priceReferences 直接读它算净现金/市值
+    notes = {
+        _d(r.report_date): {
+            "termDeposit": _f(r.term_deposit),
+            "restrictedCash": _f(r.restricted_cash),
+            "source": r.source,
+        }
+        for r in db.execute(
+            select(FinNote).where(FinNote.sid == sec.sid).order_by(FinNote.report_date)
+        ).scalars()
+        if r.report_date
+    }
+
     return {
         "code": sec.code, "name": sec.name, "market": sec.market, "currency": sec.currency,
         "updated_at": _dt(sec.updated_at),
@@ -591,6 +607,7 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         "cashflow": fin_rows(FinCashflow),
         "dividends": dividends,
         "reports": reports,
+        "notes": notes,
         "scores": _load_scores(db, sec.sid),
         "events": _load_events(db, sec.sid, sec.name),
     }

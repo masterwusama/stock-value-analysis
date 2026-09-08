@@ -425,6 +425,12 @@
       kv('流通市值', fmtCap(s.float_market_cap)) +
       kv('公允清算价值', '<span title="(流动资产合计-负债合计)/财报股本，格雷厄姆清算口径，随财报更新">' +
         (sc.priceRefs && sc.priceRefs.fairLiq != null ? fmtNum(sc.priceRefs.fairLiq) : '-') + '</span>') +
+      kv('净现金/市值', (function () {
+        var r = sc.priceRefs || {};
+        var tip = netCashFormula(r) ||
+          '净现金/市值（最近一期财报 加权类现金 − 负债合计 ÷ 快照总市值），≥100% 表示扣除全部负债后的类现金仍高于市值';
+        return '<span title="' + tip + '">' + fmtPct(r.netCashRatio) + '</span>';
+      })()) +
       kv('当前股息率', fmtPct(va.divYield)) +
       divBox +
       '</div></div>';
@@ -2049,24 +2055,60 @@
   // 三档都锚定各流派评分项自己的阈值（常量见 valueScores 上方），不做任何反推，
   // 因此参考价只随财报与估值快照变动，不随「当前总分能不能凑到某个数」漂移。
 
-  // 类现金加权口径（与 scoring.py 一致）：科目键 → [展示名, 折算系数]
+  // 类现金加权口径（与 scoring.py 一致）：分项键 → [展示名, 折算系数, 附注字段]
+  // 附注拆得出「定期存款」与「受限货币资金」时，货币资金与其他流动资产都只按可用部分折算，
+  // 故展示名跟着第三项字段是否命中变；附注为空的分项不参与折算也不展示。
   var NET_CASH_W = [
-    ['cash', '货币资金', 1],
+    ['avail', '货币资金', 1, 'restricted'],
     ['fin', '交易性金融资产', 0.7],
     ['notes', '应收票据', 0.4],
-    ['otherCA', '其他流动资产', 0.3]
+    ['otherNonDep', '其他流动资产', 0.3, 'termDeposit'],
+    ['termDeposit', '定期存款', 1]
   ];
+
+  // 净现金分子分项：dep（定期存款）与 rst（受限货币资金）来自财报附注，附注没命中的公司
+  // 两个都是 null，avail / otherNonDep 就退回原科目本身，式子与旧口径逐位相同。
+  // dep 还要夹在「其他流动资产」当期值以内：附注常比资产负债表早一期（三季报无附注），
+  // 上一期的存款到这一期可能已到期，超过科目就按科目上限夹住、科目算不出就整项弃用，宁少不错。
+  function netCashParts(o) {
+    var dep = o.dep;
+    if (dep != null) dep = (o.other == null) ? null : Math.min(dep, o.other);
+    return {
+      avail: (o.cash != null && o.rst != null) ? Math.max(0, o.cash - o.rst) : o.cash,
+      fin: o.fin,
+      notes: o.notes,
+      otherNonDep: (o.other != null && dep != null) ? Math.max(0, o.other - dep) : o.other,
+      termDeposit: dep
+    };
+  }
+
+  // 附注 → 报告日不晚于 day 的最近一份（附注只有 06-30 与 12-31 两个报告日，而最新一期
+  // 资产负债常常是三季报，故按「上一次披露的构成」用）；返回 [报告日, 值] 或 null
+  function noteLatest(notes, day) {
+    if (!notes || typeof notes !== 'object' || !day) return null;
+    var best = null;
+    Object.keys(notes).forEach(function (k) {
+      var v = notes[k];
+      if (k.length < 10 || !v || typeof v !== 'object') return;
+      var d10 = k.slice(0, 10);
+      if (d10 <= day && (best == null || d10 > best[0])) best = [d10, v];
+    });
+    return best;
+  }
 
   // 净现金/市值 代入计算式（多行文本，桌面 title 与移动端点击浮层共用）；无明细返回空串
   function netCashFormula(refs) {
     var c = refs && refs.netCashCalc;
     if (!c || !c.mcap) return '';
+    var p = netCashParts({ cash: c.cash, fin: c.fin, notes: c.notes,
+                           other: c.otherCA, dep: c.termDeposit, rst: c.restricted });
     var wSum = 0, items = [];
     NET_CASH_W.forEach(function (it) {
-      var v = c[it[0]];
+      var v = p[it[0]];
       if (v == null) return;               // 缺失科目不参与折算也不展示
       wSum += v * it[2];
-      items.push(it[1] + fmtMoney(v) + '×' + it[2]);
+      var label = it[1] + (it[3] && c[it[3]] != null ? '(' + (it[3] === 'restricted' ? '扣受限' : '非存款') + ')' : '');
+      items.push(label + fmtMoney(v) + '×' + it[2]);
     });
     var lines = [
       '净现金/市值 ＝（' + items.join(' ＋ ') + ' − 负债合计' + fmtMoney(c.tl) + '）÷ 总市值' + fmtMoney(c.mcap),
@@ -2074,6 +2116,13 @@
         ' ＝ ' + ((wSum - c.tl) / c.mcap * 100).toFixed(1) + '%'
     ];
     if (c.report) lines.push('资产负债表：' + c.report);
+    // 分项标签带了「(扣受限)」「(非存款)」，这里给出拆出的那个数与它是哪一期披露的
+    var split = [];
+    if (c.termDeposit != null) split.push('定期存款' + fmtMoney(c.termDeposit) + '（自其他流动资产拆出）');
+    if (c.restricted != null) split.push('受限货币资金' + fmtMoney(c.restricted) + '（自货币资金扣出）');
+    if (split.length) {
+      lines.push('附注拆分：' + split.join(' ＋ ') + (c.noteReport ? '，附注 ' + c.noteReport : ''));
+    }
     return lines.join('\n');
   }
 
@@ -2151,7 +2200,9 @@
       }
     }
     // 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
-    // 类现金保守折算：货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产×0.3；
+    // 类现金保守折算：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
+    //                ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0；
+    // 定期存款与受限货币资金来自财报附注（PDF 解析），附注缺失时两者为空、式子退回旧口径；
     // 分子随财报更新（含季报），分母随行情快照，缺失科目按 0 折入
     var lastBaAll = baList[baList.length - 1];
     function gv(key) {
@@ -2163,14 +2214,22 @@
     var notesV = gv('应收票据');
     var otherV = gv('其他流动资产');
     var tlLatest = gv('负债合计');
+    var baDay = String((lastBaAll || {})['报告日'] || '').slice(0, 10);
+    var noteFound = lastBaAll ? noteLatest(d.notes, baDay) : null;
+    var noteVal = noteFound ? noteFound[1] : {};
+    var depV = (typeof noteVal.termDeposit === 'number') ? noteVal.termDeposit : null;
+    var rstV = (typeof noteVal.restrictedCash === 'number') ? noteVal.restrictedCash : null;
+    var ncParts = netCashParts({ cash: cashV, fin: finV, notes: notesV, other: otherV, dep: depV, rst: rstV });
     function wgt(v, k) { return v != null ? v * k : 0; }
-    var weightedCash = wgt(cashV, 1) + wgt(finV, 0.7) + wgt(notesV, 0.4) + wgt(otherV, 0.3);
+    var weightedCash = wgt(ncParts.avail, 1) + wgt(ncParts.fin, 0.7) + wgt(ncParts.notes, 0.4) + wgt(ncParts.otherNonDep, 0.3) + wgt(ncParts.termDeposit, 1);
     var hasCore = cashV != null && tlLatest != null && mcap0;
     var netCashRatio = hasCore ? (weightedCash - tlLatest) / mcap0 : null;
     var netCashCalc = hasCore ? {
       cash: cashV, fin: finV, notes: notesV, otherCA: otherV,
       tl: tlLatest, mcap: mcap0,
-      report: String(lastBaAll['报告日'] || '').slice(0, 10) || null
+      report: baDay || null,
+      termDeposit: ncParts.termDeposit, restricted: rstV,
+      noteReport: noteFound ? noteFound[0] : null
     } : null;
     var fpe = fairPe(va.netCagr5);
     // 低于一分钱（含负值与浮点零渣）的参考价一律视为无
@@ -2732,5 +2791,6 @@
   /* ---------------- 启动(已移交 Vue 组件) ---------------- */
 
   export { renderDetail, showDetail, state, valueAnalysis, valueScores, priceReferences,
+    netCashFormula,
     cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
     unbindResize };

@@ -717,6 +717,21 @@ def _latest_period_is_annual(rows):
     return bool(periods) and max(periods)[5:7] == '12'
 
 
+def _note_latest(notes, day):
+    """附注（其他流动资产构成 / 受限货币资金）→ 报告日不晚于 day 的最近一份。
+
+    附注只在半年报与年报里披露（06-30、12-31 两个报告日），而最新一期资产负债常常
+    是三季报，故按「上一次披露的构成」用。日期都是 YYYY-MM-DD，字符串序即时间序。
+    返回值带上命中的报告日，附注字典本身只有数值没有日期。
+    """
+    if not isinstance(notes, dict) or not day:
+        return None
+    got = [(k[:10], v) for k, v in notes.items()
+           if isinstance(k, str) and len(k) >= 10 and k[:10] <= day
+           and isinstance(v, dict)]
+    return max(got, key=lambda x: x[0]) if got else None
+
+
 def price_references(d, va):
     """对应 JS priceReferences：公允清算价值 + 四大流派买入/保守卖出/公允卖出价格参考
     fairLiq = 每股公允清算价值（流动资产合计-负债合计）/财报股本，格雷厄姆清算口径"""
@@ -798,7 +813,9 @@ def price_references(d, va):
             if adj_net < RECURRING_MIN_RATIO * ttm_net:
                 eps_ttm = (eps_ttm * adj_net / ttm_net) if adj_net > 0 else None
     # 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
-    # 类现金保守折算：货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产×0.3；
+    # 类现金保守折算：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
+    #                ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0；
+    # 定期存款与受限货币资金来自财报附注（PDF 解析），附注缺失时两者为空、式子退回旧口径；
     # 分子随财报更新（含季报），分母随行情快照，缺失科目按 0 折入
     latest_ba = ba_list[-1] if ba_list else None
 
@@ -811,11 +828,30 @@ def price_references(d, va):
     notes_v = gb('应收票据')
     other_v = gb('其他流动资产')
     tl_latest = gb('负债合计')
+    # 附注拆分：「其他流动资产」里是定期存款还是留抵税额，科目层分不出来，而折算系数
+    # 差 3 倍（实测广信股份 37.02 亿里 36.91 亿是定期存款）。附注只认闭合得上的数，
+    # 没有就当不存在——届时 dep_v/rst_v 皆 None，下面式子与旧口径逐位相同。
+    found = _note_latest(d.get('notes'), str(latest_ba.get('报告日') or '')[:10]) \
+        if latest_ba else None
+    note_day, note = (found if found else (None, {}))
+    dep_v = note.get('termDeposit')
+    dep_v = dep_v if isinstance(dep_v, (int, float)) else None
+    rst_v = note.get('restrictedCash')
+    rst_v = rst_v if isinstance(rst_v, (int, float)) else None
+    # 受限的货币资金动不了，按 0 折；抽取侧已保证受限额不超过货币资金，这里再夹一次
+    avail_v = max(0.0, cash_v - rst_v) if (cash_v is not None and rst_v is not None) else cash_v
+    # 定期存款是「其他流动资产」里拆出来的一块，不能超过该科目的当期值：附注常比资产负债
+    # 表早一期（三季报无附注），上一期的存款到这一期可能已到期或转出，科目也整体算不出时
+    # 更无从断定它还在。超过就按科目上限夹住、科目缺失就不计，宁少不错。
+    if dep_v is not None:
+        dep_v = None if other_v is None else min(dep_v, other_v)
+    other_nd = max(0.0, other_v - dep_v) if (other_v is not None and dep_v is not None) else other_v
 
     def gw(v, k):
         return (v * k) if v is not None else 0.0
 
-    weighted_cash = gw(cash_v, 1.0) + gw(fin_v, 0.7) + gw(notes_v, 0.4) + gw(other_v, 0.3)
+    weighted_cash = (gw(avail_v, 1.0) + gw(fin_v, 0.7) + gw(notes_v, 0.4)
+                     + gw(other_nd, 0.3) + gw(dep_v, 1.0))
     has_core = (cash_v is not None and tl_latest is not None and mcap0)
     net_cash_ratio = ((weighted_cash - tl_latest) / mcap0) if has_core else None
     net_cash_calc = ({'cash': cash_v,
@@ -824,7 +860,10 @@ def price_references(d, va):
                       'otherCA': other_v,
                       'tl': tl_latest,
                       'mcap': mcap0,
-                      'report': str(latest_ba.get('报告日') or '')[:10] or None}
+                      'report': str(latest_ba.get('报告日') or '')[:10] or None,
+                      'termDeposit': dep_v,
+                      'restricted': rst_v,
+                      'noteReport': note_day}
                      if has_core else None)
     fair_pe = _fair_pe(va.get('netCagr5'))
 
