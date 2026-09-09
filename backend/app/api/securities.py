@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """证券接口:分页列表 + 详情(响应结构与原 companies/*.json 对齐,降低前端移植成本)。"""
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from math import isfinite
 from typing import Annotated, Literal
 
@@ -22,6 +22,7 @@ from app.models import (
     QuoteDaily,
     ScoreDaily,
     Security,
+    ValuationPctile,
     WindEvent,
     WindHolder,
 )
@@ -87,6 +88,10 @@ class SecurityItem(BaseModel):
     # 价格参考(原列表"买/保/公"四流派合并列 + 清算/净现金)
     fair_liq: float | None = None
     net_cash_ratio: float | None = None
+    # PB 近十年历史分位（Wind 口径，百分比数值 0~100）。列表页只放这一列：PE 分位对亏损
+    # 标的恒置空会留大片 "-"，PS 分位没有并列的可读宽度。days 是外源实际用的交易日数。
+    pb_pctile: float | None = None
+    pb_days: int | None = None
     buy_graham_agg: float | None = None
     sell_cons_graham_agg: float | None = None
     sell_fair_graham_agg: float | None = None
@@ -106,6 +111,9 @@ class SecurityListOut(BaseModel):
     page: int
     page_size: int
     trade_date: date | None = None
+    # 估值分位列的截止日期：那一列是外源(Wind)按批滚动铺的，采集链路一旦停摆(客户端掉登录、
+    # skill 改路由名、积分耗尽)整列会静默停在旧日期上，故单独给一个日期让页面标出来
+    valuation_date: date | None = None
     items: list[SecurityItem]
 
 
@@ -125,6 +133,8 @@ SORT_COLS = {
     # 现价、净现金/市值(后者本身已是比率，跨标的可比，直接按值排)
     "price": QuoteDaily.price,
     "net_cash_ratio": ScoreDaily.net_cash_ratio,
+    # PB 十年分位：升序 = 处在自身十年最低那一头（分位本身已是跨市场可比的 0~100）
+    "pb_pctile": ValuationPctile.pb_pctile,
 }
 # 价格参考列的排序口径：买价与每股清算价值都是"每家自己的"绝对值，跨标的比大小没有意义
 # (5 元的票不比 50 元的便宜；每股清算 860 的 NVR 现价 6327，按绝对值反倒占了榜首)，
@@ -245,6 +255,9 @@ def _industry_set(db: Session) -> set[str]:
 # 行情/评分整批按交易日落盘，各证券最新一行必落在最近 RECENT_DATES 个交易日内
 # （美股/港股收盘滞后数日、周末补跑同样覆盖），故限定窗口后再取 max，代价与表总量无关。
 RECENT_DATES = 15
+# 估值分位只留"最近一次观测"，但一轮跨天铺完约 1.8 天，各标的的观测日本身就错开着；
+# 45 天容得下机器关机/长假的正常滞后，再旧就是 Wind 链路停摆，那一列宁可显示 "-"。
+VAL_STALE_DAYS = 45
 
 
 def _latest_sub(db: Session, model, label):
@@ -281,6 +294,10 @@ def list_securities(
     # 看得见，不靠 422 兜；非有限值(NaN/inf)是另一回事，会一路炸到 SQL 变 500，故由 FiniteF 拦下。
     ncr_min: FiniteF | None = Query(None, description="净现金/市值≥(小数比率,0.35=35%;负数=净负债;含边界)"),
     ncr_max: FiniteF | None = Query(None, description="净现金/市值≤(小数比率,0.35=35%;用于专门捞净负债标的;含边界)"),
+    # PB 十年分位：与响应 pb_pctile 同单位，是 0~100 的百分比数值（30 = 处于自身十年 30% 位），
+    # 不要按 net_cash_ratio 的小数习惯填 0.35。这一列定义域就是 0~100，故给 ge/le。
+    pbp_min: FiniteF | None = Query(None, ge=0, le=100, description="PB 十年分位≥(0~100,含边界)"),
+    pbp_max: FiniteF | None = Query(None, ge=0, le=100, description="PB 十年分位≤(0~100,含边界;5=十年最便宜的那一档)"),
     wind: bool = Query(False, description="事件增强分档：造假/管理两列的筛选与排序改用基础分+Wind 事件增量（响应里两列仍为基础分，显示值由前端叠 wind_* 字段换算）"),
     buys: str | None = Query(None, max_length=64, description="买点复选(逗号分隔,同时满足)"),
     sells: str | None = Query(None, max_length=64, description="卖点复选(现价≥公允卖价即命中,公允恒高于保守)"),
@@ -301,6 +318,11 @@ def list_securities(
     """
     latest_quote = _latest_sub(db, QuoteDaily, "qdate")
     latest_score = _latest_sub(db, ScoreDaily, "sdate")
+    # 估值分位每标的只存一行最新观测（滚动一轮要跨天铺完，故不用 _latest_sub 找截面），
+    # 但同样要防"整表停在旧日期"：Wind 采集停摆时客户端掉登录/改路由名都会让分位留在
+    # 几个月前，那种值参与排序比显示 "-" 更坏，故只接受距全表最新观测日 VAL_STALE_DAYS 内的行。
+    val_date = db.execute(select(func.max(ValuationPctile.trade_date))).scalar()
+    val_floor = (val_date - timedelta(days=VAL_STALE_DAYS)) if val_date else date.max
     # 造假/管理两列的口径跟着 wind 档切（旧内嵌页的“排序/筛选跟随”）：无事件数据公司在
     # Wind 档下表达式出 NULL，既排到末尾也被 fraud_max/mgmt_min 自动排除，与列页显示“-”一致
     fraud_col = _wind_score(ScoreDaily.fraud, ScoreDaily.wind_fraud_delta) if wind else ScoreDaily.fraud
@@ -310,7 +332,7 @@ def list_securities(
     ex_names = _flt_keys(ex_industry, _industry_set(db), "ex_industry") if ex_industry else []
 
     q = (
-        select(Security, QuoteDaily, ScoreDaily)
+        select(Security, QuoteDaily, ScoreDaily, ValuationPctile)
         .join(
             latest_quote, latest_quote.c.sid == Security.sid, isouter=True,
         )
@@ -325,6 +347,11 @@ def list_securities(
         .join(
             ScoreDaily,
             and_(ScoreDaily.sid == Security.sid, ScoreDaily.trade_date == latest_score.c.sdate),
+            isouter=True,
+        )
+        .join(
+            ValuationPctile,
+            and_(ValuationPctile.sid == Security.sid, ValuationPctile.trade_date >= val_floor),
             isouter=True,
         )
     )
@@ -368,6 +395,12 @@ def list_securities(
         conds.append(ScoreDaily.net_cash_ratio >= ncr_min)
     if ncr_max is not None:
         conds.append(ScoreDaily.net_cash_ratio <= ncr_max)
+    # PB 十年分位：没铺到的标的、以及被采集侧判不可信而置空的（亏损股的 PE 分位、序列停在
+    # 过去的日期）都是 NULL，与上面几列同一套三值逻辑→自动排除，不补 IS NULL 那半边。
+    if pbp_min is not None:
+        conds.append(ValuationPctile.pb_pctile >= pbp_min)
+    if pbp_max is not None:
+        conds.append(ValuationPctile.pb_pctile <= pbp_max)
     factor = (discount if discount is not None else 100.0) / 100.0
     for k in _flt_keys(buys, FLT_BUY_COLS, "buys"):
         conds.append(QuoteDaily.price <= FLT_BUY_COLS[k] * factor)
@@ -419,6 +452,8 @@ def list_securities(
             wind_hit=bool(score is not None and score.wind_overlay is not None),
             fair_liq=_f(score.fair_liq) if score else None,
             net_cash_ratio=_f(score.net_cash_ratio) if score else None,
+            pb_pctile=_f(val.pb_pctile) if val else None,
+            pb_days=val.pb_days if val else None,
             buy_graham_agg=_f(score.buy_graham_agg) if score else None,
             sell_cons_graham_agg=_f(score.sell_cons_graham_agg) if score else None,
             sell_fair_graham_agg=_f(score.sell_fair_graham_agg) if score else None,
@@ -432,12 +467,13 @@ def list_securities(
             sell_cons_buffett=_f(score.sell_cons_buffett) if score else None,
             sell_fair_buffett=_f(score.sell_fair_buffett) if score else None,
         )
-        for sec, quote, score in rows
+        for sec, quote, score, val in rows
     ]
     return SecurityListOut(total=total, page=page, page_size=page_size,
                            # 展示用全局最新评分日(行内数据已逐证券取各自最新)
                            trade_date=db.execute(
                                select(func.max(ScoreDaily.trade_date))).scalar_one(),
+                           valuation_date=val_date,
                            items=items)
 
 
@@ -596,6 +632,23 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         if r.report_date
     }
 
+    # 估值分位（Wind 口径的近十年分位，每标的一行最新观测）：只作展示，不参与四派评分与
+    # 参考价。单项可能为 NULL——亏损股的 PE 分位、外源序列停更都在采集侧置了空。列表页对
+    # 陈旧行做了钳位（排序不能被半年前的分位污染），详情页不钳：这里把观测日一起给出去，
+    # 新旧由看的人判断，而不是把值抹成 "-" 之后什么都不知道。
+    vrow = db.execute(
+        select(ValuationPctile).where(ValuationPctile.sid == sec.sid)
+    ).scalar_one_or_none()
+    valuation = None
+    if vrow is not None:
+        valuation = {
+            "date": _d(vrow.trade_date), "source": "Wind",
+            "window": "10y",
+            "pe": {"pct": _f(vrow.pe_pctile), "days": vrow.pe_days},
+            "pb": {"pct": _f(vrow.pb_pctile), "days": vrow.pb_days},
+            "ps": {"pct": _f(vrow.ps_pctile), "days": vrow.ps_days},
+        }
+
     return {
         "code": sec.code, "name": sec.name, "market": sec.market, "currency": sec.currency,
         "updated_at": _dt(sec.updated_at),
@@ -608,6 +661,7 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         "dividends": dividends,
         "reports": reports,
         "notes": notes,
+        "valuationPctile": valuation,
         "scores": _load_scores(db, sec.sid),
         "events": _load_events(db, sec.sid, sec.name),
     }
