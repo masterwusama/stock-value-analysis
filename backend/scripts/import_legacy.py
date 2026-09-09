@@ -7,6 +7,7 @@
                                  fin_balance / fin_cashflow / dividend / periodic_report
     data/events/*.json         → wind_event / wind_holder
     data/events/index.json     → score_daily.wind_*(事件增量覆盖层)
+    data/valuation/latest.json → valuation_pctile(Wind 口径 PE/PB/PS 十年分位截面)
     agro-price/data/products.json → agro_product / agro_price
     agro-price/data/edb.json   → edb_indicator / edb_value
 
@@ -57,6 +58,7 @@ from app.models import (
     QuoteDaily,
     ScoreDaily,
     Security,
+    ValuationPctile,
     WindEvent,
     WindHolder,
 )
@@ -162,6 +164,10 @@ FIN_KEYS = ("sid", "report_date", "updated_at", "extras")
 # 附注表：定期存款 / 受限货币资金 + 出自哪份披露
 NOTE_KEYS = ("sid", "report_date", "term_deposit", "restricted_cash",
              "source", "updated_at")
+# 估值分位表（外源截面，每标的一行）。与其它表不同：源 latest.json 是累计快照，
+# 本轮判定不可信（亏损 / 序列停更）就是要抹空，不能 COALESCE 留住上一轮的假数
+PCT_KEYS = ("sid", "trade_date", "pe_pctile", "pb_pctile", "ps_pctile",
+            "pe_days", "pb_days", "ps_days", "source", "updated_at")
 # 证券主数据：名称/行业/上市日缺失时不用 NULL 覆盖已有值
 SEC_UPD = ("name=VALUES(name), "
            "industry=COALESCE(VALUES(industry), industry), "
@@ -687,10 +693,46 @@ def import_edb(db, stats):
                     stats["edb_value_delete_skipped"] += 1
 
 
+def import_valuation(db, stats):
+    """valuation/latest.json → valuation_pctile（每个标的一行最新观测）。
+
+    分位值本身已在采集侧判过可信度（亏损、序列停更、值域越界都置空），这里只按
+    (code, market) 找 sid；三项分位全空的标的整行不落——列表页那一格本来就该是“-”，
+    留一行全 NULL 只会让“铺到但没有效值”和“根本没铺到”两种状态混在一起没法对账。
+    """
+    path = DATA_DIR / "valuation" / "latest.json"
+    if not path.exists():
+        return  # 首轮采集还没跑过：无源可读不是回灌失败
+    src = json.loads(path.read_text(encoding="utf-8"))
+    sids = load_sid_map(db)
+    w = _Writer(db, stats, ValuationPctile, PCT_KEYS, mode="upsert", upd_skip=("sid",))
+    for key, v in (src.get("items") or {}).items():
+        market, _, code = key.partition(":")
+        sid = sids.get((code, market))
+        if sid is None:
+            stats["valuation.skipped_nosec"] += 1
+            continue
+        tdate = parse_date(v.get("trade_date"))
+        pcts = {m: (v.get(m) or {}).get("pct") for m in ("pe", "pb", "ps")}
+        if not tdate or all(pcts[m] is None for m in pcts):
+            stats["valuation.skipped_empty"] += 1
+            continue
+        days = {m: (v.get(m) or {}).get("days") for m in ("pe", "pb", "ps")}
+        w.add(dict(
+            sid=sid, trade_date=tdate, updated_at=parse_dt(v.get("fetched_at")) or datetime.now(),
+            pe_pctile=pcts["pe"], pb_pctile=pcts["pb"], ps_pctile=pcts["ps"],
+            pe_days=days["pe"], pb_days=days["pb"], ps_days=days["ps"],
+            source={m: {"windCode": (v.get(m) or {}).get("wind_code"),
+                        "date": (v.get(m) or {}).get("date"), "round": v.get("round")}
+                    for m in ("pe", "pb", "ps")},
+        ))
+    w.flush()
+
+
 TABLES = [
     "wind_holder", "wind_event", "score_daily", "periodic_report", "dividend",
     "fin_cashflow", "fin_balance", "fin_income", "fin_indicator", "fin_note",
-    "quote_daily",
+    "quote_daily", "valuation_pctile",
     "security", "agro_price", "agro_product", "edb_value", "edb_indicator", "etl_job_log",
 ]
 
@@ -742,6 +784,7 @@ def main():
         import_events(db, stats)
         import_agro(db, stats)
         import_edb(db, stats)
+        import_valuation(db, stats)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),
             status="success", message=f"导入完成: {dict(stats)}", stats=dict(stats),
