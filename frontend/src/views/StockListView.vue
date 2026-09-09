@@ -26,6 +26,9 @@ const COLS = [
   // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
   { key: 'fair_liq', label: '清算', ratio: true },
   { key: 'net_cash_ratio', label: '净现金/市值' },
+  // PB 十年分位（外源 Wind 口径）：只放这一列，PE/PS 分位在详情页——
+  // PE 分位对亏损股无意义（一片 “-”）、PS 分位又宽又少人看，摆进这张表只会稀释信号。
+  { key: 'pb_pctile', label: 'PB十年分位' },
   // 价格参考合并列:每流派一列,竖排 买→保守/公允(同原站 listCells)
   // 列头排序键 buy_* 走的是"买入性价比"（现价相对买价的折价深度，后端算），不是买价绝对值；
   // 格内保守/公允两档小字仍按各自卖价排。键名与 score_daily 列/SecurityItem 字段保持一致。
@@ -60,9 +63,9 @@ const loading = ref(false)
 const error = ref('')
 
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(现价≥公允卖价即命中,公允恒高于保守);空值=不限
-// 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)、净现金/市值区间(%)
+// 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)、净现金/市值区间(%)、PB 十年分位区间(0~100)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
-const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', buys: [], discount: '', sells: [] })
+const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', buys: [], discount: '', sells: [] })
 // 市值框让用户填“亿”(与列头 市值(亿) 同口径),发请求时转回接口单位元：
 // 接口接受本币元、响应 market_cap 也是本币元,两处同一单位才能拿着返回值直接核对边界。
 // Math.round 而非直乘：1.1 * 1e8 = 110000000.00000001 这种尾差会把恰好在边上的票顶出筛选。
@@ -88,6 +91,19 @@ const NCR_TIP = '净现金/市值区间（单位：%）：≥0 表示加权类�
 // 这一列取值本身的悬浮说明：桌面表格格与移动端卡片徽标共用，不写成两份
 const NCR_CELL_TIP = '净现金/市值（最近一期财报），≥100% 表示扣除全部负债后的类现金仍高于市值；'
   + '其他流动资产里的定期存款与货币资金里的受限部分按财报附注拆分折算，逐家代入式见详情页 ① 快照的该格'
+// PB 十年分位：口径整份在 Wind 那边（窗口长度、样本是否含极早期点、亏损期计不计），我们无法复算也不去复算，
+// 所以两处文案都直说「Wind 口径」，并且这一列不参与四派评分与买卖点，只用来筛与看。
+const PB_TIP = 'PB 近十年分位（Wind 口径，0~100，越低越接近十年低位）：分位由 Wind 按自己的窗口与样本算，'
+  + '我们只负责取回与置空（PB 为负或算不出、外源日期过旧的都置空，实测亏损/停牌股会置空）；'
+  + '未覆盖或已置空的公司（列面显示 -）不进区间，设任一门槛即被排除；'
+  + '采集是分轮铺的，切到港股/美股 tab 时覆盖度低于 A 股，具体截止日看格内悬浮说明'
+// 格内一位小数 + %：库里存的就是 0~100 的分位数，不能再走 score2（那套是 0~1 比率口径，会多乘 100）
+const pbCell = (s) => (s.pb_pctile == null ? '-' : fmt(s.pb_pctile, 1) + '%')
+const pbCellTip = (s) => 'PB 近十年分位（Wind 口径）：十年内 PB 低于当前值的交易日占比 '
+  + (s.pb_pctile == null ? '（无值）' : fmt(s.pb_pctile, 1) + '%')
+  + '，样本 ' + (s.pb_days == null ? '-' : s.pb_days) + ' 个交易日'
+  + (data.value?.valuation_date ? '，外源观测日 ' + data.value.valuation_date : '')
+  + '；点击列头可按分位排序，此列仅展示与筛选，不进四派评分'
 
 // Wind 事件增强分档：造假/管理两列在“基础财报分”与“基础分 + 一次性 Wind 事件增量”之间切换，
 // 显示值在本页算（dispScore），筛选与排序把 wind=1 透给后端用同一公式的 SQL 表达式，
@@ -132,7 +148,7 @@ function toggleFlt(arr, key, on) {
   if (!on && i >= 0) arr.splice(i, 1)
 }
 function resetFlt() {
-  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', buys: [], discount: '', sells: [] })
+  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', buys: [], discount: '', sells: [] })
   industry.value = ''
   exIndustries.value = []
   exKw.value = ''
@@ -147,6 +163,7 @@ const fltCount = () =>
   (flt.fraudMax !== '' ? 1 : 0) + (flt.mgmtMin !== '' ? 1 : 0) +
   (flt.capMin !== '' ? 1 : 0) + (flt.capMax !== '' ? 1 : 0) +
   (flt.ncrMin !== '' ? 1 : 0) + (flt.ncrMax !== '' ? 1 : 0) +
+  (flt.pbpMin !== '' ? 1 : 0) + (flt.pbpMax !== '' ? 1 : 0) +
   (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) +
   (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0)
 
@@ -182,6 +199,9 @@ async function load() {
       cap_max: flt.capMax === '' ? null : capYiToYuan(flt.capMax),
       ncr_min: flt.ncrMin === '' ? null : pctToRatio(flt.ncrMin),
       ncr_max: flt.ncrMax === '' ? null : pctToRatio(flt.ncrMax),
+      // 不换算：框里就是 0~100 的分位数，接口 pbp_* 同一数域，多乘一道只会引入尾差
+      pbp_min: flt.pbpMin === '' ? null : flt.pbpMin,
+      pbp_max: flt.pbpMax === '' ? null : flt.pbpMax,
       buys: flt.buys.length ? flt.buys.join(',') : null,
       sells: flt.sells.length ? flt.sells.join(',') : null,
       discount: (flt.discount !== '' && flt.buys.length) ? flt.discount : null,
@@ -341,6 +361,8 @@ const fltSummary = computed(() => {
   // 带 % 而非裸数字：框里填的就是百分数，摘要省掉单位会被读成倍数（净现金≥12.9）
   if (flt.ncrMin !== '') parts.push('净现金≥' + flt.ncrMin + '%')
   if (flt.ncrMax !== '') parts.push('净现金≤' + flt.ncrMax + '%')
+  if (flt.pbpMin !== '') parts.push('PB分位≥' + flt.pbpMin + '%')
+  if (flt.pbpMax !== '') parts.push('PB分位≤' + flt.pbpMax + '%')
   if (flt.buys.length) parts.push(flt.buys.length + '个买点' + (flt.discount !== '' ? '×' + flt.discount + '%' : ''))
   if (flt.sells.length) parts.push(flt.sells.length + '个卖点')
   if (industry.value) parts.push(industry.value)
@@ -436,6 +458,10 @@ const REF_COLS = COLS.filter((c) => c.ref)
         <input v-model="flt.ncrMin" type="number" step="5" placeholder="不限" @change="applyFlt">%</label>
       <label class="num" :title="NCR_TIP">净现金/市值≤
         <input v-model="flt.ncrMax" type="number" step="5" placeholder="不限" @change="applyFlt">%</label>
+      <label class="num" :title="PB_TIP">PB十年分位≥
+        <input v-model="flt.pbpMin" type="number" min="0" max="100" step="5" placeholder="不限" @change="applyFlt">%</label>
+      <label class="num" :title="PB_TIP">PB十年分位≤
+        <input v-model="flt.pbpMax" type="number" min="0" max="100" step="5" placeholder="不限" @change="applyFlt">%</label>
       <span class="t" title="多选需同时满足:现价 ≤ 买价 × 折扣%">买点</span>
       <label v-for="[k, lab] in SCHOOLS" :key="'b' + k" class="cb">
         <input type="checkbox" :checked="flt.buys.includes(k)"
@@ -455,6 +481,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         {{ MGMT_TIP }}<br>
         {{ CAP_TIP }}<br>
         {{ NCR_TIP }}<br>
+        {{ PB_TIP }}<br>
         买：现价 ≤ 买价×折扣；卖：现价 ≥ 公允卖价（公允恒高于保守卖价，达到公允即两档都过）；缺数据的公司自动排除<br>
         排除行业：勾中的行业整体从结果里摘掉（多选是「都排除」），与「行业」下拉同时用则是 AND；没有行业标注的公司不参与排除、始终保留
       </p>
@@ -504,6 +531,9 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <span class="sc-bd" :class="{ 'sc-good': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                   :title="NCR_CELL_TIP">
               <em>净现金/市值</em><b>{{ score2(s.net_cash_ratio) }}</b></span>
+            <span class="sc-bd" :class="{ 'sc-good': s.pb_pctile != null && s.pb_pctile <= 20 }"
+                  :title="pbCellTip(s)">
+              <em>PB十年分位</em><b>{{ pbCell(s) }}</b></span>
           </div>
 
           <div class="sc-scores">
@@ -563,6 +593,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
                 :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                 :title="NCR_CELL_TIP">{{ score2(s.net_cash_ratio) }}</td>
+            <td :class="{ 'r-hit': s.pb_pctile != null && s.pb_pctile <= 20 }" :title="pbCellTip(s)">{{ pbCell(s) }}</td>
             <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :title="refTitle(s, c.school)">
               <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>
               <span class="rf-sell">

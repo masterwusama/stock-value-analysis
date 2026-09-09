@@ -431,6 +431,27 @@
           '净现金/市值（最近一期财报 加权类现金 − 负债合计 ÷ 快照总市值），≥100% 表示扣除全部负债后的类现金仍高于市值';
         return '<span title="' + tip + '">' + fmtPct(r.netCashRatio) + '</span>';
       })()) +
+      // 估值分位只是"当前估值在自己十年历史里的位置"，窗口/样本/亏损期是否计入全由外源定，
+      // 故这一格纯展示，既不参与上面的四派评分，也不进参考价。
+      kv('估值分位(10年)', (function () {
+        var v = d.valuationPctile;
+        if (!v) return '-';
+        var one = function (k) {
+          var o = v[k] || {};
+          return k.toUpperCase() + ' ' + (o.pct == null ? '-' : Number(o.pct).toFixed(1) + '%');
+        };
+        var parts = [];
+        ['pe', 'pb', 'ps'].forEach(function (k) {
+          var o = v[k] || {};
+          if (o.pct != null) parts.push(k.toUpperCase() + ' 样本 ' + (o.days == null ? '-' : o.days) + ' 个交易日');
+        });
+        var tip = '市盈率(TTM)／市净率／市销率(TTM) 各自近十年分位（外源 Wind 口径，0~100，越低说明当前估值在自己十年里越靠下）；'
+          + '分位窗口、样本起点与亏损期处理均随外源，本系统只做展示与筛选，不进四派评分与买卖点参考价。'
+          + '置空表示外源无值或已被判为不可信（如市盈率为负、外源日期过旧）。'
+          + (v.date ? ' 外源观测日 ' + v.date + '。' : '')
+          + (parts.length ? ' ' + parts.join('，') + '。' : '');
+        return '<span title="' + tip + '">' + one('pe') + ' / ' + one('pb') + ' / ' + one('ps') + '</span>';
+      })()) +
       kv('当前股息率', fmtPct(va.divYield)) +
       divBox +
       '</div></div>';
