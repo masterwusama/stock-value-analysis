@@ -74,6 +74,10 @@ JOBS = {
     "agro": [(AGRO_SCRIPTS, "fetch_prices.py")],
     "edb": [(AGRO_SCRIPTS, "fetch_edb.py")],
     "events": [(SCRIPTS, "fetch_events.py")],
+    # valuation：PE/PB/PS 十年分位（Wind）。同样吃本机 Wind 客户端与每日积分，且一轮铺不
+    # 完全市场（70 批 × 2 = 140 次 > 日预算），靠 data/valuation/state.json 记游标跨天续跑，
+    # 所以是独立 job、每天固定跑一次，不并进 stock/deep。
+    "valuation": [(SCRIPTS, "fetch_valuation.py")],
     "import": [],
 }
 
@@ -89,6 +93,10 @@ JOB_DEFAULTS = {
     "deep": ["--all-market", "--hk-connect", "--us-indexes", "--workers", "4",
              "--resume", "--max-age", "6", "--chunk", "400", "--flush-every", "200",
              "--audit-scope", "full", "--quiet"],
+    # 80 次/天 = 40 批 = 4000 家，约 1.8 天铺完一轮。取 80 而不是 90：单价只能按
+    # “已扣积分 ÷ 成功调用数”估出区间（实测 8~11.4 积分/次，cli 不返回余额），
+    # 按最贵的 11.4 算 90 次就顶破每日 1000 积分；80 次给手工探针和 edb/events 留出余量。
+    "valuation": ["--calls-cap", "80"],
 }
 
 # 回灌面：日更只动了 index.json（行情/评分），财务文件按 mtime 增量；
