@@ -145,8 +145,6 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
-CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
-
 CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 
 CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
@@ -158,6 +156,24 @@ CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
 CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
+
+CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
+
+CREATE TABLE valuation_pctile (
+	sid INTEGER NOT NULL AUTO_INCREMENT, 
+	trade_date DATE NOT NULL, 
+	pe_pctile DOUBLE, 
+	pb_pctile DOUBLE, 
+	ps_pctile DOUBLE, 
+	pe_days INTEGER, 
+	pb_days INTEGER, 
+	ps_days INTEGER, 
+	source JSON, 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (sid)
+);
+
+CREATE INDEX idx_list_pb_pctile ON valuation_pctile (pb_pctile);
 
 CREATE TABLE dividend (
 	id BIGINT NOT NULL AUTO_INCREMENT, 

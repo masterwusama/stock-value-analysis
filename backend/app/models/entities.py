@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ORM 模型:db_va 全部 16 张表。
+"""ORM 模型:db_va 全部 18 张表。
 
 约定:
 - security.sid 为内键,子表以 sid 外联(避免重复 (code, market) 复合键);
@@ -17,6 +17,7 @@ from sqlalchemy import (
     Double,
     Enum,
     Index,
+    Integer,
     Numeric,
     SmallInteger,
     String,
@@ -220,6 +221,34 @@ class ScoreDaily(Base):
         Index("idx_list_graham_def", "trade_date", "score_graham_def"),
         Index("idx_list_schloss", "trade_date", "score_schloss"),
         Index("idx_list_buffett", "trade_date", "score_buffett"),
+    )
+
+
+class ValuationPctile(Base):
+    """PE / PB / PS 的近十年历史分位（外源截面，每标的一行最新观测）。
+
+    分位窗口、样本点与亏损期是否计入全由外源决定，不是本项目的口径，因此只作展示与
+    筛选，**不参与四派评分与参考价**。值域 0~100；外源对亏损股照样给 PE 分位、且序列
+    会停在过去的日期，所以采集侧已把「值 ≤0」与「外源日期距抓取日过久」统一置 NULL，
+    落库的行即可信行。trade_date 是外源那一行自己的观测日（各市场节假日不同而错开），
+    只用来判断新鲜度；days 是外源实际用了多少个交易日，新股不足十年时用它标注。
+    """
+
+    __tablename__ = "valuation_pctile"
+
+    sid: Mapped[int] = mapped_column(primary_key=True)
+    trade_date: Mapped[date] = mapped_column(nullable=False)
+    pe_pctile: Mapped[float | None] = mapped_column(Double)
+    pb_pctile: Mapped[float | None] = mapped_column(Double)
+    ps_pctile: Mapped[float | None] = mapped_column(Double)
+    pe_days: Mapped[int | None] = mapped_column(Integer)
+    pb_days: Mapped[int | None] = mapped_column(Integer)
+    ps_days: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[dict | None] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (
+        Index("idx_list_pb_pctile", "pb_pctile"),
     )
 
 
