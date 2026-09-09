@@ -2,7 +2,7 @@
 """行业 EDB 量价抓取器（汽车 / 电解铝 / 航运 / 轮胎橡胶 / 地产链 / 煤炭 / 钢铁）。
 
 数据源：本地 Wind 金融能力 .agents/skills/wind-mcp-skill/scripts/cli.mjs
-        economic_data.query_economic_indicator_data（question 直接传 EDB 代码，逗号分隔）。
+        edb_data.economic_get_indicator_series（metricCodes 直接传 EDB 代码，逗号分隔）。
 
 策略（对齐"周/月聚合、省积分"）：
   - 一次调用按分类批量传该类的多个 EDB 代码（共享同一日期区间），减少调用数。
@@ -140,8 +140,14 @@ CATEGORIES = [
 
 
 def call_wind(codes, begin, end):
-    """一次 economic_data 调用，逗号批量传代码；返回 code->metric dict。"""
-    params = {"question": ",".join(codes), "beginDate": begin, "endDate": end}
+    """一次 edb_data 调用，逗号批量传指标代码；返回 code->metric dict。
+
+    2026-09-09 Wind skill 自更新后本域改名：server_type `economic_data`→`edb_data`、
+    工具 `query_economic_indicator_data`→`economic_get_indicator_series`、入参
+    `question/beginDate/endDate`→`metricCodes/startDate/endDate`（返回结构不变，
+    仍是 metrics[].meta + date[] + value[]）。旧 server_type 现在直接 ROUTE_ERROR。
+    """
+    params = {"metricCodes": ",".join(codes), "startDate": begin, "endDate": end}
     suffix = "edb-%d" % int(dt.datetime.now().timestamp())
     pf = os.path.join("scripts", "request-%s.json" % suffix)
     pfull = os.path.join(SKILL_DIR, pf.replace("/", os.sep))
@@ -149,8 +155,8 @@ def call_wind(codes, begin, end):
         f.write(json.dumps(params, ensure_ascii=False))
     try:
         r = subprocess.run(
-            ["node", CLI, "call", "economic_data",
-             "query_economic_indicator_data", "@" + pf],
+            ["node", CLI, "call", "edb_data",
+             "economic_get_indicator_series", "@" + pf],
             cwd=SKILL_DIR, capture_output=True, text=True,
             encoding="utf-8", timeout=180,
         )
