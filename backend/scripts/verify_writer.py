@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""回归:fin_*/dividend/periodic_report 的 upsert 语句与写入预处理(不碰数据库)。
+"""回归:fin_*/dividend/periodic_report/valuation_pctile 的 upsert 语句与写入预处理(不碰数据库)。
 
 要点：1) 主键列不出现在 SET 子句；2) 各表核心科目列仍在 INSERT 列里（改之前
-误删过一次）；3) 缺字段时用 COALESCE 保住库里旧值，不被 NULL 抹掉；4) 超列宽的长文截断、
+误删过一次）；3) 缺字段时用 COALESCE 保住库里旧值，不被 NULL 抹掉——valuation_pctile 例外，
+它那一列 NULL 是采集侧判过不可信的结论，必须覆盖掉旧值；4) 超列宽的长文截断、
 超量程的定点值置 NULL、崩批退回逐行只丢真装不下的那一行。
 
 用法(零积分、不需要 API 服务、不需要建表): python -X utf8 scripts/verify_writer.py
@@ -13,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.import_legacy import (  # noqa: E402
-    DIV_KEYS, FIN_KEYS, NOTE_KEYS, RPT_KEYS, FIN_SPECS, _Writer, _Stats, coalesce_upd,
+    DIV_KEYS, FIN_KEYS, NOTE_KEYS, PCT_KEYS, RPT_KEYS, FIN_SPECS, _Writer, _Stats, coalesce_upd,
 )
 
 
@@ -63,6 +64,19 @@ check("fin_note 插入列含附注三项",
 check("fin_note SET 走 COALESCE 且不含主键",
       "COALESCE(VALUES(`term_deposit`)" in set_n and "`sid`=" not in set_n
       and "`report_date`=" not in set_n)
+# 估值分位表：本轮判为不可信而置空的值必须真的写进去。别家表的 upd_coalesce 是
+# “本轮没抽到就留旧值”，这张表的 NULL 本身就是结论（外源给了个负 PE 的分位），
+# 一旦照抄 COALESCE，万科A 那类假分位会在下一轮又活过来。
+wp = _Writer(None, _Stats(), __import__("app.models", fromlist=["x"]).ValuationPctile,
+             PCT_KEYS, mode="upsert", upd_skip=("sid",))
+sql_p = str(wp.stmt)
+set_p = sql_p.split("UPDATE")[1]
+check("valuation_pctile 插入列含三分位与样本天数",
+      all(("`%s`" % c) in sql_p for c in
+          ("pe_pctile", "pb_pctile", "ps_pctile", "pb_days", "trade_date", "source")))
+check("valuation_pctile SET 不含主键", "`sid`=" not in set_p)
+check("valuation_pctile SET 直接覆盖不走 COALESCE",
+      "COALESCE" not in set_p and "`pb_pctile`=VALUES(`pb_pctile`)" in set_p)
 check("coalesce_upd 空表返回空", coalesce_upd([]) == "")
 
 # ---- 列宽/量程预处理（以前被 INSERT IGNORE + MySQL 默默钳掉的那些值）----

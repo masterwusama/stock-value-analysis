@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """P4.5 回归:列表筛选参数 vs 原 index.json 本地语义对答案 + 详情透传字段。
 
+PB 十年分位一档的基线不在 index.json（那是我们自己的产出），而是采集侧的外源产物
+data/valuation/latest.json——用它对，才能同时管住取数、回灌与接口三段。
+
 用法(需 API 服务在 :8000 运行): python -X utf8 scripts/verify_filters.py
 """
+import datetime as dt
 import io
 import json
 import sys
@@ -28,6 +32,7 @@ def api(path):
 
 
 def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, ncr_min=None, ncr_max=None,
+              pbp_min=None, pbp_max=None,
               buys=None, sells=None, discount=None,
               market=None, board=None, st=None, industry=None, ex_industry=None):
     """复刻原 stock.js passFlt(base 分口径,windMode 关)。"""
@@ -70,6 +75,12 @@ def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, ncr_min
         if ncr_min is not None and (ncr is None or ncr < ncr_min):
             continue
         if ncr_max is not None and (ncr is None or ncr > ncr_max):
+            continue
+        # PB 十年分位：值来自外源产物而非 index.json，未覆盖与已置空同样是“无值”，两向门槛都排除
+        pbp = VPCT.get("%s:%s" % (c.get("market", "A"), c["code"]))
+        if pbp_min is not None and (pbp is None or pbp < pbp_min):
+            continue
+        if pbp_max is not None and (pbp is None or pbp > pbp_max):
             continue
         cur = c.get("price")
         disc = (discount / 100) if (discount is not None and buys) else 1
@@ -158,6 +169,32 @@ def _ncr(p):
 
 NCR_MED, NCR_P90, NCR_P99 = _ncr(0.5), _ncr(0.9), _ncr(0.99)
 
+# PB 十年分位不来自 index.json（那是外源截面，一轮只铺一部分），基线单独读采集产物。
+# 空值语义与后端一致：本轮判为不可信的（pct 为 null）与观测日落在最新观测日 -VAL_STALE_DAYS
+# 之外的，都当“无值”，设任一门槛即被排除。
+VPATH = Path(LEGACY_DATA_DIR) / "data" / "valuation" / "latest.json"
+VAL_STALE_DAYS = 45  # 与 app/api/securities.py 同值；这边独立写一份，故意不 import 后端的常量
+VPCT = {}
+if VPATH.exists():
+    _vsrc = json.load(io.open(VPATH, encoding="utf-8"))
+    _vdates = [v.get("trade_date") for v in (_vsrc.get("items") or {}).values() if v.get("trade_date")]
+    _vtop = max(_vdates) if _vdates else None
+    _vfloor = (dt.date.fromisoformat(_vtop) - dt.timedelta(days=VAL_STALE_DAYS)).isoformat() if _vtop else None
+    for _k, _it in ((_vsrc.get("items") or {}).items()):
+        _p = (_it.get("pb") or {}).get("pct")
+        _fresh = _vfloor and _it.get("trade_date") and _it["trade_date"] >= _vfloor
+        # 键沿用产物里的 "market:code"：港股是 5 位、A 股 6 位，只用裸代码会互相撞
+        VPCT[_k] = _p if (_p is not None and _fresh) else None
+else:
+    print("SKIP valuation/latest.json 不在，未校验 pbp 档")
+
+# 阈值现算：分位是 0~100 的分布，写死数字会在下一轮铺完后退成空集或近全市场
+_pbvals = sorted(v for v in VPCT.values() if v is not None)
+if _pbvals:
+    PB_MED = _pbvals[len(_pbvals) // 2]
+    PB_P90 = _pbvals[int(len(_pbvals) * 0.9)]
+    PB_FLOOR = _pbvals[0]
+
 # 行业名一律现取：字典有 123 项且跟着采集源变，写死名字在换版后会退成空集而“测过”
 _ind_n = {}
 for _c in IDX["companies"]:
@@ -191,6 +228,12 @@ cases_list = [
     {"ex_industry": [TOP_IND], "st": False, "fraud_max": 40},
     {"industry": TOP_IND, "ex_industry": [TOP_IND]},
 ]
+if _pbvals:
+    cases_list += [
+        {"pbp_max": PB_MED}, {"pbp_min": PB_P90}, {"pbp_min": PB_FLOOR, "pbp_max": PB_MED},
+        {"pbp_max": 5}, {"pbp_max": 20, "market": "A"},
+        {"pbp_min": PB_FLOOR, "pbp_max": PB_P90, "cap_min": CAP_MID, "st": False},
+    ]
 for cs in cases_list:
     label = "&".join(f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in cs.items())
     check(label, local_flt(**cs), api_flt(cs))
@@ -226,6 +269,24 @@ if _ncrd:
             print(("OK  " if _ok else "FAIL") + f" 净现金/市值边界含等号 {_k}={_nv * 100:.2f}%({_nc})")
             if not _ok:
                 fails += 1
+
+# PB 十年分位的等号探针同上：阈值取 API 自己返回的分位原值（列面按一位小数显示，
+# 屏幕上读到 11.2% 背后可能是 11.2119，拿显示值当门槛会自我排除）。
+if _pbvals:
+    _bprobe = next((c for c in IDX["companies"]
+                    if VPCT.get("%s:%s" % (c.get("market", "A"), c["code"])) is not None), None)
+    _bc, _bm = str(_bprobe["code"]), _bprobe.get("market", "A")
+    _bv = (api_flt_items({"keyword": _bc, "market": _bm}).get(_bc) or {}).get("pb_pctile")
+    if _bv is None:
+        print("FAIL PB 分位边界探针拿不到 pb_pctile"); fails += 1
+    else:
+        for _k in ("pbp_min", "pbp_max"):
+            _ok = _bc in api_flt({_k: _bv, "market": _bm})
+            print(("OK  " if _ok else "FAIL") + f" PB十年分位边界含等号 {_k}={_bv}({_bc})")
+            if not _ok:
+                fails += 1
+else:
+    print("SKIP 估值分位无覆盖行，pbp 档门槛与边界未校验")
 
 # ---------- Wind 事件增强分档（wind=true）----------
 # 同一口径有三处独立实现：后端 _wind_score()(SQL) / 列表页 dispScore()(JS) / 本地基线(Python)，
@@ -362,11 +423,35 @@ print(("OK  " if _n_ok else "FAIL") + " 净现金/市值门槛两向都排除算
 if not _n_ok:
     fails += 1
 
+# PB 十年分位同理：全市场只有铺到的那部分有值，两向门槛都必须把无值行挡在外面。
+# 顺带逐家核对字段本身——库里读出来的分位与采集产物不一致，只有 sid 映射错或回灌漏行会造成。
+_v_null = sum(1 for it in all_items.values() if it.get("pb_pctile") is None)
+_v_exp = len(all_items) - _v_null
+_v_extreme = (("pbp_min", 0), ("pbp_max", 100))
+_v_tots = {k: api("/securities?" + urllib.parse.urlencode({k: v, "page_size": 1}))["total"]
+           for k, v in _v_extreme}
+_v_ok = all(t == _v_exp for t in _v_tots.values())
+print(("OK  " if _v_ok else "FAIL") + " PB十年分位门槛两向都排除无值的行: "
+      + " ".join(f"{k}={v}->{_v_tots[k]}" for k, v in _v_extreme)
+      + f" 期望={_v_exp}(总 {len(all_items)} − 空值 {_v_null})")
+if not _v_ok:
+    fails += 1
+_v_bad = []
+for _code, _it in all_items.items():
+    _want = VPCT.get("%s:%s" % (_it.get("market", "A"), _code))
+    _got = _it.get("pb_pctile")
+    if (_want is None) != (_got is None) or (_want is not None and abs(_want - _got) > 1e-6):
+        _v_bad.append((_code, _want, _got))
+print(("OK  " if not _v_bad else "FAIL") + f" pb_pctile 与采集产物逐家一致(空 {len(VPCT) - len(_pbvals)}/有值 {len(_pbvals)})"
+      + ("" if not _v_bad else f" 前 5 处={_v_bad[:5]}"))
+if _v_bad:
+    fails += 1
+
 # 表头排序：前端可发的每个 sort 键都要 200 + 单调有序 + NULL 不占首页。
 # 曾经的 bug：列表 COLS 拿流派驼峰键（grahamAgg）当排序键，而后端白名单只有列名，
 # 点四派参考价列头直接 400、整表变“加载失败”；前后端键名漂移无人拦截。
 sort_keys = (["code", "price", "pe_ttm", "pb", "market_cap", "fair_liq", "net_cash_ratio",
-              "fraud", "mgmt", "cycle"]
+              "pb_pctile", "fraud", "mgmt", "cycle"]
              + [f"score_{c}" for c in SCHOOL_COLS.values()]
              + [f"{p}_{c}" for c in SCHOOL_COLS.values()
                 for p in ("buy", "sell_cons", "sell_fair")])
@@ -410,6 +495,20 @@ print("-- 601899 透传 --")
 print("events.name:", ev.get("name"), "| fetched_at:", ev.get("fetched_at"))
 print("holders groups:", sorted((ev.get("holders") or {}).keys()))
 print("wind keys:", sorted(w.keys()))
+
+# 详情里的估值分位：结构必须齐（date/pe/pb/ps），且与列表接口同一家的 pb_pctile 同值。
+# 探针优先挑本轮铺到的那家，否则整块会红在“没数据”而不是“接口错了”上。
+_pcode = next(((k.split(":", 1)[1], k.split(":", 1)[0])
+               for k, v in VPCT.items() if v is not None), ("601899", "A"))
+_dv = api("/securities/%s" % _pcode[0])
+_vp = _dv.get("valuationPctile") or {}
+_vl = (api_flt_items({"keyword": _pcode[0], "market": _pcode[1]}).get(_pcode[0]) or {}).get("pb_pctile")
+_v_ok = bool(_vp.get("date")) and set(_vp) >= {"date", "pe", "pb", "ps"} \
+    and (_vp.get("pb") or {}).get("pct") == _vl
+print(("OK  " if _v_ok else "FAIL") + f" 详情 valuationPctile 结构齐且与列表同值({_pcode[0]})"
+      + ("" if _v_ok else f" 详情={_vp.get('pb')} 列表={_vl}"))
+if not _v_ok:
+    fails += 1
 src = json.load(io.open(LEGACY_DATA_DIR / "data" / "events" / "index.json", encoding="utf-8"))
 orig = src["byCode"]["601899"]
 missing = set(orig) - set(w)

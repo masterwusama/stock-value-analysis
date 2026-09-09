@@ -7,13 +7,13 @@
 import json
 from pathlib import Path
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 
 from app.config import LEGACY_DATA_DIR
 from app.db import SessionLocal
 from app.models import (
     AgroPrice, Dividend, FinBalance, FinIndicator, PeriodicReport,
-    QuoteDaily, ScoreDaily, Security, WindEvent,
+    QuoteDaily, ScoreDaily, Security, ValuationPctile, WindEvent,
 )
 
 DATA = Path(LEGACY_DATA_DIR) / "data"
@@ -22,7 +22,7 @@ db = SessionLocal()
 
 print("== 1. 各表行数 ==")
 for m in (Security, QuoteDaily, ScoreDaily, FinIndicator, FinBalance,
-          Dividend, PeriodicReport, WindEvent, AgroPrice):
+          Dividend, PeriodicReport, WindEvent, AgroPrice, ValuationPctile):
     print(f"  {m.__tablename__}: {db.execute(select(func.count()).select_from(m)).scalar_one()}")
 
 print("== 2. security 按市场 ==")
@@ -76,6 +76,17 @@ rows = db.execute(select(FinIndicator.sid, func.count()).group_by(FinIndicator.s
 for sid_, n in rows:
     code = db.execute(select(Security.code).where(Security.sid == sid_)).scalar_one()
     print(f"  {code}: {n} 期")
+
+print("== 7. 估值分位覆盖（按市场）==")
+# 一轮铺不完（全市场 70 批 × 2 次调用，受单日调用上限约束），所以看的是覆盖率而不是等号；
+# pb_null 里含被守卫置空的（PB 为负/外源日期过旧），short_sample(<750 交易日≈3 年) 是新上市
+for market, n, cov, pbn, short in db.execute(select(
+        Security.market, func.count(), func.count(ValuationPctile.sid),
+        func.sum(case((ValuationPctile.pb_pctile.is_(None), 1), else_=0)),
+        func.sum(case((ValuationPctile.pb_days < 750, 1), else_=0)))
+        .outerjoin(ValuationPctile, ValuationPctile.sid == Security.sid)
+        .group_by(Security.market)):
+    print(f"  {market}: 标的 {n} 已覆盖 {cov} 无PB分位 {pbn}(含未铺到) 样本不足3年 {short}")
 
 print("ALL CHECKS PASSED")
 db.close()
