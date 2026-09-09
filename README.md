@@ -18,7 +18,7 @@ FastAPI + MySQL 提供结构化查询接口，Vue 3 前端，采集层沿用经�
 窄屏（≤600px）自动切换为移动版：列表改卡片、筛选与排序折叠、图表自适应。
 
 > **部署与运维请看 [docs/使用说明书.md](docs/使用说明书.md)**——三个页面怎么用、数据什么时候更新、
-> 首次部署七步、采集任务与时刻表、16 张表逐列口径、故障处置表、已知边界。
+> 首次部署七步、采集任务与时刻表、18 张表逐列口径、故障处置表、已知边界。
 > 本文只留架构速览与常用命令。
 
 ## 架构
@@ -28,7 +28,8 @@ FastAPI + MySQL 提供结构化查询接口，Vue 3 前端，采集层沿用经�
 │ fetch_data.py   AKShare/腾讯/巨潮 │   │ FastAPI :8000                      │
 │ scoring.py      四流派评分物化    │→JSON→│  /api/*      REST 接口           │
 │ fetch_prices/fetch_edb 农价/EDB   │ 工作 │  /            托管 frontend/dist │
-│ fetch_events.py Wind 事件(手动)   │ 目录 │ MySQL db_va (16 表, localhost)   │
+│ fetch_events.py Wind 事件(手动)   │ 目录 │ MySQL db_va (18 表, localhost)   │
+│ fetch_valuation Wind 分位(每天)   │      │                                  │
 │                                  │      │ collector/scheduler.py 定时进程  │
 └──────────────────────────────────┘   └────────────────────────────────────┘
                                         ┌─ 前端 frontend/ (Vue3+Vite) ──────┐
@@ -114,11 +115,12 @@ cd frontend ; npm run dev      # → http://localhost:5173
 
 ```powershell
 cd backend
-python -X utf8 -m scripts.verify_import     # 16 表行数 + 逐字段断言
+python -X utf8 -m scripts.verify_import     # 10 张表行数 + 逐字段断言 + 估值分位覆盖
 python -X utf8 -m scripts.verify_api        # API 响应 vs 源 JSON
-python -X utf8 -m scripts.verify_filters    # 列表筛选与排序 53 组用例，源↔库集合级比对
+python -X utf8 -m scripts.verify_filters    # 列表筛选与排序 64 项(含市值/净现金/PB分位三组区间)，源↔库集合级比对
 python -X utf8 scripts\verify_writer.py     # 离线：写入层行为
 python -X utf8 scripts\verify_edb_merge.py  # 离线：EDB 合并防线与增量窗口
+cd collector; python -X utf8 scripts\_valuation_check.py   # 离线：估值分位守卫与 windcode 映射
 ```
 
 评分是 Python 与 JS 两份实现，改任一边都要跑一致性比对：
@@ -137,7 +139,7 @@ backend/
   collector/      采集脚本 + JSON 工作目录 + 调度（run.py / scheduler.py）
                   agro-price/ 农价与 EDB 抓取
 frontend/         Vue3 + Vite（hash 路由，echarts）
-docs/             使用说明书.md · schema.sql（16 表 DDL 存档）
+docs/             使用说明书.md · schema.sql（18 表 DDL 存档）
 ops/              start / stop / status / guard / collect（.ps1 + .bat 包装）
 run/              运行期日志与停机标记（gitignore）
 ```
