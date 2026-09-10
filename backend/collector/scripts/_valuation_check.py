@@ -18,7 +18,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fetch_valuation import (  # noqa: E402
-    clean_value, extract_metric, match_key, to_wind,
+    MARKET_ORDER, clean_value, extract_metric, keep_target, load_universe, match_key,
+    plan_batches, to_wind,
 )
 
 fails = []
@@ -110,6 +111,36 @@ check("样本数脏值不影响分位落库",
 check("可信行保留外源回码（溯源用）",
       clean_value(_v(), {"key": "A:x", "code": "x", "market": "A", "ratio": {}},
                   "pb", TODAY, MAX_LAG)["wind_code"] == "X")
+
+
+# ---------- 5. 刷池口径与轮内冻结名单 ----------
+check("美股整市场不刷", not keep_target("US", {"mgmt": 90.0, "fraud": 0.0}))
+check("管理分 < 30 不刷", not keep_target("A", {"mgmt": 29.9, "fraud": 10.0}))
+check("造假分 > 50 不刷", not keep_target("HK", {"mgmt": 80.0, "fraud": 50.1}))
+check("恰在门槛上仍刷", keep_target("A", {"mgmt": 30.0, "fraud": 50.0}))
+check("两项分都缺算过筛（港股 26 家无分数即属此类）", keep_target("HK", {}))
+check("只有一项分且不达标也剔", not keep_target("A", {"mgmt": None, "fraud": 61.0}))
+check("正常 A 股照刷", keep_target("A", {"mgmt": 55.0, "fraud": 12.0}))
+
+POOL = [{"key": "A:%d" % i} for i in range(1, 5)]
+keys, bs = plan_batches({}, POOL, 2)
+check("轮首按最新过筛名单冻结", keys == ["A:1", "A:2", "A:3", "A:4"]
+      and [len(x) for x in bs] == [2, 2])
+# 轮中 A:2 被周六重算筛掉：位置不能前移，否则游标会把后面的标的铺两次、另一些全漏掉
+keys2, bs2 = plan_batches({"targets": keys}, [{"key": k} for k in ("A:1", "A:3", "A:4")], 2)
+check("轮中被筛掉的家不占位移（后面的批次内容不变）",
+      keys2 == keys and [len(x) for x in bs2] == [1, 2]
+      and bs2[1] == [{"key": "A:3"}, {"key": "A:4"}], bs2)
+keys3, bs3 = plan_batches({"targets": ["STALE:1"]}, POOL, 2, refill=True)
+check("轮首/--reset 重冻，冻结名单里的陈旧 key 不残留",
+      keys3 == ["A:1", "A:2", "A:3", "A:4"] and len(bs3) == 2)
+
+pool, dropped = load_universe()
+check("真实 index.json 过筛后美股为 0 家",
+      not [e for e in pool if e["market"] == "US"], u"池 %d 家 / 筛掉 %d 家" % (len(pool), dropped))
+mk = [e["market"] for e in pool]
+check("过筛池仍按 A→HK 定序", mk == sorted(mk, key=lambda m: MARKET_ORDER[m]),
+      u"A %d / HK %d" % (mk.count("A"), mk.count("HK")))
 
 print("\n%s" % ("全部通过" if not fails else "失败 %d 项: %s" % (len(fails), fails)))
 sys.exit(1 if fails else 0)

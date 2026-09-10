@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""PE / PB / PS 近十年历史分位抓取器（Wind，分批滚动铺全市场）。
+"""PE / PB / PS 近十年历史分位抓取器（Wind，按游标滚动铺 A 股与港股的过筛标的）。
 
 数据源：wind-mcp-skill/scripts/cli.mjs → analytics_data.get_financial_data
   问句里逗号列 100 个 windcode，要「最新市盈率/市净率/市销率近10年分位数」。返回列式表，
@@ -18,9 +18,15 @@ windcode（实测）：A 股 920/43/83/87/88→.BJ、6/9→.SH、其余→.SZ；
   但回码会去掉前导零（送 00323.HK 回 0323.HK）；美股裸代码自动定位交易所
   （AAPL→AAPL.O、PBR→PBR.N），不用两个后缀都试一遍。
 
+刷池口径（keep_target）：美股整市场不刷；A 股/港股里管理分 < 30 或造假分 > 50 的不刷。
+  按 index.json 里的当前分数现算，6939 家过筛剩 5340 家（A 剔 785、HK 剔 49、US 剔 765）
+  = 54 批 = 108 次/轮 ≈1500 积分，比铺全市场省 23%。被剔掉的标的只是不再刷新，落库的旧行
+  留着，等它超出 API 那侧的陈旧阈值（45 天）自然变回 "-"。
+
 产物（采集工作目录，与 events/edb 同一套）：
   data/valuation/latest.json  累计快照 {items:{"A:600519":{pe,pb,ps,trade_date}}, ...}
-  data/valuation/state.json   滚动游标 {round_id, batch_index, day, calls_today}
+  data/valuation/state.json   滚动游标 {round_id, batch_index, day, calls_today, targets}
+                              targets = 本轮首冻结的名单，轮内不随周六重算挪动（游标只认它）
 落库不在这里：run.py 每个 job 末尾统一跑 import_legacy --no-clean，由 import_valuation()
   读 latest.json upsert 进 valuation_pctile —— 别配 --only-fresh，那是 companies/*.json
   的 mtime 增量窗，本产物不在里面。
@@ -37,18 +43,18 @@ windcode（实测）：A 股 920/43/83/87/88→.BJ、6/9→.SH、其余→.SZ；
 
 积分：Wind 按调用次数扣，cli 不回报余额，单价只能按“当天积分 ÷ 成功调用数”反推。2026-09-10
   首轮实测 72 次调用把当天 1000 积分打光（回执「余额不足，请先充值」）⇒ ≈13.9 积分/次，
-  比接入前按 7 次调用估的 8~11.4 贵一档。全市场 6939 只 = 70 批 × 2 = 140 次/轮，默认
-  --calls-cap 56 次/天（≈780 积分）= 28 批 = 2800 家，约 2.5 天一轮；留下的 ≈220 积分是给
-  每周日的 edb 和手工探针的——两个 Wind 任务抢的是同一个池子，上限设到 80 就没 edb 的了。
+  比接入前按 7 次调用估的 8~11.4 贵一档。过筛 5340 只 = 54 批 × 2 = 108 次/轮（≈1500 积分），
+  默认 --calls-cap 56 次/天（≈780 积分）= 28 批 = 2800 家，约 1.9 天铺完一轮；留下的 ≈220
+  积分是给每周日的 edb 和手工探针的——两个 Wind 任务抢的是同一个池子，上限设到 80 就没 edb 的了。
   当日达到上限、或收到额度类回执都算预期收尾（exit 0，别让 etl_job_log 天天红）；
   只有连续多批取数失败才 exit 1。要把一轮压进一天：--calls-cap 0。
-  标的按 A→HK→US 定序，所以额度不够时先补 A 股 = cap 设成「今日已用次数 + 剩下的 A 股批次数 × 2」。
+  名单按 A→HK 定序，所以额度不够时先补到的总是 A 股那几家。
 
-用法：
-  python fetch_valuation.py --probe 20      # 只抓一批前 20 家，验列名/行数/守卫，不写文件
-  python fetch_valuation.py                 # 按游标滚动铺（调度每天跑一次）
-  python fetch_valuation.py --calls-cap 0   # 一轮铺完全市场
-  python fetch_valuation.py --reset         # 丢弃游标，从第一批重铺
+用法（一律走 run.py：它注入 WIND_SKILL_DIR，跑完还顺带回灌）：
+  python run.py valuation --probe 20     # 只验一批前 20 家（列名/行数/守卫），不落盘
+  python run.py valuation                # 按游标滚动铺（调度每天 05:05 跑一次）
+  python run.py valuation --calls-cap 0  # 一轮铺完（当天积分要够 108 次）
+  python run.py valuation --reset        # 丢弃游标与本轮冻结名单，从头重铺一轮
 """
 import argparse
 import datetime as dt
@@ -94,6 +100,11 @@ QUERIES = (
 )
 CALLS_PER_BATCH = len(QUERIES)
 MARKET_ORDER = {"A": 0, "HK": 1, "US": 2}
+# 刷池口径（2026-09-10 定）：美股整市场不刷；A 股/港股里管理分 < 30 或造假分 > 50 的不刷。
+# 两项分都缺的算过筛（"低于 30" 不含 "没有分"，港股 26 家无分数即属此类）——宁多刷不误删。
+SKIP_MARKETS = ("US",)
+MGMT_MIN = 30.0
+FRAUD_MAX = 50.0
 QUOTA_PAT = re.compile(u"积分|额度|quota|RATE_LIMIT|rate limit|insufficient|余额不足", re.I)
 
 
@@ -114,18 +125,34 @@ def to_wind(code, market):
     return code + ".SZ"
 
 
+def keep_target(market, scores):
+    """这个标的是否值得花 Wind 积分刷一次分位（口径见 SKIP_MARKETS 那组常量）。"""
+    if market in SKIP_MARKETS:
+        return False
+    mgmt, fraud = scores.get("mgmt"), scores.get("fraud")
+    if isinstance(mgmt, (int, float)) and mgmt < MGMT_MIN:
+        return False
+    if isinstance(fraud, (int, float)) and fraud > FRAUD_MAX:
+        return False
+    return True
+
+
 def load_universe():
-    """data/index.json → [{key, code, market, name, ratio}]，按 (市场, 代码) 定序。
+    """data/index.json → [{key, code, market, name, ratio}]，按 (市场, 代码) 定序，只留过筛标的。
 
     定序必须稳定：游标存的是 batch_index，两批之间标的顺序变了会让有些标的在同一轮里
-    被铺两次、另一些一次都没铺到。
+    被铺两次、另一些一次都没铺到。管理/造假分每周六重算会把筛后的名单挪动，所以每轮开始
+    要把名单冻进 state.json 的 targets、轮内只认那一份（见 plan_batches）。
     """
     with io.open(os.path.join(DATA_DIR, "index.json"), encoding="utf-8") as f:
         index = json.load(f)
-    out = []
+    out, dropped = [], 0
     for c in index.get("companies") or []:
         code, market = c.get("code"), c.get("market") or "A"
         if not code:
+            continue
+        if not keep_target(market, c.get("scores") or {}):
+            dropped += 1
             continue
         q = c.get("quote") or {}
         out.append({
@@ -134,7 +161,7 @@ def load_universe():
             "ratio": {"pe_ttm": q.get("pe_ttm"), "pb": q.get("pb")},
         })
     out.sort(key=lambda e: (MARKET_ORDER.get(e["market"], 9), e["code"]))
-    return out
+    return out, dropped
 
 
 def _extract_json(s):
@@ -319,6 +346,22 @@ def persist(items, round_id, state, idx, calls_today, today):
                                 day=today.isoformat(), calls_today=calls_today))
 
 
+def plan_batches(state, pool, batch_size, refill=False):
+    """本轮批次 = 冻结在 state["targets"] 里的那份名单切出来（轮内游标只认它）。
+
+    筛后名单每周六随重算挪动，而游标存的是 batch_index——轮中换名单会让一批标的被铺两次、
+    另一批一次都铺不到。所以名单只在轮首冻一次（refill），轮内即使有家被新一次重算筛掉或
+    退市，也只在自己的批里留成空格子，不把后面的标的整体前移一格。
+    """
+    by_key = {e["key"]: e for e in pool}
+    keys = [] if refill else list(state.get("targets") or [])
+    if not keys:
+        keys = [e["key"] for e in pool]
+    batches = [[by_key[k] for k in keys[i:i + batch_size] if k in by_key]
+               for i in range(0, len(keys), batch_size)]
+    return keys, batches
+
+
 def fetch_batch(batch, today, max_lag, uniq):
     """一批（≤100 家）→ (results, calls, errors)。results[key][metric] = 值或 None。"""
     by_sent = {to_wind(e["code"], e["market"]).upper(): e["key"] for e in batch}
@@ -358,12 +401,12 @@ def main():
     ap.add_argument("--probe", type=int, default=0, help="只抓一批前 N 家并打印明细，不落盘")
     ap.add_argument("--batch", type=int, default=BATCH, help="每批家数（Wind 单表硬截 100）")
     ap.add_argument("--max-lag-days", type=int, default=MAX_LAG_DAYS)
-    ap.add_argument("--reset", action="store_true", help="丢弃游标，从第一批重铺")
+    ap.add_argument("--reset", action="store_true", help="丢弃游标与本轮冻结名单，从第一批重铺")
     args = ap.parse_args()
 
-    universe = load_universe()
-    if not universe:
-        print("[valuation] data/index.json 里没有标的，退出")
+    pool, dropped = load_universe()
+    if not pool:
+        print("[valuation] data/index.json 里没有过筛标的，退出")
         return 1
     if not os.path.isfile(os.path.join(SKILL_DIR, CLI)):
         # 直跑本脚本时 WIND_SKILL_DIR 由 collector/run.py 从 backend/.env 注入，缺了会退到
@@ -374,23 +417,25 @@ def main():
     if not args.probe:
         os.makedirs(OUT_DIR, exist_ok=True)  # 首轮还没有 data/valuation/，write_json 不建目录
     today = dt.date.today()
-    batches = [universe[i:i + args.batch] for i in range(0, len(universe), args.batch)]
     state = read_json(STATE_PATH, {}) if not args.reset else {}
     if state.get("day") != today.isoformat():
         state = dict(state, day=today.isoformat(), calls_today=0)
     calls_today = int(state.get("calls_today") or 0)
     round_id = int(state.get("round_id") or 1)
-    if args.probe:
-        idx = 0
-    else:
+    idx, refill = 0, bool(args.probe)
+    if not args.probe:
+        targets, batches = plan_batches(state, pool, args.batch)
         idx = min(int(state.get("batch_index") or 0), len(batches))
-        if idx >= len(batches):
-            # 上一轮铺完 → 开新一轮，游标归零（latest.json 继续累计，本轮没铺到的标的留旧值）
-            idx, round_id = 0, round_id + 1
+        if idx >= len(batches):  # 上一轮铺完 → 新一轮按最新过筛名单重冻、游标归零
+            idx, round_id, refill = 0, round_id + 1, True
+    if refill:  # 探针不落盘、首轮、以及轮首重冻
+        targets, batches = plan_batches(state, pool, args.batch, refill=True)
+    if not args.probe:
+        state = dict(state, targets=targets)
     items = read_json(LATEST_PATH, {"items": {}}).get("items") or {}
 
-    print("[valuation] %d 家 / %d 批%s，从第 %d 批起，今日已用 %d 次，cap=%d" % (
-        len(universe), len(batches), u"（探针）" if args.probe else "",
+    print("[valuation] %d 家 / %d 批（刷池已筛掉 %d 家）%s，从第 %d 批起，今日已用 %d 次，cap=%d" % (
+        len(targets), len(batches), dropped, u"（探针）" if args.probe else "",
         idx + 1, calls_today, args.calls_cap), flush=True)
     t0 = time.time()
     done, consecutive, stop_reason, hard_fail = 0, 0, None, False
@@ -399,6 +444,9 @@ def main():
             stop_reason = u"当日调用已达上限（%d/%d）" % (calls_today, args.calls_cap)
             break
         batch = batches[idx]
+        if not batch:  # 整批都在轮中被筛掉/退市：游标直接过，不占调用
+            idx += 1
+            continue
         if args.probe:
             batch = batch[:args.probe]
         try:
@@ -442,8 +490,9 @@ def main():
         print(msg, flush=True)
         idx += 1
         if args.probe:
-            print(json.dumps([{k: v[k]} for k in ("code", "name", "trade_date", "pe", "pb", "ps")
-                               for v in list(items.values())[:6]], ensure_ascii=False, indent=1))
+            print(json.dumps([{k: v.get(k) for k in ("code", "name", "trade_date", "pe", "pb", "ps")}
+                              for v in (items[key] for key in results)],
+                             ensure_ascii=False, indent=1))
             return 0
         persist(items, round_id, state, idx, calls_today, today)
         time.sleep(SLEEP)

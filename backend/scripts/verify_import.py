@@ -78,7 +78,9 @@ for sid_, n in rows:
     print(f"  {code}: {n} 期")
 
 print("== 7. 估值分位覆盖（按市场）==")
-# 一轮铺不完（全市场 70 批 × 2 次调用，受单日调用上限约束），所以看的是覆盖率而不是等号；
+# 刷池口径：美股整市场不刷，A 股/港股里管理分 < 30 或造假分 > 50 的不刷 ⇒ 一轮 5340 家
+# = 54 批 × 2 次调用，受单日调用上限约束要 ≈1.9 天才铺完，所以这里看的是覆盖率而不是等号。
+# US 那行的「已覆盖」只可能是改口径之前铺剩的旧行，不会增长。
 # pb_null 里含被守卫置空的（PB 为负/外源日期过旧），short_sample(<750 交易日≈3 年) 是新上市
 for market, n, cov, pbn, short in db.execute(select(
         Security.market, func.count(), func.count(ValuationPctile.sid),
@@ -86,7 +88,8 @@ for market, n, cov, pbn, short in db.execute(select(
         func.sum(case((ValuationPctile.pb_days < 750, 1), else_=0)))
         .outerjoin(ValuationPctile, ValuationPctile.sid == Security.sid)
         .group_by(Security.market)):
-    print(f"  {market}: 标的 {n} 已覆盖 {cov} 无PB分位 {pbn}(含未铺到) 样本不足3年 {short}")
+    note = "（按口径不刷）" if market == "US" else ""
+    print(f"  {market}: 标的 {n} 已覆盖 {cov}{note} 无PB分位 {pbn}(含未铺到) 样本不足3年 {short}")
 
 print("ALL CHECKS PASSED")
 db.close()
