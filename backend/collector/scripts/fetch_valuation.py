@@ -35,11 +35,14 @@ windcode（实测）：A 股 920/43/83/87/88→.BJ、6/9→.SH、其余→.SZ；
   - 新股样本天然短（688981 1494 天、300750 2004 天、920002.BJ 556 天）→ 一并落 days，
     前端写明「样本 N 个交易日」，不假装都是满十年。
 
-积分：Wind 按调用次数扣（单价只能按“已扣积分 ÷ 成功调用数”估出区间，实测 8~11.4 积分/次，
-  账户每日 1000）。全市场 6939 只 = 70 批 × 2 = 140 次，默认 --calls-cap 80 次/天 ⇒ 一天
-  铺不完、次日从 state.json 游标接着铺（约 1.8 天一轮）；留的那部分余量是给手工探针与 edb 的。
+积分：Wind 按调用次数扣，cli 不回报余额，单价只能按“当天积分 ÷ 成功调用数”反推。2026-09-10
+  首轮实测 72 次调用把当天 1000 积分打光（回执「余额不足，请先充值」）⇒ ≈13.9 积分/次，
+  比接入前按 7 次调用估的 8~11.4 贵一档。全市场 6939 只 = 70 批 × 2 = 140 次/轮，默认
+  --calls-cap 56 次/天（≈780 积分）= 28 批 = 2800 家，约 2.5 天一轮；留下的 ≈220 积分是给
+  每周日的 edb 和手工探针的——两个 Wind 任务抢的是同一个池子，上限设到 80 就没 edb 的了。
   当日达到上限、或收到额度类回执都算预期收尾（exit 0，别让 etl_job_log 天天红）；
   只有连续多批取数失败才 exit 1。要把一轮压进一天：--calls-cap 0。
+  标的按 A→HK→US 定序，所以额度不够时先补 A 股 = 把 cap 设成剩下的 A 股批次数 × 2。
 
 用法：
   python fetch_valuation.py --probe 20      # 只抓一批前 20 家，验列名/行数/守卫，不写文件
@@ -73,7 +76,7 @@ SERVER, TOOL = "analytics_data", "get_financial_data"
 BATCH = 100              # Wind 单表硬截 100 行
 SLEEP = 1.8              # 调用间隔：Wind 连续调用易瞬时空返回
 TIMEOUT = 300            # 单次调用超时（秒）
-CALLS_CAP = 80           # 默认每日调用上限（80 × 最贵 11.4 积分 < 1000，留余量给手工）
+CALLS_CAP = 56           # 默认每日调用上限（56 × 实测 13.9 积分 ≈ 780，给 edb 与手工留余量）
 MAX_LAG_DAYS = 10        # 外源日期距抓取日超过这么多天 = 序列已停更
 FAIL_STOP = 5            # 连续失败批数：整轮退出，不把失败扩散到后面的批次
 
@@ -361,6 +364,12 @@ def main():
     if not universe:
         print("[valuation] data/index.json 里没有标的，退出")
         return 1
+    if not os.path.isfile(os.path.join(SKILL_DIR, CLI)):
+        # 直跑本脚本时 WIND_SKILL_DIR 由 collector/run.py 从 backend/.env 注入，缺了会退到
+        # 不存在的仓库相对路径——必须在这里挡住，否则每个批次抛 FileNotFoundError 并推游标
+        print("[valuation] Wind skill 不存在：%s（请用 run.py valuation 跑，或先设 WIND_SKILL_DIR）"
+              % os.path.join(SKILL_DIR, CLI), flush=True)
+        return 1
     if not args.probe:
         os.makedirs(OUT_DIR, exist_ok=True)  # 首轮还没有 data/valuation/，write_json 不建目录
     today = dt.date.today()
@@ -396,6 +405,10 @@ def main():
                 batch, today, args.max_lag_days, "val-%s-b%d" % (today.strftime("%m%d"), idx))
         except WindQuota as e:
             stop_reason = u"Wind 额度回执，本轮收尾：%s" % str(e)[:160]
+            break
+        except OSError as e:  # 本地进程没起来（skill 目录/node 缺失）：一次积分都没烧，别推游标
+            stop_reason, hard_fail = u"Wind CLI 无法启动，游标停在第 %d 批：%s" % (
+                idx + 1, str(e)[:120]), True
             break
         except Exception as e:  # noqa: BLE001
             consecutive += 1
