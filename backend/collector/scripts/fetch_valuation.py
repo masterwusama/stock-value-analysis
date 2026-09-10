@@ -42,7 +42,7 @@ windcode（实测）：A 股 920/43/83/87/88→.BJ、6/9→.SH、其余→.SZ；
   每周日的 edb 和手工探针的——两个 Wind 任务抢的是同一个池子，上限设到 80 就没 edb 的了。
   当日达到上限、或收到额度类回执都算预期收尾（exit 0，别让 etl_job_log 天天红）；
   只有连续多批取数失败才 exit 1。要把一轮压进一天：--calls-cap 0。
-  标的按 A→HK→US 定序，所以额度不够时先补 A 股 = 把 cap 设成剩下的 A 股批次数 × 2。
+  标的按 A→HK→US 定序，所以额度不够时先补 A 股 = cap 设成「今日已用次数 + 剩下的 A 股批次数 × 2」。
 
 用法：
   python fetch_valuation.py --probe 20      # 只抓一批前 20 家，验列名/行数/守卫，不写文件
@@ -353,7 +353,8 @@ def fetch_batch(batch, today, max_lag, uniq):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--calls-cap", type=int, default=CALLS_CAP, help="本次进程允许的调用数（0=不限）")
+    ap.add_argument("--calls-cap", type=int, default=CALLS_CAP,
+                    help="当日累计调用上限（含今天之前批次已用的，见 state.json），0=不限")
     ap.add_argument("--probe", type=int, default=0, help="只抓一批前 N 家并打印明细，不落盘")
     ap.add_argument("--batch", type=int, default=BATCH, help="每批家数（Wind 单表硬截 100）")
     ap.add_argument("--max-lag-days", type=int, default=MAX_LAG_DAYS)
