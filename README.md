@@ -75,6 +75,8 @@ cd frontend ; npm run dev      # → http://localhost:5173
 双击 `ops\start.bat` / `ops\stop.bat` 即可，或命令行：
 
 ```powershell
+.\ops\menu.ps1                   # 跑数菜单：选一个维度就开跑，当前窗口实时看进度
+.\ops\menu.ps1 -Watch            # 不新开任务，附著到现在正在跑的那一轮
 .\ops\start.ps1                  # 服务 + 定时采集（已在跑则跳过，可重复执行）
 .\ops\start.ps1 -Rebuild         # 前端有改动：先 npm run build 再启动
 .\ops\start.ps1 -NoScheduler     # 只启服务        -Lan: 监听 0.0.0.0
@@ -87,6 +89,8 @@ cd frontend ; npm run dev      # → http://localhost:5173
 .\ops\collect.ps1 -List          # job 表 + 调度时刻 + 最近记录
 .\ops\guard.ps1                  # 幂等拉起（崩溃自愈，由计划任务每 10 分钟调用）
 ```
+
+不想要命令行：`ops\jobs\` 下每个数据维度一个双击文件（`run-stock.bat` / `run-deep.bat` / `run-agro.bat` / `run-edb.bat` / `run-valuation.bat` / `run-import.bat` / `run-daily.bat` / `run-watch.bat`），背后跑的就是 `menu.ps1`。关窗口不杀采集（看表与采集分离），回头 `menu.ps1 -Watch` 再接上。详见使用说明书 §7.3。
 
 进程按命令行特征识别（不依赖 pid 文件），日志落在 `run/*.log`（已 gitignore）。
 环境变量 `VA_PORT` / `VA_PYTHON` 可覆盖端口与 Python 解释器。
@@ -140,6 +144,6 @@ backend/
                   agro-price/ 农价与 EDB 抓取
 frontend/         Vue3 + Vite（hash 路由，echarts）
 docs/             使用说明书.md · schema.sql（18 表 DDL 存档）
-ops/              start / stop / status / guard / collect（.ps1 + .bat 包装）
+ops/              start / stop / status / guard / collect / menu（.ps1 + .bat 封装，jobs/ 是按维度的双击入口）
 run/              运行期日志与停机标记（gitignore）
 ```

@@ -2,7 +2,7 @@
 # 自动回灌 MySQL 并写 etl_job_log,不必先停调度器。
 # 用法(仓库根目录):
 #   .\ops\collect.ps1                      每日节奏:依次跑 stock → agro
-#   .\ops\collect.ps1 agro                 只跑一个 job(stock/deep/agro/edb/events/import)
+#   .\ops\collect.ps1 agro                 只跑一个 job(stock/deep/agro/edb/valuation/events/import)
 #   .\ops\collect.ps1 deep -Background     后台跑(数小时的任务别占着窗口)
 #   .\ops\collect.ps1 -List                看 job 表、调度时刻、最近运行记录
 #   .\ops\collect.ps1 stock --codes 600519 尾参透传给该 job 首个采集脚本(整体替代默认参数)
@@ -13,7 +13,7 @@
 # 双击入口见 ops\collect.bat。
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('daily','stock','deep','agro','edb','events','import')]
+    [ValidateSet('daily','stock','deep','agro','edb','valuation','events','import')]
     [string]$Job = 'daily',
     [switch]$Background,
     [switch]$List,
@@ -24,15 +24,16 @@ param(
 . (Join-Path $PSScriptRoot '_common.ps1')
 
 # daily = 调度表里"每天/几乎每天都该有新数据"的那两个 job(见 scheduler.py 的 add_job)。
-# deep 是周六、edb 是周日,都属于周更;edb 还依赖本机 Wind 客户端已登录,不放进默认。
+# deep 是周六、edb 是周日,valuation 虽每天跑但烧 Wind 积分,三者都不放进默认。
 $DailyJobs = @('stock','agro')
 $JobWhen = [ordered]@{
-    stock  = '周一~六 16:05/22:05  腾讯批量估值快照 → 回灌(≈2 分钟)'
-    agro   = '每天 09:05/21:05     生意社/中农立华农价 → 回灌(2026-09-03 实测 41 分钟)'
-    deep   = '周六 09:05           全市场财务深抓 --resume(≈5 小时,可断点续)'
-    edb    = '周日 20:00           Wind 行业量价(唯一自动碰 Wind 的任务)'
-    events = '不进调度             Wind 一次性事件/股东'
-    import = '不进调度             只把 JSON 工作目录回灌 MySQL'
+    stock     = '周一~六 16:05/22:05  腾讯批量估值快照 → 回灌(≈2 分钟)'
+    agro      = '每天 09:05/21:05     生意社/中农立华农价 → 回灌(2026-09-03 实测 41 分钟)'
+    deep      = '周六 09:05           全市场财务深抓 --resume(≈3~5 小时,可断点续)'
+    edb       = '周日 20:00           Wind 行业量价(耗积分,要客户端登录)'
+    valuation = '每天 05:05           Wind PE/PB/PS 十年分位,按游标续跑(≈56 次调用)'
+    events    = '不进调度             Wind 一次性事件/股东'
+    import    = '不进调度             只把 JSON 工作目录回灌 MySQL'
 }
 
 # 前台执行并拿退出码。为什么是 Start-Process 而不是 `& python`:
