@@ -87,6 +87,8 @@ async function main() {
       cycleHistory: hist.map(function (x) { return { year: x.year, score: num(x.score) }; }),
       // compute_scores 的口径：非周期性公司（cycle total 为空）不出趋势
       cycleTrend: ca.total == null ? null : m.cycleTrendOf(hist),
+      // 评分基准报告期（入库成 score_daily.report_date）
+      reportDate: va.annualDate == null ? null : va.annualDate,
     };
   }
   process.stdout.write(JSON.stringify(out));

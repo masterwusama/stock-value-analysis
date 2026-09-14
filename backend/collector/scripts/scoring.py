@@ -61,6 +61,23 @@ def cagr(cur, prev, years):
     return (cur / prev) ** (1.0 / years) - 1.0
 
 
+# 本币 → 人民币的粗略汇率（按市场取，A 股恒为 1）。
+# 只服务格防的规模硬门槛：1e10/5e9/3e9 这三个数当年是按 A 股人民币定的，直接拿港元/美元
+# 的资产数值去比，等于把体量相当的港美股系统性降 1~2 档（实测改动 251 只的格防分：HKD 35 /
+# USD 216，多数 +11.76 一档，A 股一分不动；ACADIA 医药总资产 15.6 亿美元按原口径拿 0 分，
+# 折回人民币应得 10 分）。
+# 用固定年均汇率而不是实时汇率：门槛本身是三档粗刻度，差 3% 的汇率波动不影响分档；
+# 真要精确可比就得接汇率源，那是另一个数据面，不该由评分引擎自己算。
+FX_TO_CNY = {'A': 1.0, 'HK': 0.92, 'US': 7.15}
+
+
+def to_cny(v, market):
+    """本币金额折成人民币当量（市场未知/未列时按人民币处理，即不折）。"""
+    if v is None:
+        return None
+    return v * FX_TO_CNY.get(str(market or 'A'), 1.0)
+
+
 def per_share_div(dividends, year):
     """对应 JS perShareDiv：某年每股派息合计（元/股，含中期分红）"""
     total, hit = 0.0, False
@@ -256,6 +273,9 @@ def value_analysis(d, now=None):
     return {
         'divYield': div_yield, 'payout': payout, 'divConsecutive': div_consecutive,
         'ratio5': ratio5, 'netCagr5': net_cagr5, 'dupontRoe': dupont_roe,
+        # 评分基准报告期：四派分与造假/管理分都建在 annual 这条序列上（annual_rows 只取 12-31），
+        # 落库时得说清“这批分用的是哪一期财报”，不能拿跑数日兜底（见 compute_scores.reportDate）
+        'annualDate': last_date,
     }
 
 
@@ -370,6 +390,7 @@ def value_scores(d, va):
     g_a_total = _school_total(g_a_items, (30, 20, 20, 15, 10, 5))
 
     # ---- 格雷厄姆 · 防御型烟蒂（规模硬门槛 + 负分惩罚）----
+    # 门槛按人民币当量计：assets 是本币原值，港美股不折就会降档，见 FX_TO_CNY
     def size_score(v):
         if v is None:
             return None
@@ -420,7 +441,7 @@ def value_scores(d, va):
             5.0 if pepb <= 22.5 else (lerp_score(pepb, 22.5, 45, 5, 0) if pepb <= 45 else 0.0))
 
     g_d_items = (
-        size_score(assets), cur_score, ltd_score, pos_score,
+        size_score(to_cny(assets, d.get('market'))), cur_score, ltd_score, pos_score,
         div_score10(div_consecutive), grow_score, lerp_score_nonneg(pe, G_D_PE_FULL, 25, 5, 0), pepb_score,
     )
     # 其中 cur_score/ltd_score/pos_score/grow_score 可为负（最低各 −10/−10/−5/−5），
@@ -1373,4 +1394,8 @@ def compute_scores(company, now=None):
     scores['cyclical'] = ca['cyclical']
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
+    # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。
+    # 原先只有净现金代入明细里顺带带的 report 可用，算不出净现金的公司就回落成跑数日
+    # （实测 2026-09-12 那轮 5095/6939 行如此），导致报告龄与「这批分用的哪一期财报」都无法回答。
+    scores['reportDate'] = va.get('annualDate')
     return scores

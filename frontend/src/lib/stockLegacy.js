@@ -840,7 +840,10 @@
       cfRows: cfRows, ratio5: ratio5, fcf5: fcf5, collectAvg: collectAvg,
       dupont: dupont, revCagr5: revCagr5, netCagr5: netCagr5,
       revCagr3: revCagr3, netCagr3: netCagr3, pegText: pegText, growthNote: growthNote,
-      checks: checks, checkSummary: checkSummary, divChart: divChart
+      checks: checks, checkSummary: checkSummary, divChart: divChart,
+      // 评分基准报告期（最新年报期）：Python 侧由 compute_scores 写成 scores.reportDate 入库成
+      // score_daily.report_date；本函数只供 Node 端 parity 比对取值（见 _score_check_node.js）
+      annualDate: lastDate
     };
   }
 
@@ -1060,6 +1063,16 @@
   var BUY_MARGIN = 2 / 3;      // 收益派（格防/巴菲特）买点相对公允倍数的安全边际
   var G_A_PNCAV_FULL = 0.67;   // 格攻：市值/净流动资产 ≤ 0.67 拿满 30 分，亦是买点倍数
   var G_D_PE_FULL = 15;        // 格防：市盈率 ≤ 15 拿满 5 分，亦是保守卖价倍数
+  // 本币 → 人民币的粗略汇率（按市场取）：只服务格防的规模硬门槛（100/50/30 亿当年按 A 股
+  // 人民币定的，不折会把体量相当的港美股系统性降 1~2 档）。与 scoring.py 的 FX_TO_CNY 同值。
+  var FX_TO_CNY = { A: 1.0, HK: 0.92, US: 7.15 };
+
+  // 本币金额折成人民币当量（市场未知或未列时按人民币处理，即不折）
+  function toCny(v, market) {
+    if (v == null) return null;
+    var k = String(market || 'A');
+    return v * (FX_TO_CNY[k] == null ? 1.0 : FX_TO_CNY[k]);
+  }
   var S_PB_FULL = 0.75;        // 施洛斯：市净率 ≤ 0.75 拿满 25 分，亦是买点倍数
   // 收益锚可信度：符号相反只是其中一种坏法，量级差一个数量级同样是坏锚（一次性损益、
   // 股本口径错、年报窗口与快照 TTM 错配）。坏锚会占满「买入性价比」榜首：*ST华幸 买价
@@ -1219,7 +1232,7 @@
     else if (ltd <= wc * 1.5) { ltdScore = lerpScore(ltd / wc, 1, 1.5, 20, 5); }
     else { ltdScore = 0; }
     var gD = [
-      it('企业规模（总资产）', fmtMoney(assets), '≥ 100 亿', 10, sizeScore(assets)),
+      it('企业规模（总资产）', fmtMoney(assets), '≥ 100 亿（人民币当量，本币按固定汇率折算）', 10, sizeScore(toCny(assets, d.market))),
       it('流动比率', fmtNum(curRatio), '≥ 2', 20, curRatio == null ? null
         : (curRatio >= 2 ? 20 : curRatio >= 1.5 ? lerpScore(curRatio, 1.5, 2, 0, 20) : curRatio >= 1 ? 5 : -10)),
       it('长期有息负债 / 营运资本', (ltd == null ? '-' : fmtMoney(ltd)) + ' / ' + (wc == null ? '-' : fmtMoney(wc)), '长期负债 ≤ 营运资本', 20, ltdScore),
