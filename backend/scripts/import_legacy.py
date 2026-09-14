@@ -282,8 +282,8 @@ def load_sid_map(db):
     return {(r.code, r.market): r.sid for r in rows}
 
 
-def build_score_rows(index, trade_date):
-    """index.json companies[] → score_daily 行（含 Wind 事件覆盖层）。"""
+def build_score_rows(index, trade_date, db):
+    """index.json companies[] → score_daily 行（含 Wind 事件覆盖层与硬门槛标记）。"""
     score_rows = {}
     for c in index.get("companies", []):
         sc = c.get("scores") or {}
@@ -291,7 +291,12 @@ def build_score_rows(index, trade_date):
         calc = refs.get("netCashCalc") or {}
         row = {
             "trade_date": trade_date,
-            "report_date": parse_date(calc.get("report")) or trade_date,
+            # 评分基准报告期：优先用评分引擎给的最新年报期（compute_scores.reportDate，与
+            # annual_rows 只取 12-31 的口径同源），再退净现金代入明细里的期次，最后才用跑数日。
+            # 旧写法只认 calc.report，算不出净现金的公司就整片回落成跑数日（实测 2026-09-12
+            # 那轮 5095/6939 行如此），报告龄与「这批分用的哪一期财报」双双无法回答。
+            "report_date": (parse_date(sc.get("reportDate")) or parse_date(calc.get("report"))
+                            or trade_date),
             "score_graham_agg": sc.get("grahamAgg"),
             "score_graham_def": sc.get("grahamDef"),
             "score_schloss": sc.get("schloss"),
@@ -324,7 +329,95 @@ def build_score_rows(index, trade_date):
                 score_rows[code]["wind_mgmt_delta"] = ov.get("mgmtDelta")
                 score_rows[code]["wind_flags"] = ov.get("flags")
                 score_rows[code]["wind_overlay"] = ov
+
+    # 硬门槛：拿库里已导入的定性事实贴标，不改任何分数（见 GATE_FLAGS）
+    hits, judgeable = load_gate_facts(db)
+    for code, row in score_rows.items():
+        flags = hits.get(code)
+        row["gate_flags"] = flags or None
+        # 命中=True；可判但未命中=False；一个信号都判不了（未抓财务、无审计无权益）=NULL，
+        # NULL 不等于通过，所以列表页默认不拿它排除任何标的
+        row["gate"] = True if flags else (False if code in judgeable else None)
     return score_rows
+
+
+# ---------- 硬门槛（score_daily.gate / gate_flags）----------
+# 四派分是排序工具，只回答「相对本派锚位便不便宜」；但有些定性事实一旦成立，分数再高
+# 也不该进买入区——审计非标、被交易所风险警示、有立案/处罚记录、已经资不抵债。
+# 这类信号刻意不进任何加权项：一个二元否决被稀释成「扣几分」后既拦不住东西也解释不了。
+# 口径全取库里既成事实（不额外花抓取额度）；Wind 事件只覆盖 16 家、靠不住，所以风险警示
+# 按证券简称判，与列表页原有的「剔除 ST」同一口径。
+GATE_FLAGS = {
+    "audit_qualify": "最近一份年报的审计意见非标准无保留意见",
+    "risk_warning": "证券简称含 ST / *ST（交易所风险警示）",
+    "case_filed": "Wind 事件里有违规/立案/处罚记录",
+    "neg_equity": "最新年报归母股东权益为负（资不抵债）",
+}
+# 视同「标准无保留」的意见文本：A 股披露写「标准无保留意见」，英/港文本是「无保留意见」，
+# 两者都不是红旗；带强调事项段/保留/否定/无法表示意见才算。
+AUDIT_CLEAN = {"标准无保留意见", "无保留意见"}
+
+# periodic_report.report_date 存的是公告日（源 JSON 的 date），所以「MAX(report_date)
+# 的那一份年报」正好就是「最近披露的那份年报」，不必再推期次
+GATE_AUDIT_SQL = """
+SELECT s.code, p.audit_opinion
+FROM periodic_report p
+JOIN (SELECT sid, MAX(report_date) md FROM periodic_report
+      WHERE category='年报' AND audit_opinion IS NOT NULL GROUP BY sid) t
+  ON t.sid = p.sid AND t.md = p.report_date
+JOIN security s ON s.sid = p.sid
+WHERE p.category='年报'
+"""
+# 最新年报的归母权益（港美股财年已归一到 12-31，同一句子三市场共用）
+GATE_EQUITY_SQL = """
+SELECT s.code, b.equity_parent, b.equity_total
+FROM fin_balance b
+JOIN (SELECT sid, MAX(report_date) md FROM fin_balance
+      WHERE DATE_FORMAT(report_date, '%m-%d') = '12-31' GROUP BY sid) t
+  ON t.sid = b.sid AND t.md = b.report_date
+JOIN security s ON s.sid = b.sid
+WHERE DATE_FORMAT(b.report_date, '%m-%d') = '12-31'
+"""
+GATE_CASE_SQL = """
+SELECT DISTINCT s.code FROM wind_event w
+JOIN security s ON s.sid = w.sid
+WHERE w.etype IN ('违规', '立案', '处罚', 'ST')
+"""
+GATE_NAME_SQL = "SELECT code, market, name FROM security"
+
+
+def load_gate_facts(db):
+    """库里的定性事实 → (命中标记 {code: [GATE_FLAGS 键]}, 至少有一个可判信号的 code 集)。
+
+    本函数在两条回灌路径里都在财务表回灌**之前**跑（评分行要先建好），所以用的是上一轮的
+    权益与审计意见。年报口径一年只变一次，滞后一轮不影响门槛判断；真要立刻反映就再跑一次 import。
+    """
+    hits: dict[str, list[str]] = {}
+    judgeable: set[str] = set()
+
+    def mark(code, flag=None):
+        if code is None:
+            return
+        judgeable.add(code)
+        if flag:
+            hits.setdefault(code, []).append(flag)
+
+    for code, opinion in db.execute(text(GATE_AUDIT_SQL)):
+        mark(code, 'audit_qualify' if opinion and str(opinion).strip() not in AUDIT_CLEAN else None)
+    for code, parent, total in db.execute(text(GATE_EQUITY_SQL)):
+        eq = parent if parent is not None else total
+        mark(code, 'neg_equity' if (eq is not None and float(eq) < 0) else None)
+    for (code,) in db.execute(text(GATE_CASE_SQL)):
+        mark(code, 'case_filed')
+    # 风险警示只对 A 股成立：美股简称里带 ST 的（STAR、Stifel…）不是风险警示，实测误命中 88 家
+    for code, market, name in db.execute(text(GATE_NAME_SQL)):
+        if market == 'A':
+            mark(code, 'risk_warning' if 'ST' in str(name or '').upper() else None)
+
+    order = {k: i for i, k in enumerate(GATE_FLAGS)}
+    for flags in hits.values():
+        flags.sort(key=lambda k: order.get(k, 99))
+    return hits, judgeable
 
 
 def import_index_snapshot(db, stats, quiet=False):
@@ -336,7 +429,7 @@ def import_index_snapshot(db, stats, quiet=False):
     """
     index = json.loads((DATA_DIR / "index.json").read_text(encoding="utf-8"))
     trade_date = parse_date(index["updated_at"])
-    score_rows = build_score_rows(index, trade_date)
+    score_rows = build_score_rows(index, trade_date, db)
 
     w_sec = _Writer(db, stats, Security, SEC_KEYS, mode="upsert", upd_expr=SEC_UPD)
     w_quote = _Writer(db, stats, QuoteDaily, QUOTE_KEYS, mode="upsert",
@@ -402,7 +495,7 @@ def import_companies(db, stats, only_fresh=None, quiet=False, head=True):
     index = json.loads((DATA_DIR / "index.json").read_text(encoding="utf-8"))
     trade_date = parse_date(index["updated_at"])
     by_code = {c["code"]: c for c in index.get("companies", []) if c.get("code")}
-    score_rows = build_score_rows(index, trade_date)
+    score_rows = build_score_rows(index, trade_date, db)
 
     files = sorted((DATA_DIR / "companies").glob("*.json"))
     if only_fresh:

@@ -45,7 +45,10 @@ def local_flt(fraud_max=None, mgmt_min=None, cap_min=None, cap_max=None, ncr_min
             if c.get("market", "A") != "A" or not str(c["code"]).startswith(BOARDS[board]):
                 continue
         if st is not None:
-            if ("ST" in str(c.get("name") or "").upper()) != st:
+            # 风险警示是 A 股专有制度：美股简称里带 ST 的（STAR、Stifel…）实测 88 家不算。
+            # 后端改成 market=='A' 才判，这边跟着换口径——基线留着旧写法就变成要求后端犯错
+            is_st = c.get("market", "A") == "A" and "ST" in str(c.get("name") or "").upper()
+            if is_st != st:
                 continue
         ind = c.get("industry") or None
         if industry and ind != industry:
@@ -446,6 +449,145 @@ print(("OK  " if not _v_bad else "FAIL") + f" pb_pctile 与采集产物逐家一
       + ("" if not _v_bad else f" 前 5 处={_v_bad[:5]}"))
 if _v_bad:
     fails += 1
+
+# ---------- 硬门槛 gate / 财报期龄 report_age_max ----------
+# gate 不是采集产物（index.json 里没有），源是库里的定性事实：审计意见 / 证券简称 /
+# Wind 事件 / 最新年报权益。所以基线在本脚本里用 ORM 另写一遍四个条件，不 import
+# import_legacy 的 GATE_*_SQL——抄过来就变成「回灌自己证明自己」，贴错人、漏贴标、
+# 三态写反这类错一条都拦不住。
+from sqlalchemy import and_, func, select         # noqa: E402
+from app.db import SessionLocal                      # noqa: E402
+from app.models import FinBalance, PeriodicReport, Security, WindEvent  # noqa: E402
+
+_AUDIT_CLEAN = {"标准无保留意见", "无保留意见"}   # 与 import_legacy.AUDIT_CLEAN 同集，刻意重写一份
+_dbs = SessionLocal()
+_exp_flags = {}       # code -> set(命中的信号键)
+_judgeable = set()    # 至少有一个信号可判的 code
+# sid → code 取列表接口自己回的那一列：库里的 sid↔code 映射与 API 行归属本来就在同一条
+# join 链上，拿接口返回的 sid 去对，才能连“接口把行贴到错的证券上”一起抢住
+_code_by_sid = {it["sid"]: code for code, it in all_items.items()}
+
+# 1) 最近一份「有审计意见的」年报：periodic_report.report_date 存的是公告日，
+#    取 MAX 即「最近披露的那份」，正是门槛要的口径（不是「最新报告期那份」）
+_last_rpt = (select(PeriodicReport.sid, func.max(PeriodicReport.report_date).label("md"))
+             .where(PeriodicReport.category == "年报", PeriodicReport.audit_opinion.isnot(None))
+             .group_by(PeriodicReport.sid).subquery())
+for sid, opinion in _dbs.execute(
+        select(PeriodicReport.sid, PeriodicReport.audit_opinion)
+        .join(_last_rpt, and_(_last_rpt.c.sid == PeriodicReport.sid,
+                              _last_rpt.c.md == PeriodicReport.report_date))
+        .where(PeriodicReport.category == "年报")):  # 同一天两份年报会出多行，取到任意一份都算保守
+    code = _code_by_sid.get(sid)
+    if not code:
+        continue
+    _judgeable.add(code)
+    if str(opinion or "").strip() not in _AUDIT_CLEAN:
+        _exp_flags.setdefault(code, set()).add("audit_qualify")
+
+# 2) 最新年报的归母权益（负数=资不抵债）；港美股财年已归一到 12-31，一句三市场共用
+_last_ba = (select(FinBalance.sid, func.max(FinBalance.report_date).label("md"))
+            .where(func.date_format(FinBalance.report_date, "%m-%d") == "12-31")
+            .group_by(FinBalance.sid).subquery())
+for sid, parent, total in _dbs.execute(
+        select(FinBalance.sid, FinBalance.equity_parent, FinBalance.equity_total)
+        .join(_last_ba, and_(_last_ba.c.sid == FinBalance.sid,
+                             _last_ba.c.md == FinBalance.report_date))
+        .where(func.date_format(FinBalance.report_date, "%m-%d") == "12-31")):
+    code = _code_by_sid.get(sid)
+    if not code:
+        continue
+    _judgeable.add(code)
+    eq = parent if parent is not None else total
+    if eq is not None and float(eq) < 0:
+        _exp_flags.setdefault(code, set()).add("neg_equity")
+
+# 3) Wind 违规/立案/处罚事件（覆盖极窄，实测只 1 家，但不能因此就不校验）
+for (sid,) in _dbs.execute(select(WindEvent.sid).where(
+        WindEvent.etype.in_(["违规", "立案", "处罚", "ST"])).distinct()):
+    code = _code_by_sid.get(sid)
+    if code:
+        _judgeable.add(code)
+        _exp_flags.setdefault(code, set()).add("case_filed")
+
+# 4) 风险警示：只有 A 股有 ST 制度（美股简称带 ST 的实测 88 家，全是 STAR/Stifel 之类）
+for code, mkt, name in _dbs.execute(select(Security.code, Security.market, Security.name)):
+    if mkt == "A":
+        _judgeable.add(code)
+        if "ST" in str(name or "").upper():
+            _exp_flags.setdefault(code, set()).add("risk_warning")
+_dbs.close()
+
+_g_bad, _g_hit, _g_null = [], 0, 0
+for _code, _it in all_items.items():
+    _want = _exp_flags.get(_code) or set()
+    # 三态：命中 True / 可判但没命中 False / 一个信号都判不了 None（不是「通过」）
+    _want_gate = None if _code not in _judgeable else (True if _want else False)
+    _got_gate, _got = _it.get("gate"), set(_it.get("gate_flags") or [])
+    if _got is None:
+        _got = set()
+    if _got_gate is None:
+        _g_null += 1
+    elif _got_gate is True:
+        _g_hit += 1
+    if _got_gate != _want_gate or _got != _want:
+        _g_bad.append((_code, sorted(_want), _want_gate, sorted(_got), _got_gate))
+print(("OK  " if not _g_bad else "FAIL")
+      + f" gate 与库内定性事实逐家一致(触发 {_g_hit} / 判不了 {_g_null} / 共 {len(all_items)})"
+      + ("" if not _g_bad else f" 前 5 处={_g_bad[:5]}"))
+if _g_bad:
+    fails += 1
+
+# 三值逻辑：gate=True 与 gate=False 必须不相交，且两边并起来正好是「可判」的那批——
+# 判不了的（NULL）两种筛选都不进，与市值/净现金那几列「算不出就不进区间」同一语义。
+_g_true, _g_false = api_flt({"gate": True}), api_flt({"gate": False})
+_g_both = _g_true & _g_false
+_g_miss = {c for c, it in all_items.items() if it.get("gate") is not None} - (_g_true | _g_false)
+_ok = not _g_both and not _g_miss and _g_true == {c for c, it in all_items.items() if it.get("gate") is True}
+print(("OK  " if _ok else "FAIL") + f" gate 两向筛选不相交不缺行(True {len(_g_true)} / False {len(_g_false)})"
+      + ("" if _ok else f" 交集={sorted(_g_both)[:5]} 漏={sorted(_g_miss)[:5]}"))
+if not _ok:
+    fails += 1
+
+# 财报期龄：响应字段用 Python 的 _age_months、筛选却用 MySQL 的 TIMESTAMPDIFF——
+# 两套月份算法必须逐行同值，否则会出现「被 ≤13 月筛进来、格上标着期龄 14 月」。
+# 本地这第三份算法独立写（未足月退一格），再按整条数轴核对门槛 total，边界一处不差才算过。
+def _age(frm, to):
+    f, t = dt.date.fromisoformat(frm), dt.date.fromisoformat(to)
+    m = (t.year - f.year) * 12 + (t.month - f.month)
+    return m - 1 if t.day < f.day else m
+
+
+_a_bad = []
+for _code, _it in all_items.items():
+    _rd, _td = _it.get("report_date"), _it.get("score_date")
+    _want = _age(_rd, _td) if (_rd and _td) else None
+    if _want != _it.get("report_age_months"):
+        _a_bad.append((_code, _rd, _td, _want, _it.get("report_age_months")))
+print(("OK  " if not _a_bad else "FAIL") + " report_age_months 与独立月份算法逐家一致"
+      + ("" if not _a_bad else f" 前 5 处={_a_bad[:5]}"))
+if _a_bad:
+    fails += 1
+
+_ages = sorted(it["report_age_months"] for it in all_items.values() if it.get("report_age_months") is not None)
+_a_bad2 = []
+if not _ages:
+    print("SKIP 一行期龄都拿不到（report_date 全空或服务未重启），report_age_max 档未校验")
+    fails += 1
+else:
+    # 阈值取真实分位点 + 页面阈值 13 两侧，边界上最容易让两套算法分岔（整月、未足月退格）。
+    # 只取 0~60：接口给 report_age_max 定了 le=60（超六年的旧年报不是靠这个开关拦的），
+    # 探针超出定义域只会收到 422，那是参数在干活而不是算法对不上
+    _cand = {0, 6, _ages[len(_ages) // 2], 12, 13, 14, _ages[-1], 60}
+    for _t in sorted(t for t in _cand if 0 <= t <= 60):
+        _want = sum(1 for a in _ages if a <= _t)
+        _got = api("/securities?" + urllib.parse.urlencode({"report_age_max": _t, "page_size": 1}))["total"]
+        if _want != _got:
+            _a_bad2.append(f"{_t}->{_got}(期望 {_want})")
+    print(("OK  " if not _a_bad2 else "FAIL") + " report_age_max 门槛 total 与本地计数一致"
+          + f"(期龄 {_ages[0]}~{_ages[-1]} 月,有值 {len(_ages)}/{len(all_items)}) "
+          + " ".join(_a_bad2))
+    if _a_bad2:
+        fails += 1
 
 # 表头排序：前端可发的每个 sort 键都要 200 + 单调有序 + NULL 不占首页。
 # 曾经的 bug：列表 COLS 拿流派驼峰键（grahamAgg）当排序键，而后端白名单只有列名，

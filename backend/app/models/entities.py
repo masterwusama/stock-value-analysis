@@ -211,10 +211,16 @@ class ScoreDaily(Base):
     wind_flags: Mapped[list | None] = mapped_column(JSON)
     # events/index.json byCode 原始覆盖层条目全量(⑥⑦脚注/⑨总览芯片按原字段透传)
     wind_overlay: Mapped[dict | None] = mapped_column(JSON)
+    # 硬门槛:命中即「不该进买入区」,不参与也不影响任何分数。
+    # NULL=一家公司的可判信号都没有(未抓财务),不等于通过,故列表页默认不拿它排除任何标的。
+    gate: Mapped[bool | None] = mapped_column(Boolean)
+    # 命中的信号名列表,取值见 import_legacy.GATE_FLAGS(审计非标/风险警示/立案违规/负权益)
+    gate_flags: Mapped[list | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     __table_args__ = (
         Index("idx_list_fraud", "trade_date", "fraud"),
+        Index("idx_list_gate", "trade_date", "gate"),
         Index("idx_list_mgmt", "trade_date", "mgmt"),
         Index("idx_list_cycle", "trade_date", "cycle"),
         Index("idx_list_graham_agg", "trade_date", "score_graham_agg"),

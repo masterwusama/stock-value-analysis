@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import AfterValidator, BaseModel
-from sqlalchemy import and_, case, func, not_, or_, select
+from sqlalchemy import and_, case, func, not_, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -46,6 +46,15 @@ def _f(v):
     return float(v) if v is not None else None
 
 
+def _age_months(from_d: date, to_d: date) -> int:
+    """整月报告龄：同年按月份差、跨年折成 12*n+月份差，未足月（终止日的日早于起始日的日）退一格。
+
+    拿天数除 30 会把「差两天满 13 月」算成 12 月，财报期次是按日历走的，这里就得按日历算。
+    """
+    m = (to_d.year - from_d.year) * 12 + (to_d.month - from_d.month)
+    return m - 1 if to_d.day < from_d.day else m
+
+
 def _d(v):
     return v.isoformat() if v is not None else None
 
@@ -77,6 +86,15 @@ class SecurityItem(BaseModel):
     fraud: float | None = None
     mgmt: float | None = None
     cycle: float | None = None
+    # 硬门槛（1=触发，0=可判且未触发，null=一个信号都判不了）与命中项，口径见 import_legacy.GATE_FLAGS
+    gate: bool | None = None
+    gate_flags: list | None = None
+    # 评分基准报告期与报告龄（月）：四派分永远建在最新年报上，那一期距今越久分越旧。
+    # score_date 是这一行评分快照自己的交易日：逐证券各取最近收盘，美股会比顶部那个
+    # 全局快照日旧一天，而 report_age_months 就是相对它算的——不给出它，这个月数无法自证。
+    report_date: date | None = None
+    report_age_months: int | None = None
+    score_date: date | None = None
     # Wind 事件档的溯源三元组（前端算显示值 + 悬停提示用）：fraud/mgmt 本身恒为
     # 财报基础分，不随 wind 参数变化
     # wind_hit 单独给一个硬布尔：事件条目存在但 delta 全空时，前端不能拿“delta 为空”
@@ -277,6 +295,12 @@ def list_securities(
     board: Literal["shMain", "szMain", "gem", "star", "bj"] | None = Query(
         None, description="A 股板块(代码前缀):沪主/深主/创业/科创/北交"),
     st: bool | None = Query(None, description="True 仅 ST/*ST,False 排除"),
+    gate: bool | None = Query(
+        None,
+        description="True 仅触发硬门槛的标的,False 排除它们（审计非标/风险警示/立案处罚/负权益；"
+                    "gate 为 NULL 即一个信号都判不了的标的两种筛选都不进）"),
+    report_age_max: int | None = Query(
+        None, ge=0, le=60, description="评分基准报告期距今 ≤ 多少月（只拦财报陈旧的公司，不改分数）"),
     keyword: str | None = Query(None, max_length=32, description="代码/名称模糊匹配"),
     industry: str | None = Query(None, max_length=64),
     ex_industry: str | None = Query(
@@ -364,8 +388,18 @@ def list_securities(
         conds.append(Security.market == "A")
         conds.append(or_(*[Security.code.startswith(p) for p in prefixes]))
     if st is not None:
-        is_st = func.upper(Security.name).like("%ST%")
+        # 风险警示是 A 股专有标记：港股、美股没有 ST 制度,而美股简称里带 ST 的（STAR、Stifel…）
+        # 实测误命中 88 家,所以判定不能只拼名称子串
+        is_st = and_(Security.market == "A", func.upper(Security.name).like("%ST%"))
         conds.append(is_st if st else not_(is_st))
+    if gate is not None:
+        # 只比 True/False：三值逻辑下 NULL（判不了）既不满足 =1 也不满足 =0→两类筛选都自动排除，
+        # 与市值/净现金那几列「算不出就不进区间」同一语义
+        conds.append(ScoreDaily.gate.is_(True) if gate else ScoreDaily.gate.is_(False))
+    if report_age_max is not None:
+        # 按行自身的 trade_date 算,不能用全局最新日：逐证券各取最新一行时三者日期本就错开着
+        conds.append(func.timestampdiff(text("MONTH"), ScoreDaily.report_date,
+                                       ScoreDaily.trade_date) <= report_age_max)
     if industry:
         conds.append(Security.industry == industry)
     if ex_names:
@@ -446,6 +480,12 @@ def list_securities(
             fraud=score.fraud if score else None,
             mgmt=score.mgmt if score else None,
             cycle=score.cycle if score else None,
+            gate=score.gate if score else None,
+            gate_flags=score.gate_flags if score else None,
+            report_date=score.report_date if score else None,
+            report_age_months=(_age_months(score.report_date, score.trade_date)
+                               if (score and score.report_date and score.trade_date) else None),
+            score_date=score.trade_date if score else None,
             wind_fraud_delta=_f(score.wind_fraud_delta) if score else None,
             wind_mgmt_delta=_f(score.wind_mgmt_delta) if score else None,
             wind_flags=score.wind_flags if score else None,

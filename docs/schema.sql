@@ -141,21 +141,25 @@ CREATE TABLE score_daily (
 	wind_mgmt_delta DOUBLE, 
 	wind_flags JSON, 
 	wind_overlay JSON, 
+	gate BOOL, 
+	gate_flags JSON, 
 	updated_at DATETIME NOT NULL, 
 	PRIMARY KEY (sid, trade_date)
 );
 
-CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
+CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 
-CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
-
-CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
+CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
 
 CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
 
+CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
+
+CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
+
 CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
 
-CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
+CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 
 CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
