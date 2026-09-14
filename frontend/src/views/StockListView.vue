@@ -49,6 +49,13 @@ const exIndustries = ref([])
 const exOpen = ref(false)
 const exKw = ref('')
 const noSt = ref(false)
+// 硬门槛（接口 gate / gate_flags）：命中「审计非标 / 简称 ST / 立案处罚 / 资不抵债」这类定性事实。
+// 默认不拦：列表页是排序工具，默默替用户改筛选结果比多一个红标更糟；而且 gate 为 NULL
+//（一个信号都判不了）的标的在勾选时会连同门排除，默认不勾才不会让人误以为「剩下的都干净」。
+const noGate = ref(false)
+const GATE_TIP = '排除触发硬门槛的标的：最近一份年报的审计意见非标准无保留 / 简称含 ST / *ST（交易所风险警示）/ Wind 有违规立案处罚记录 / 最新年报归母权益为负。'
+  + '这四类是定性否决，不进任何分数（四派分照旧），所以触发者出现在高分前排并不罕见（实测 353 家触发，其中 29 家四派最高分 ≥ 70）。'
+  + '注意：本开关只保留「明确未触发」的标的，一个信号都判不了的（未抓财务、无审计也无权益数据）会一并被排除'
 const industries = ref([])
 const keyword = ref('')
 const kwDebounced = ref('')
@@ -65,7 +72,13 @@ const error = ref('')
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(现价≥公允卖价即命中,公允恒高于保守);空值=不限
 // 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)、净现金/市值区间(%)、PB 十年分位区间(0~100)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
-const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', buys: [], discount: '', sells: [] })
+const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [] })
+// 评分基准报告期距今多少月（接口 report_age_max）：四派分永远建在最新年报上，那一期越旧分越旧。
+// 阈值取 13 月：上一年 12-31 的年报最迟 12 个月龄，超出去就是再上一年度。
+const AGE_TIP = '评分用的财报期（最新年报）距今 ≤ 多少月：填 13 就是只要「基准年报还是上一年度」的公司；'
+  + '超出的那些是新一期年报还没披露（或还没回灌），四派分与买卖参考价都建在再上一年的财报上。留空不限；'
+  + '美股有几个财年不在 12-31 收尾的公司（Copart/Cisco/Intuit 那类，实测 7 家），采集层把期次归一到 12-31，'
+  + '它们的基准期会显示成未来期（期龄负数），不是算错，也不会被这个门槛误拦（门槛只卡上限）'
 // 市值框让用户填“亿”(与列头 市值(亿) 同口径),发请求时转回接口单位元：
 // 接口接受本币元、响应 market_cap 也是本币元,两处同一单位才能拿着返回值直接核对边界。
 // Math.round 而非直乘：1.1 * 1e8 = 110000000.00000001 这种尾差会把恰好在边上的票顶出筛选。
@@ -143,17 +156,41 @@ function windTip(s, kind, baseTip) {
   return `Wind 事件增强：基础财报 ${base == null ? '-' : base.toFixed(1)} 分 ${d >= 0 ? '+' : ''}${d.toFixed(1)} → ${disp == null ? '-' : disp.toFixed(1)}${flags}`
 }
 
+// 硬门槛与财报期龄都只做「标注」，不参与排序与着色；名字取自接口的 gate_flags
+const GATE_TEXT = {
+  audit_qualify: '最近一份年报的审计意见非标准无保留',
+  risk_warning: '简称含 ST / *ST（交易所风险警示）',
+  case_filed: 'Wind 事件里有违规/立案/处罚记录',
+  neg_equity: '最新年报归母股东权益为负（资不抵债）',
+}
+function gateTip(s) {
+  const f = (s.gate_flags || []).map((k) => GATE_TEXT[k] || k)
+  return '触发硬门槛：' + (f.join('、') || '（后端未给出行因）')
+    + '。这类定性否决不进任何分数，四派分照旧；要排掉请勾筛选栏的「排除门槛」'
+}
+// 期龄超 13 月才标：没超标的就是正常路径（年报当年 4 月披露、下半年读到 8~12 月龄），标出来只会成屏噪声
+const STALE_MONTHS = 13
+const staleOf = (s) => (s.report_age_months == null || s.report_age_months <= STALE_MONTHS ? null : s.report_age_months)
+function ageTip(s) {
+  const m = s.report_age_months
+  if (m == null) return '评分基准报告期未知（这一行的评分行缺失或旧于本次口径）'
+  // 月数是相对这一行自己的快照日算的（美股会比顶部全局快照日旧一天），不报出来就像算错了
+  return `评分用的是 ${s.report_date} 年报（距本行快照日 ${s.score_date} ${m} 个月）`
+    + (m > STALE_MONTHS ? '：新一期年报还没出或还没回灌，四派分与买卖参考价都建在这份旧财报上' : '')
+}
+
 function toggleFlt(arr, key, on) {
   const i = arr.indexOf(key)
   if (on && i < 0) arr.push(key)
   if (!on && i >= 0) arr.splice(i, 1)
 }
 function resetFlt() {
-  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', buys: [], discount: '', sells: [] })
+  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [] })
   industry.value = ''
   exIndustries.value = []
   exKw.value = ''
   noSt.value = false
+  noGate.value = false
   applyFlt()
 }
 function applyFlt() {
@@ -165,8 +202,9 @@ const fltCount = () =>
   (flt.capMin !== '' ? 1 : 0) + (flt.capMax !== '' ? 1 : 0) +
   (flt.ncrMin !== '' ? 1 : 0) + (flt.ncrMax !== '' ? 1 : 0) +
   (flt.pbpMin !== '' ? 1 : 0) + (flt.pbpMax !== '' ? 1 : 0) +
+  (flt.ageMax !== '' ? 1 : 0) +
   (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) +
-  (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0)
+  (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0) + (noGate.value ? 1 : 0)
 
 // 勾选清单过搜索词。只数保持 /securities/industries 的原生顺序（count 降序），
 // 大行业排在前面正是排除操作想要的顺序，不另排。
@@ -193,6 +231,9 @@ async function load() {
       market: market.value, board: board.value, industry: industry.value,
       ex_industry: exIndustries.value.length ? exIndustries.value.join(',') : null,
       st: noSt.value ? false : null,
+      gate: noGate.value ? false : null,
+      // 不换算：接口收的就是「月」，与列面标注同一口径
+      report_age_max: flt.ageMax === '' ? null : flt.ageMax,
       keyword: kwDebounced.value,
       fraud_max: flt.fraudMax === '' ? null : flt.fraudMax,
       mgmt_min: flt.mgmtMin === '' ? null : flt.mgmtMin,
@@ -364,12 +405,14 @@ const fltSummary = computed(() => {
   if (flt.ncrMax !== '') parts.push('净现金≤' + flt.ncrMax + '%')
   if (flt.pbpMin !== '') parts.push('PB分位≥' + flt.pbpMin + '%')
   if (flt.pbpMax !== '') parts.push('PB分位≤' + flt.pbpMax + '%')
+  if (flt.ageMax !== '') parts.push('财报期龄≤' + flt.ageMax + '月')
   if (flt.buys.length) parts.push(flt.buys.length + '个买点' + (flt.discount !== '' ? '×' + flt.discount + '%' : ''))
   if (flt.sells.length) parts.push(flt.sells.length + '个卖点')
   if (industry.value) parts.push(industry.value)
   // 排除项只报数量：行业名最长 20 字且可能同时排好几个，写在按钮上会把摘要撑成一行多
   if (exIndustries.value.length) parts.push('排除' + exIndustries.value.length + '行业')
   if (noSt.value) parts.push('剔除ST')
+  if (noGate.value) parts.push('排除门槛')
   return parts.length ? '筛选：' + parts.join(' · ') : '筛选条件'
 })
 const sortSummary = computed(() => {
@@ -446,6 +489,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         </div>
       </div>
       <label class="cb" title="名称含 ST/*ST 的公司（退市风险与财务造假高发区）"><input type="checkbox" v-model="noSt" @change="applyFlt">剔除ST</label>
+      <label class="cb" :title="GATE_TIP"><input type="checkbox" v-model="noGate" @change="applyFlt">排除门槛</label>
       <label class="num" title="财报造假可能性(0-100,越高越可疑),只保留 ≤ 该分的公司">造假≤
         <input v-model="flt.fraudMax" type="number" min="0" max="100" step="1" placeholder="不限" @change="applyFlt"></label>
       <label class="num" title="管理层水平(0-100,越高越好),只保留 ≥ 该分的公司">管理≥
@@ -463,6 +507,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
         <input v-model="flt.pbpMin" type="number" min="0" max="100" step="5" placeholder="不限" @change="applyFlt">%</label>
       <label class="num" :title="PB_TIP">PB十年分位≤
         <input v-model="flt.pbpMax" type="number" min="0" max="100" step="5" placeholder="不限" @change="applyFlt">%</label>
+      <label class="num" :title="AGE_TIP">财报期龄≤
+        <input v-model="flt.ageMax" type="number" min="0" max="60" step="1" placeholder="不限" @change="applyFlt">月</label>
       <span class="t" title="多选需同时满足:现价 ≤ 买价 × 折扣%">买点</span>
       <label v-for="[k, lab] in SCHOOLS" :key="'b' + k" class="cb">
         <input type="checkbox" :checked="flt.buys.includes(k)"
@@ -484,6 +530,9 @@ const REF_COLS = COLS.filter((c) => c.ref)
         {{ NCR_TIP }}<br>
         {{ PB_TIP }}<br>
         买：现价 ≤ 买价×折扣；卖：现价 ≥ 公允卖价（公允恒高于保守卖价，达到公允即两档都过）；缺数据的公司自动排除<br>
+        {{ GATE_TIP }}<br>
+        {{ AGE_TIP }}<br>
+        名称后的 ⚑ = 触发上述硬门槛（悬停看具体那条）；「期龄 N 月」= 评分用的年报期距今 N 个月，超 13 月才标<br>
         排除行业：勾中的行业整体从结果里摘掉（多选是「都排除」），与「行业」下拉同时用则是 AND；没有行业标注的公司不参与排除、始终保留
       </p>
     </div>
@@ -507,6 +556,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
              @keyup.enter="router.push(`/stock/${s.code}`)">
           <div class="sc-head">
             <span class="sc-name">{{ s.name }}</span>
+            <span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span>
+            <span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span>
             <span class="sc-code">{{ s.code }}</span>
             <span v-if="s.market !== 'A'" class="badge">{{ MARKET_NAME[s.market] }}</span>
             <span class="sc-price" :class="cls(s.change_pct)">
@@ -575,7 +626,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         </thead>
         <tbody>
           <tr v-for="s in data?.items" :key="s.sid" @click="router.push(`/stock/${s.code}`)">
-            <td class="l stick"><b>{{ s.name }}</b> <span class="badge">{{ MARKET_NAME[s.market] }}</span> {{ s.code }}</td>
+            <td class="l stick"><b>{{ s.name }}</b><span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span><span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span> <span class="badge">{{ MARKET_NAME[s.market] }}</span> {{ s.code }}</td>
             <td class="l"><span class="ind" :title="s.industry">{{ s.industry || '-' }}</span></td>
             <!-- 币种角标：港股/美股的现价与市值是本币（HKD/USD），跟 A 股人民币数值直接比大小会误读 -->
             <td>{{ fmt(s.price) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
@@ -751,6 +802,10 @@ const REF_COLS = COLS.filter((c) => c.ref)
 .c-ref .sl-sort:hover { text-decoration: underline; }
 /* 币种角标：只在非 A 股出现，右上角小字，不参与排序也不撑宽列 */
 .ccy { font-style: normal; font-size: 9px; color: #999; vertical-align: super; margin-left: 1px; }
+/* 硬门槛角标：定性否决，只标注不着色不排序，故用最高对比的红而不是等级色（--bad 那套是给分数用的） */
+.gate-flag { color: #d43b3b; font-size: 12px; margin-left: 3px; cursor: help; }
+/* 财报期龄超阈标注：比门槛弱一级（多为「新一期年报还没披露」的常态），故灰字不加粗 */
+.stale-flag { color: var(--sub); font-size: 10px; margin-left: 3px; cursor: help; }
 table.grid th.unsort { cursor: default; }
 /* ---- 宽屏铺开 + 密集排版：21 列争取在 1440 视口下不横向滚动（装不下仍由 .tbl-wrap 滚动兜底） ---- */
 .tbl-wrap { overflow-x: auto; }
