@@ -121,9 +121,10 @@ cd frontend ; npm run dev      # → http://localhost:5173
 cd backend
 python -X utf8 -m scripts.verify_import     # 10 张表行数 + 逐字段断言 + 估值分位覆盖
 python -X utf8 -m scripts.verify_api        # API 响应 vs 源 JSON
-python -X utf8 -m scripts.verify_filters    # 列表筛选与排序 64 项(含市值/净现金/PB分位三组区间)，源↔库集合级比对
+python -X utf8 -m scripts.verify_filters    # 列表筛选与排序 68 项(含市值/净现金/PB分位三组区间、硬门槛 gate、财报期龄)，源↔库集合级比对
 python -X utf8 scripts\verify_writer.py     # 离线：写入层行为
 python -X utf8 scripts\verify_edb_merge.py  # 离线：EDB 合并防线与增量窗口
+python -X utf8 -m scripts.fraud_validity    # 离线：造假分判别效度回测（T 年红旗 → T+1 年非标/大额减值/转亏）
 cd collector; python -X utf8 scripts\_valuation_check.py   # 离线：估值分位守卫与 windcode 映射
 ```
 
