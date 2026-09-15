@@ -1010,8 +1010,13 @@
   }
 
   // 评分项构造：match = 符合度（score/max，用于百分比与颜色；负分按 0% 显示）
-  function it(std, val, thr, max, score) {
-    return { std: std, val: val, thr: thr, max: max, score: score, match: score == null ? null : Math.max(0, score) / max };
+  function it(std, val, thr, max, score, inapp) {
+    return {
+      std: std, val: val, thr: thr, max: max, score: score,
+      // inapp：驱动科目在本公司报表里结构性不存在（不适用），与「有这项但没数」（缺失）分开标注
+      na: inapp === true && score == null,
+      match: score == null ? null : Math.max(0, score) / max
+    };
   }
 
   // 价格标签：买入价≤现价（进入买入区）标绿；卖出价≥现价（进入卖出区）标红
@@ -1031,9 +1036,13 @@
     var rows = items.map(function (x) {
       var mCls = x.match == null ? 'sc-na' : x.match >= 0.99 ? 'sc-good' : x.match >= 0.5 ? 'sc-mid' : 'sc-low';
       var mTxt = x.match == null ? '-' : (x.match * 100).toFixed(0) + '%';
-      return '<tr><td>' + x.std + '</td><td class="v">' + x.val + '</td><td class="v">' + x.thr + '</td>' +
+      var stTxt = x.na ? '不适用' : (x.score == null ? '-' : fmtNum(x.score));
+      return '<tr' + (x.na ? ' class="sc-inapp"' : '') + ' title="' +
+        (x.na ? '该公司报表里没有这一科目（不是数据缺失），不计分也不计入有效满分' : '') + '">' +
+        '<td>' + x.std + '</td><td class="v">' + (x.na ? '报表无此科目' : x.val) + '</td>' +
+        '<td class="v">' + x.thr + '</td>' +
         '<td class="v ' + mCls + '">' + mTxt + '</td>' +
-        '<td class="v"><b>' + (x.score == null ? '-' : fmtNum(x.score)) + '</b> / ' + x.max + '</td></tr>';
+        '<td class="v"><b>' + stTxt + '</b> / ' + x.max + '</td></tr>';
     }).join('');
     var refs = priceRefs || {};
     var pricesHtml = '<div class="score-prices">' +
@@ -1123,6 +1132,20 @@
     var lastYear = lastDate ? Number(lastDate.slice(0, 4)) : null;
     var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var lastBa = lastDate ? sheetRowByDate(baList, lastDate) : null;
+    var baAnnual = annualBalanceRows(d.balance);   // 三大报表年报序列（升序），下方共用
+    var inAnnual = annualBalanceRows(d.income);
+    var cfAnnual = annualBalanceRows(d.cashflow);
+    // 「不适用」与「缺失」是两件事：银行/保险/券商不出分级资产负债表，压根没有「流动资产合计」
+    // 这一行，不是这一期恰好没披露。判据只看数据——该科目在 ≥4 期年报里一次都没出现过，才判
+    // 结构性不适用；按行业名套会误伤（实测 A 股 121 家「金融」里 22 家确实报这个科目）。
+    // 只影响标注，不影响任何一项的得分与总分。
+    function structAbsent(rows, key) {
+      return rows.length >= 4 && !rows.some(function (r) { return r[key] != null; });
+    }
+    var noCA = structAbsent(baAnnual, '流动资产合计');
+    var noCL = structAbsent(baAnnual, '流动负债合计');
+    var noCash = structAbsent(baAnnual, '货币资金');
+    var noGM = structAbsent(annual, '销售毛利率');
     var s = d.snapshot || {};
     var mcap = s.market_cap, pe = s.pe_ttm, pb = s.pb;
     // 快照缺 PB（腾讯行情不返回美股 PB）时用财报每股净资产补算：股价÷每股净资产，缺则归母权益/股本反推
@@ -1208,9 +1231,9 @@
 
     // ---- 格雷厄姆 · 进取型烟蒂（net-net 净流动资产折价）----
     var gA = [
-      it('价格/净流动资产（市值/NCAV）', pncavVal, '≤ 0.67×（2/3 净流动资产，亦是买入参考倍数）', 30, ncav == null ? null : (ncav > 0 ? lerpScore(pncav, G_A_PNCAV_FULL, 1.5, 30, 0) : 0)),
-      it('价格/净现金（市值/现金-有息负债）', pnetcashVal, '≤ 1×', 20, netCash == null ? null : (netCash > 0 ? lerpScore(pnetcash, 1, 2, 20, 0) : 0)),
-      it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2（资产覆盖债务）', 20, lerpScore(liqRatio, 1, 2, 0, 20)),
+      it('价格/净流动资产（市值/NCAV）', pncavVal, '≤ 0.67×（2/3 净流动资产，亦是买入参考倍数）', 30, ncav == null ? null : (ncav > 0 ? lerpScore(pncav, G_A_PNCAV_FULL, 1.5, 30, 0) : 0), noCA),
+      it('价格/净现金（市值/现金-有息负债）', pnetcashVal, '≤ 1×', 20, netCash == null ? null : (netCash > 0 ? lerpScore(pnetcash, 1, 2, 20, 0) : 0), noCash),
+      it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2（资产覆盖债务）', 20, lerpScore(liqRatio, 1, 2, 0, 20), noCA),
       it('最新年报净利润', fmtMoney(netProfit), '> 0（清算缓冲）', 15, netProfit != null && netProfit > 0 ? 15 : 0),
       it('资产负债率', fmtPct(debtr), '≤ 60%', 10, lerpScore(debtr, 0.6, 0.8, 10, 0)),
       it('连续分红年数', (divConsecutive || 0) + ' 年', '≥ 3 年', 5, divConsecutive >= 3 ? 5 : divConsecutive >= 1 ? 2.5 : 0)
@@ -1243,8 +1266,8 @@
     var gD = [
       it('企业规模（总资产）', fmtMoney(assets), '≥ 100 亿（人民币当量，本币按固定汇率折算）', 10, sizeScore(toCny(assets, d.market))),
       it('流动比率', fmtNum(curRatio), '≥ 2', 20, curRatio == null ? null
-        : (curRatio >= 2 ? 20 : curRatio >= 1.5 ? lerpScore(curRatio, 1.5, 2, 5, 20) : curRatio >= 1 ? 5 : -10)),
-      it('长期有息负债 / 营运资本', (ltd == null ? '-' : fmtMoney(ltd)) + ' / ' + (wc == null ? '-' : fmtMoney(wc)), '长期负债 ≤ 营运资本', 20, ltdScore),
+        : (curRatio >= 2 ? 20 : curRatio >= 1.5 ? lerpScore(curRatio, 1.5, 2, 5, 20) : curRatio >= 1 ? 5 : -10), noCA || noCL),
+      it('长期有息负债 / 营运资本', (ltd == null ? '-' : fmtMoney(ltd)) + ' / ' + (wc == null ? '-' : fmtMoney(wc)), '长期负债 ≤ 营运资本', 20, ltdScore, noCA || noCL),
       it('盈利稳定（近5年净利为正）', posN + '/5 年', '5 年全部为正', 15, posN >= 5 ? 15 : posN === 4 ? 9 : posN === 3 ? 4 : -5),
       it('连续分红年数', (divConsecutive || 0) + ' 年', '≥ 10 年', 15, divScore10(divConsecutive || 0)),
       it('近5年净利累计增长', fmtPct(grow5), '≥ 33%', 10, grow5 == null ? null : (grow5 >= 0.33 ? 10 : grow5 >= 0 ? lerpScore(grow5, 0, 0.33, 0, 10) : -5)),
@@ -1268,9 +1291,6 @@
       var v = sum([row['短期借款'], row['一年内到期的非流动负债'], row['长期借款'], row['应付债券'], row['租赁负债']]);
       return v == null ? 0 : v;
     }
-    var baAnnual = annualBalanceRows(d.balance);   // 三大报表年报序列（升序）
-    var inAnnual = annualBalanceRows(d.income);
-    var cfAnnual = annualBalanceRows(d.cashflow);
     var lastEq = eqOf(lastBa);
     var earliestEq = baAnnual.length >= 5 ? eqOf(baAnnual[0]) : null;
     var intDebtNow = lastBa ? intDebtOf(lastBa) : null;
@@ -1333,18 +1353,18 @@
     var sItems = [
       it('市净率', pb == null ? '-' : (pb > 0 ? fmtNum(pb) : 'PB 为负（资不抵债）'), '≤ 0.75（资产折扣，亦是买入参考倍数）', 25, lerpScoreNonneg(pb, S_PB_FULL, 1.5, 25, 0)),
       it('市盈率（TTM）', pe == null ? '-' : (pe > 0 ? fmtNum(pe) : 'PE 为负（亏损）'), '≤ 10', 20, lerpScoreNonneg(pe, 10, 20, 20, 0)),
-      it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2', 20, lerpScore(liqRatio, 1, 2, 0, 20)),
+      it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2', 20, lerpScore(liqRatio, 1, 2, 0, 20), noCA),
       it('股息率（近12月）', fmtPct(divYield), '≥ 3%', 15, lerpScore(divYield, 0, 0.03, 0, 15)),
       it('最新年报净利润', fmtMoney(netProfit), '> 0', 10, netProfit != null && netProfit > 0 ? 10 : 0),
       it('市值 / 流动资产', (mcap == null ? '-' : fmtMoney(mcap)) + ' / ' + (ca == null ? '-' : fmtMoney(ca)), '市值 ≤ 流动资产', 10,
-        (mcap != null && ca != null && ca > 0) ? (mcap <= ca ? 10 : lerpScore(mcap / ca, 1, 2, 10, 0)) : null)
+        (mcap != null && ca != null && ca > 0) ? (mcap <= ca ? 10 : lerpScore(mcap / ca, 1, 2, 10, 0)) : null, noCA)
     ];
     // 正分项归一 + 9 个扣分项原样相加：扣分项缺数据本就给 0，不参与归一（理由见 schoolTotal）
     var sTotal = schoolTotal(sItems, riskItems);
 
     // ---- 巴菲特芒格（优质企业 + 护城河）----
     var moatItems = [
-      it('销售毛利率', fmtPct(gMargin), '≥ 40%（定价权迹象）', 5, lerpScore(gMargin, 0.2, 0.4, 0, 5)),
+      it('销售毛利率', fmtPct(gMargin), '≥ 40%（定价权迹象）', 5, lerpScore(gMargin, 0.2, 0.4, 0, 5), noGM),
       it('近5年 ROE ≥ 10% 达标年数 · 护城河', roeOkFrac == null ? '-' : roeOkYears + '/' + nRoe + ' 年', '5/5 年达标（2/5 起给分）', 4,
         lerpScore(roeOkFrac, 0.4, 1.0, 0, 4)),
       it('无形资产+商誉 / 总资产', fmtPct((intangShare != null || goodwillShare != null) ? (intangShare || 0) + (goodwillShare || 0) : null), '≥ 10%（品牌/专利/特许权）', 3,
@@ -1384,11 +1404,16 @@
       + '达标年数（5/5 年达标才满分）；盈利质量项（25 分）看水平，取近 5 年 ROE 中位数（≥ 15% 满分，'
       + '10% 起给分）。中位数只取中间那一年，某一年因权益变薄而畸高畸低都进不了统计量。';
 
-    // 有效满分/缺维数：数据缺失项不计分也不计入满分，总分实际按有效满分折算，需向用户标注（跨市场可比性）
+    // 有效满分/缺维数：不计分项（缺失或不适用）都不进满分，总分按有效满分折算，需向用户标注
+    // （跨市场可比性）。缺失与不适用要分开报：前者是数据没到，后者是报表里就没这个科目。
     function effOf(arr) {
-      var mx = 0, miss = 0;
-      arr.forEach(function (x) { if (x.score != null) mx += x.max; else miss += 1; });
-      return { max: mx, miss: miss };
+      var mx = 0, miss = 0, na = 0;
+      arr.forEach(function (x) {
+        if (x.score != null) mx += x.max;
+        else if (x.na) na += 1;
+        else miss += 1;
+      });
+      return { max: mx, miss: miss, na: na };
     }
 
     return {
@@ -2332,10 +2357,14 @@
     ];
     cards.forEach(function (trio) {
       var el = $(trio[0]);
-      // 缺维标注：存在数据缺失项时标注有效满分，提醒总分非同口径 100 分制（跨市场可比性）
+      // 缺维标注：不计分项要说明是「数据没到」还是「报表结构里没这个科目」，
+      // 并标注有效满分——总分不是同口径 100 分制（跨市场可比性）
       var eff = trio[1].eff;
-      var basis = sc.basis + (eff && eff.miss
-        ? '；⚠ ' + eff.miss + ' 项数据缺失未计分，本卡按有效满分 ' + eff.max + '/100 折算' : '');
+      var gap = eff && (eff.miss || eff.na) ? '；⚠ ' + [
+        eff.miss ? eff.miss + ' 项数据缺失未计分' : '',
+        eff.na ? eff.na + ' 项该公司报表无此科目（不适用，非缺数据）' : ''
+      ].filter(Boolean).join('，') + '，本卡按有效满分 ' + eff.max + '/100 折算' : '';
+      var basis = sc.basis + gap;
       if (el) el.innerHTML = scoreCard(trio[1].title, basis, trio[1].total, trio[1].items, trio[1].note, trio[2], curPrice);
     });
   }

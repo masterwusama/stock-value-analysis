@@ -13,6 +13,9 @@
 .sc-low { color: #b07a10; font-weight: 600; }
 .sc-bad { color: #c0392b; font-weight: 600; }
 .sc-na { color: #9aa5b5; }
+/* 评分项「不适用」整行（报表结构里没有这个科目）：压暗，与「缺失未计分」区分开 */
+.sc-inapp { color: #a8b2c0; background: #fafbfc; }
+.sc-inapp td:first-child { font-style: italic; }
 
 /* 价格与现价对照着色：现价≤买入参考（买入区）绿；现价≥卖出参考（卖出区）红 */
 .r-hit {
