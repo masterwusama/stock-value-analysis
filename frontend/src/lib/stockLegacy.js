@@ -959,15 +959,18 @@
   // 扣分要在夹逼之后加：先加后夹等于「基础分顶到上限的公司扣不动」——施洛斯的 9 个扣分项
   // （合计最深 −37）实测对 55 家满分公司完全不生效，红旗分 60 与 0 的同分。
   function schoolTotal(posItems, penItems) {
-    var wsum = 0, acc = 0;
+    var wsum = 0, acc = 0, full = 0;
     for (var i = 0; i < posItems.length; i++) {
+      full += posItems[i].max;
       if (posItems[i].score == null) continue;
       acc += posItems[i].score;
       wsum += posItems[i].max;
     }
     if (wsum <= 0) return null;
     var pen = sum((penItems || []).map(function (x) { return x.score; })) || 0;
-    return Math.max(-wsum, Math.min(wsum, acc / wsum * 100)) + pen;
+    // 覆盖度补偿只给正分：负分除以更小的分母等于让缺项放大坏消息，格防会因此跌破 −30 下限
+    var total = acc / (acc > 0 ? wsum : full) * 100;
+    return Math.max(-wsum, Math.min(wsum, total)) + pen;
   }
 
   // row 之前最多 3 个年报的资本开支（按 row 在年报序列中的实际位置开窗）。

@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """评分公式的边界与缺失数据探针（合成输入，不碰数据库、不碰真实公司）。
 
-覆盖三处口径，都是「拿真实公司跑一遍全量」看不出来的那类：
+覆盖四处口径，都是「拿真实公司跑一遍全量」看不出来的那类：
 1. 流动比率打分在 1.5 这一点必须与前一段衔接（曾出现比率变好、分数反而掉 5 分）；
 2. 施洛斯的风险扣分必须真的落到总分上（曾被 ±可评估权重的夹逼整段吞掉，扣多少都是 0）；
 3. 5 年累计净现比只按「同年净利润与经营现金流都有数」的年份配对，并如实报出配对年数
-   （曾把两列各自的和相除，缺失年份不重合时比值不对应任何一段真实经营期）。
+   （曾把两列各自的和相除，缺失年份不重合时比值不对应任何一段真实经营期）；
+4. 覆盖度归一只补偿正分，缺项不得把负分放大（曾把格防的 −28 推成 −31.11，越过 −30 下限）。
 
 每个断言同时跑 Python（scoring.py）与 JS（stockLegacy.js，经 Node 抽取原函数）两侧：
 两边必须在同一批合成输入上给出相同总分——真实数据的逐项一致性由 _score_check.py 全量校验，
@@ -34,8 +35,9 @@ if ALT:
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
     value_analysis, value_scores = _mod.value_analysis, _mod.value_scores
+    _school_total = _mod._school_total
 else:
-    from scoring import value_analysis, value_scores  # noqa: E402
+    from scoring import value_analysis, value_scores, _school_total  # noqa: E402
 
 FIX_DIR = HERE.parent / "_tmp" / "formula-fixtures"
 YEARS = [2020, 2021, 2022, 2023, 2024]
@@ -152,6 +154,30 @@ for name, ba_ov, pen in PEN_CASES:
 for name in ('pen_goodwill7', 'pen_inv', 'pen_both'):
     check(close(gd_of['pen_none'], gd_of[name]),
           f"{name}：施洛斯的扣分项串到了格防（{gd_of['pen_none']} → {gd_of[name]}）")
+
+# ==================== 2b) 覆盖度补偿只给正分：缺项不得放大坏消息 ====================
+# 归一是为了「缺一项不等于白扣该项满分」，那是正分侧的问题。负分侧同一次除法等于让缺项
+# 把坏消息按 100/可评估权重 放大：四派里只有格防有天然负分项（合计最深 −30），于是 −28 在
+# 只评估到 90 分权重时变成 −31.11，越过设计下限。
+check(close(_school_total([-28.0, None], (90, 10)), -28.0),
+      f"负分不得按覆盖度放大：−28（缺 10 分权重）实为 {_school_total([-28.0, None], (90, 10))}")
+check(_school_total([-28.0, None], (90, 10)) >= -30.0 - 1e-9,
+      "格防总分必须守住 −30 设计下限")
+check(close(_school_total([28.0, None], (90, 10)), 28.0 / 90 * 100),
+      f"正分侧的覆盖度补偿不能跟着变：28（缺 10 分权重）实为 {_school_total([28.0, None], (90, 10))}")
+# 同一套断言走一遍真实评分入口，让 JS 对端也吃到这条。两个变体只差在「两项 PE 是否可评估」，
+# 且 PE 项取 0 分位（市盈率远超 15、PE×PB 远超 22.5），这样原始分相同、只有可评估权重不同，
+# 分数必须一致；旧口径下缺项那侧会再低一档。
+NEG_BA = ba_row(ca=8e9, cl=1e10, tl=4e10)          # 流动比率 0.8 → 流动比率与营运资本各 −10
+NEG_IND = [ind_row(f"{y}-12-31", net=-1e9) for y in YEARS]   # 过半亏损 + 净利不增长
+snap_pe = {'price': 10.0, 'market_cap': 1e9, 'pe_ttm': 200.0, 'pb': 0.5}
+snap_nope = {'price': 10.0, 'market_cap': 1e9, 'pb': 0.5}    # PE 与 PE×PB 两项缺位
+d_pe = probe('neg_pe_zero', company(ba=[NEG_BA], ind=NEG_IND, snap=snap_pe))['grahamDef']
+d_no = probe('neg_pe_missing', company(ba=[NEG_BA], ind=NEG_IND, snap=snap_nope))['grahamDef']
+check(close(d_pe, d_no),
+      f"同为 0 分的两项 PE 缺位不该让负分更深：在位 {d_pe} vs 缺位 {d_no}")
+check(d_pe >= -30.0 - 1e-9 and d_no >= -30.0 - 1e-9,
+      f"评分入口的格防越界：{d_pe} / {d_no}")
 
 # ==================== 3) 净现比：按年配对 + 如实报出配对年数 ====================
 # 净利润 5 年齐全、经营现金流只有近 2 年：旧式 5 年净利除 2 年现金流，比值被稀释一半以上
