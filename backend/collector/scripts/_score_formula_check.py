@@ -1,0 +1,242 @@
+# -*- coding: utf-8 -*-
+"""评分公式的边界与缺失数据探针（合成输入，不碰数据库、不碰真实公司）。
+
+覆盖三处口径，都是「拿真实公司跑一遍全量」看不出来的那类：
+1. 流动比率打分在 1.5 这一点必须与前一段衔接（曾出现比率变好、分数反而掉 5 分）；
+2. 施洛斯的风险扣分必须真的落到总分上（曾被 ±可评估权重的夹逼整段吞掉，扣多少都是 0）；
+3. 5 年累计净现比只按「同年净利润与经营现金流都有数」的年份配对，并如实报出配对年数
+   （曾把两列各自的和相除，缺失年份不重合时比值不对应任何一段真实经营期）。
+
+每个断言同时跑 Python（scoring.py）与 JS（stockLegacy.js，经 Node 抽取原函数）两侧：
+两边必须在同一批合成输入上给出相同总分——真实数据的逐项一致性由 _score_check.py 全量校验，
+这里只保证边界形状两边一致。
+
+合成 fixture 只服务「隔离单个输入变量」，科目之间不做会计恒等式（例如流动负债可以大于
+负债合计以外的一切约束、存货挤在固定的资产总计里），别把它的数字当真实财报读。
+
+用法（在 backend/collector 目录下）：
+    python -X utf8 scripts/_score_formula_check.py
+"""
+import importlib.util
+import json
+import math
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+# SCORING_PATH 指一份替代的 scoring.py 时用那份跑：探针要能抓出旧口径的问题才算数
+ALT = os.environ.get('SCORING_PATH')
+if ALT:
+    _spec = importlib.util.spec_from_file_location('scoring_alt', ALT)
+    _mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_mod)
+    value_analysis, value_scores = _mod.value_analysis, _mod.value_scores
+else:
+    from scoring import value_analysis, value_scores  # noqa: E402
+
+FIX_DIR = HERE.parent / "_tmp" / "formula-fixtures"
+YEARS = [2020, 2021, 2022, 2023, 2024]
+LAST = "2024-12-31"
+
+
+def ind_row(day, net=1e9, **ov):
+    r = {'报告期': day, '净利润': net, '营业总收入': 1e10, '净资产收益率': 0.2,
+         '资产负债率': 0.4, '销售毛利率': 0.3, '销售净利率': 0.1,
+         '基本每股收益': 1.0, '扣非净利润': net}
+    r.update(ov)
+    return r
+
+
+def ba_row(day=LAST, ca=4e10, cl=1e10, tl=2e10, assets=4e10, eq=1e10, **ov):
+    r = {'报告日': day, '流动资产合计': ca, '流动负债合计': cl, '负债合计': tl,
+         '资产总计': assets, '归属于母公司股东权益合计': eq, '货币资金': 1e9,
+         '商誉': 0.0, '无形资产': 0.0}
+    r.update(ov)
+    return r
+
+
+def cf_row(day=LAST, ocf=1e9, capex=0.0):
+    return {'报告日': day, '经营活动产生的现金流量净额': ocf,
+            '购建固定资产、无形资产和其他长期资产所支付的现金': capex,
+            '销售商品、提供劳务收到的现金': 1e10}
+
+
+def company(ba=None, ind=None, cf=None, snap=None, divs=None, notes=None, income=None):
+    """一家「其他项都落在中性/满分位」的公司，只留调用方要动的那几个量。"""
+    return {
+        'code': 'FIXTURE', 'name': '合成', 'market': 'A',
+        'indicators': ind if ind is not None else [ind_row(f"{y}-12-31") for y in YEARS],
+        'balance': ba if ba is not None else [ba_row()],
+        'cashflow': cf if cf is not None else [cf_row()],
+        'income': income if income is not None else [],
+        'dividends': divs if divs is not None else [],
+        # 施洛斯的价格项落在满分位（PB ≤ 0.75、PE ≤ 10），流动资产远大于市值
+        'snapshot': snap if snap is not None else {
+            'price': 10.0, 'market_cap': 1e9, 'pe_ttm': 8.0, 'pb': 0.5},
+        'notes': notes,
+    }
+
+
+FIX = {}          # name -> 输入
+EXP = {}          # name -> Python 侧四项总分，供 JS 对端比对
+
+
+def probe(name, d):
+    FIX[name] = d
+    t = value_scores(d, value_analysis(d))
+    EXP[name] = t
+    return t
+
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+def close(a, b, tol=1e-6):
+    if a is None or b is None:
+        return a is None and b is None
+    return abs(a - b) <= tol
+
+
+# ==================== 1) 流动比率：1.5 处不得回坠 ====================
+# 只动 流动负债合计：流动比率 = 流动资产 ÷ 流动负债，而营运资本里的长期有息负债为 0，
+# 长期负债项在 流动比率 > 1 时恒为满分、≤ 1 时恒为 −10，格防总分于是只剩流动比率在动。
+def cur_probe(ratio):
+    ca = 3e10
+    d = company(ba=[ba_row(ca=ca, cl=ca / ratio, tl=4e10)])
+    return probe(f"cur_{ratio:.4f}", d)['grahamDef']
+
+
+RS = [0.5, 0.7, 0.9, 0.999, 1.0, 1.001, 1.1, 1.25, 1.4, 1.49, 1.5, 1.6,
+      1.75, 1.9, 1.999, 2.0, 2.2, 2.5, 3.0]
+TS = [cur_probe(r) for r in RS]
+for i in range(1, len(TS)):
+    check(TS[i] >= TS[i - 1] - 1e-9,
+          f"流动比率单调性：比率 {RS[i - 1]}→{RS[i]} 总分从 {TS[i - 1]} 掉到 {TS[i]}")
+# 1.0~1.5 恒为 5 分、1.5~2 线性到 20：衔接点上不得出现回坠或跳空
+i12, i15, i175, i20 = (RS.index(v) for v in (1.25, 1.5, 1.75, 2.0))
+check(close(TS[i15], TS[i12]), f"流动比率 1.5 应仍是 5 分档：{TS[i12]} vs {TS[i15]}")
+check(close(TS[i175] - TS[i15], 7.5), f"流动比率 1.5→1.75 应加 7.5 分：{TS[i175] - TS[i15]}")
+check(close(TS[i20] - TS[i15], 15.0), f"流动比率 1.5→2.0 应加 15 分：{TS[i20] - TS[i15]}")
+check(close(TS[i20], TS[-1]), "流动比率 ≥ 2 之后应封顶（2.2/2.5/3.0 同分）")
+
+# ==================== 2) 施洛斯扣分：夹逼之后仍要真的扣分 ====================
+# 无分红 → 股息率项 None → 可评估权重 85，其余正分项全满 → 基础分顶在 85 的夹逼上界。
+# 旧口径把扣分加在夹逼之前，这里扣多少都看不见；新口径应逐分落地。
+PEN_CASES = (
+    ("pen_none", {}, 0.0),
+    ("pen_goodwill3", {'商誉': 3.5e9}, 2.0),      # (商誉+无形)/归母权益 > 0.3 → −2
+    ("pen_goodwill7", {'商誉': 7e9}, 4.0),        # > 0.6 → −4
+    ("pen_inv", {'存货': 2.1e10}, 2.0),           # 存货/总资产 > 0.5 → −2
+    ("pen_both", {'商誉': 7e9, '存货': 2.1e10}, 6.0),
+)
+base_s = None
+gd_of = {}
+for name, ba_ov, pen in PEN_CASES:
+    t = probe(name, company(ba=[ba_row(**ba_ov)]))
+    gd_of[name] = t['grahamDef']
+    if base_s is None:
+        base_s = t['schloss']
+        continue
+    check(close(base_s - t['schloss'], pen),
+          f"{name}：扣分应让总分降 {pen}，实降 {base_s - t['schloss']}（旧口径此处恒为 0）")
+
+# 同一批输入下格防/格攻不受施洛斯扣分影响（9 个扣分项只挂在施洛斯上）
+for name in ('pen_goodwill7', 'pen_inv', 'pen_both'):
+    check(close(gd_of['pen_none'], gd_of[name]),
+          f"{name}：施洛斯的扣分项串到了格防（{gd_of['pen_none']} → {gd_of[name]}）")
+
+# ==================== 3) 净现比：按年配对 + 如实报出配对年数 ====================
+# 净利润 5 年齐全、经营现金流只有近 2 年：旧式 5 年净利除 2 年现金流，比值被稀释一半以上
+cf2 = [cf_row(f"{y}-12-31", ocf=2e9) for y in (2023, 2024)]
+va = value_analysis(company(cf=cf2))
+check(close(va['ratioYears'], 2), f"配对年数应为 2，实为 {va['ratioYears']}")
+check(close(va['ratio5'], 2.0),
+      f"净现比应为同年配对 (2+2)/(1+1)=2.0，实为 {va['ratio5']}（旧口径 4/5=0.8，跨了三年错配）")
+
+# 全齐时仍是 5 年、数值与旧口径相同（改动不影响数据完整的公司）
+va5 = value_analysis(company(cf=[cf_row(f"{y}-12-31", ocf=1e9) for y in YEARS]))
+check(close(va5['ratioYears'], 5) and close(va5['ratio5'], 1.0),
+      f"5 年齐全时应为 5 年/1.0，实为 {va5['ratioYears']} 年/{va5['ratio5']}")
+
+# 有现金流行但年份与年报错开 → 一年都配不上，按缺失处理而不是硬凑一个比值
+va0 = value_analysis(company(cf=[cf_row('2019-12-31', ocf=1e9)]))
+check(va0['ratioYears'] == 0 and va0['ratio5'] is None,
+      f"零配对应计为缺失，实为 {va0['ratioYears']} 年/{va0['ratio5']}")
+
+# 配对年数只说「几年有数」，不因合计净利为负而虚报比值
+va_neg = value_analysis(company(
+    ind=[ind_row(f"{y}-12-31", net=1e9) for y in (2020, 2021, 2022)]
+        + [ind_row(f"{y}-12-31", net=-1e9) for y in (2023, 2024)],
+    cf=[cf_row(f"{y}-12-31", ocf=1e9) for y in (2023, 2024)]))
+check(va_neg['ratioYears'] == 2 and va_neg['ratio5'] is None,
+      f"配对 2 年但合计净利为负：应报 2 年且比值为空，实为 {va_neg['ratioYears']}/{va_neg['ratio5']}")
+
+# 净利润缺失的年份不得被现金流的和顶进分子
+va_m = value_analysis(company(
+    ind=[ind_row('2020-12-31', net=None), ind_row('2021-12-31', net=1e9),
+         ind_row('2022-12-31', net=1e9), ind_row('2023-12-31', net=1e9),
+         ind_row('2024-12-31', net=1e9)],
+    cf=[cf_row(f"{y}-12-31", ocf=1e9) for y in YEARS]))
+check(va_m['ratioYears'] == 4 and close(va_m['ratio5'], 1.0),
+      f"2020 缺净利应按 4 年配对（4/4=1.0），旧口径拿 5 年现金流之和除 4 年净利得 1.25："
+      f"实为 {va_m['ratioYears']} 年/{va_m['ratio5']}")
+
+# ==================== 4) 空数据 / 极端输入不炸 ====================
+# 空输入不等于四派都算不出：盈利稳定性、连续分红这类项仍能确定地给 0 分或负分（0/5 年为正
+# → −5），归一后照样出分。这里要守的是「不抛异常、不出 NaN、落在各派设计区间内」，
+# 上下限与 _selfcheck.py 一致。
+RANGE = (('grahamAgg', 0.0, 100.0), ('grahamDef', -30.0, 100.0),
+         ('schloss', -37.0, 100.0), ('buffett', 0.0, 100.0))
+EXTREME = {
+    'empty': company(ind=[], ba=[], cf=[], snap={}),
+    'neg_equity': company(ba=[ba_row(eq=-1e9, 商誉=7e9)]),
+    'zero_cl': company(ba=[ba_row(cl=0.0)]),
+    'big_ratio': company(ba=[ba_row(ca=1e15, cl=1e3, tl=1e3)]),
+    'zero_net_all_years': company(ind=[ind_row(f"{y}-12-31", net=0.0) for y in YEARS]),
+}
+for name, d in EXTREME.items():
+    t = probe(name, d)
+    for key, lo, hi in RANGE:
+        v = t[key]
+        check(v is None or (isinstance(v, (int, float)) and math.isfinite(v) and lo - 1e-9 <= v <= hi + 1e-9),
+              f"{name}.{key} 越界或非法：{v}（应在 {lo}~{hi}）")
+
+# ==================== JS 对端：同一批输入必须给同样的总分 ====================
+if ALT:
+    print("== 评分公式边界探针（替代实现 %s，跳过 JS 对端）==" % Path(ALT).name)
+else:
+    print("== 评分公式边界探针 ==")
+    FIX_DIR.mkdir(parents=True, exist_ok=True)
+    for f in FIX_DIR.glob('*.json'):
+        f.unlink()
+    for name, d in FIX.items():
+        (FIX_DIR / f"{name}.json").write_text(json.dumps(d, ensure_ascii=False), encoding='utf-8')
+    js_out = subprocess.run(
+        ['node', str(HERE / '_score_formula_check_node.js'), str(FIX_DIR)],
+        capture_output=True, timeout=300,
+    )
+    if js_out.returncode != 0:
+        fails.append('JS 对端失败：' + js_out.stderr.decode('utf-8', 'replace')[:800])
+    else:
+        js = json.loads(js_out.stdout)
+        for name, t in EXP.items():
+            for key in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
+                p, j = t[key], (js.get(name) or {}).get(key)
+                check(close(p, j, 1e-9), f"{name}.{key}: Python={p} JS={j}")
+
+print(f"  输入 {len(FIX)} 组（流动比率扫点 {len(RS)} / 扣分 {len(PEN_CASES)} / 其余为缺失与极端）")
+if fails:
+    print(f"  不通过 {len(fails)} 项:")
+    for m in fails:
+        print("   ", m)
+    sys.exit(1)
+print("  全部通过：流动比率单调、施洛斯扣分足额落地、净现比按年配对" +
+      ("" if ALT else "，且 Python/JS 一致"))

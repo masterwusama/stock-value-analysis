@@ -110,8 +110,17 @@ for c in idx['companies']:
                       f'{c["code"]} netCashCalc.{kk} 非法: {vv}')
             rep = calc.get('report')
             check(rep is None or re.match(r'^\d{4}-\d{2}-\d{2}$', rep), f'{c["code"]} netCashCalc.report 格式异常: {rep}')
-            # 明细反算与存储比率一致（加权系数与 scoring.py 保持同步）
-            wsum = sum((calc.get(kk) or 0) * w for kk, w in (('cash', 1.0), ('fin', 0.7), ('notes', 0.4), ('otherCA', 0.3)))
+            # 明细反算与存储比率一致（折算系数、受限资金清零、定期存款单列都与 scoring.py 同步；
+            # 只按四项旧式反算会让拆出过定期存款/受限资金的公司整片误报）
+            def gw(v, k):
+                return (v * k) if v is not None else 0.0
+            cash0, rst0 = calc.get('cash'), calc.get('restricted')
+            avail0 = (max(0.0, cash0 - rst0)
+                      if (cash0 is not None and rst0 is not None) else cash0)
+            other0, dep0 = calc.get('otherCA'), calc.get('termDeposit')
+            other_nd = other0 if dep0 is None else max(0.0, (other0 or 0.0) - dep0)
+            wsum = (gw(avail0, 1.0) + gw(calc.get('fin'), 0.7) + gw(calc.get('notes'), 0.4)
+                    + gw(other_nd, 0.3) + gw(dep0, 1.0))
             recalc = (wsum - tl0) / m0
             check(abs(recalc - ncr) <= max(1e-9, abs(ncr) * 1e-9),
                   f'{c["code"]} netCashCalc 反算({recalc}) != netCashRatio({ncr})')

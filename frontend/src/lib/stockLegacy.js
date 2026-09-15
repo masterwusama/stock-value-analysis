@@ -566,7 +566,7 @@
     // 现金流质量：净现比/自由现金流/收现比
     html += '<div class="stock-section"><div class="stock-section-head"><h3>现金流质量</h3></div>' +
       '<div class="stock-snapshot va-snapshot">' +
-      kv('5年累计净现比', va.ratio5 == null ? '-' : fmtNum(va.ratio5)) +
+      kv('5年累计净现比', (va.ratio5 == null ? '-' : fmtNum(va.ratio5) + '（' + (va.ratioYears || 0) + '/5 年配对）')) +
       kv('5年累计自由现金流', fmtMoney(va.fcf5)) +
       kv('近5年收现比均值', va.collectAvg == null ? '-' : fmtNum(va.collectAvg)) +
       '</div>' +
@@ -727,9 +727,13 @@
         collect: (receive != null && revenue != null && revenue > 0) ? receive / revenue : null
       });
     }
-    var sumNet = sum(cfRows.map(function (r) { return r.net; }));
-    var sumOcf = sum(cfRows.map(function (r) { return r.ocf; }));
-    var ratio5 = (sumNet != null && sumOcf != null && sumNet > 0) ? sumOcf / sumNet : null;
+    // 只累加同年 net 与 ocf 都有数的配对（与 Python value_analysis 一致）：两列各自求和时
+    // 缺失年份不重合，分子分母来自不同年份集合，比值不对应任何一段真实经营期
+    var ratioPairs = cfRows.filter(function (r) { return r.net != null && r.ocf != null; });
+    var sumNet = sum(ratioPairs.map(function (r) { return r.net; }));
+    var sumOcf = sum(ratioPairs.map(function (r) { return r.ocf; }));
+    var ratio5 = (sumNet != null && sumNet > 0) ? sumOcf / sumNet : null;
+    var ratioYears = ratioPairs.length;
     var fcf5 = sum(cfRows.map(function (r) { return r.fcf; }));
     var collects = cfRows.map(function (r) { return r.collect; }).filter(function (v) { return v != null; });
     var collectAvg = collects.length ? sum(collects) / collects.length : null;
@@ -837,7 +841,7 @@
     return {
       divYield: divYield, spread: (divYield != null) ? divYield - BOND_10Y : null,
       payout: payout, divConsecutive: divConsecutive, cumPerShare: cumPerShare,
-      cfRows: cfRows, ratio5: ratio5, fcf5: fcf5, collectAvg: collectAvg,
+      cfRows: cfRows, ratio5: ratio5, ratioYears: ratioYears, fcf5: fcf5, collectAvg: collectAvg,
       dupont: dupont, revCagr5: revCagr5, netCagr5: netCagr5,
       revCagr3: revCagr3, netCagr3: netCagr3, pegText: pegText, growthNote: growthNote,
       checks: checks, checkSummary: checkSummary, divChart: divChart,
@@ -952,6 +956,8 @@
   // −30 的设计下限。
   // 扣分项不参与归一：缺数据本就给 0，已中性；若按 |最低分| 也归一，施洛斯分母会变成 137，
   // 一家满分公司只能拿 73 分。
+  // 扣分要在夹逼之后加：先加后夹等于「基础分顶到上限的公司扣不动」——施洛斯的 9 个扣分项
+  // （合计最深 −37）实测对 55 家满分公司完全不生效，红旗分 60 与 0 的同分。
   function schoolTotal(posItems, penItems) {
     var wsum = 0, acc = 0;
     for (var i = 0; i < posItems.length; i++) {
@@ -961,7 +967,7 @@
     }
     if (wsum <= 0) return null;
     var pen = sum((penItems || []).map(function (x) { return x.score; })) || 0;
-    return Math.max(-wsum, Math.min(wsum, acc / wsum * 100 + pen));
+    return Math.max(-wsum, Math.min(wsum, acc / wsum * 100)) + pen;
   }
 
   // row 之前最多 3 个年报的资本开支（按 row 在年报序列中的实际位置开窗）。
@@ -1234,7 +1240,7 @@
     var gD = [
       it('企业规模（总资产）', fmtMoney(assets), '≥ 100 亿（人民币当量，本币按固定汇率折算）', 10, sizeScore(toCny(assets, d.market))),
       it('流动比率', fmtNum(curRatio), '≥ 2', 20, curRatio == null ? null
-        : (curRatio >= 2 ? 20 : curRatio >= 1.5 ? lerpScore(curRatio, 1.5, 2, 0, 20) : curRatio >= 1 ? 5 : -10)),
+        : (curRatio >= 2 ? 20 : curRatio >= 1.5 ? lerpScore(curRatio, 1.5, 2, 5, 20) : curRatio >= 1 ? 5 : -10)),
       it('长期有息负债 / 营运资本', (ltd == null ? '-' : fmtMoney(ltd)) + ' / ' + (wc == null ? '-' : fmtMoney(wc)), '长期负债 ≤ 营运资本', 20, ltdScore),
       it('盈利稳定（近5年净利为正）', posN + '/5 年', '5 年全部为正', 15, posN >= 5 ? 15 : posN === 4 ? 9 : posN === 3 ? 4 : -5),
       it('连续分红年数', (divConsecutive || 0) + ' 年', '≥ 10 年', 15, divScore10(divConsecutive || 0)),
@@ -1347,7 +1353,7 @@
       it('ROE（近5年中位数）· 盈利质量', fmtPct(roeMed5), '≥ 15%（10% 起给分）', 25, lerpScore(roeMed5, 0.10, 0.15, 0, 25)),
       it('销售净利率（最新年报）', fmtPct(nMargin), '≥ 10%', 15, lerpScore(nMargin, 0.05, 0.10, 0, 15)),
       it('资产负债率', fmtPct(debtr), '≤ 50%', 15, lerpScore(debtr, 0.5, 0.75, 15, 0)),
-      it('5年累计净现比', fmtNum(va.ratio5), '≥ 1', 15, lerpScore(va.ratio5, 0.5, 1, 0, 15)),
+      it('5年累计净现比', fmtNum(va.ratio5) + (va.ratioYears === 5 ? '' : '（' + (va.ratioYears || 0) + '/5 年）'), '≥ 1', 15, lerpScore(va.ratio5, 0.5, 1, 0, 15)),
       it('净利润 5 年 CAGR', fmtPct(va.netCagr5), '≥ 10%', 15, lerpScore(va.netCagr5, 0, 0.1, 0, 15))
     ];
     // 缺得最多的是净现比（23.8%）与净利 5 年 CAGR（32.4%），各 15 分，早先一律白扣

@@ -192,13 +192,17 @@ def _school_total(items, weights, penalties=()):
     跌破格防 −30 的设计下限。
     扣分项不参与归一：缺数据本就给 0，已中性；若按 |最低分| 也归一，施洛斯分母会变成 137，
     一家满分公司只能拿 73 分。penalties 里的项由构造保证非 None，故直接求和。
+
+    扣分要在夹逼之后加：先加后夹等于「基础分顶到 +wsum 的公司扣不动」——施洛斯的破净股
+    风险扣分（最高 −9）实测对 55 家满分公司完全不生效，红旗分 60 与 0 的同分。放在夹逼
+    之后，总分下限由扣分自己决定（−wsum − |扣分|），仍是有界值而非失控负数。
     """
     avail = [(s, w) for s, w in zip(items, weights) if s is not None]
     wsum = sum(w for _, w in avail)
     if wsum <= 0:
         return None
-    total = sum(s for s, _ in avail) / wsum * 100.0 + sum(penalties)
-    return max(-wsum, min(wsum, total))
+    total = sum(s for s, _ in avail) / wsum * 100.0
+    return max(-wsum, min(wsum, total)) + sum(penalties)
 
 
 def value_analysis(d, now=None):
@@ -243,9 +247,13 @@ def value_analysis(d, now=None):
             'ratio': ocf / net if (net is not None and ocf is not None and net > 0) else None,
             'fcf': ocf - capex if (ocf is not None and capex is not None) else None,
         })
-    sum_net = ssum([r['net'] for r in cf_rows])
-    sum_ocf = ssum([r['ocf'] for r in cf_rows])
-    ratio5 = sum_ocf / sum_net if (sum_net is not None and sum_ocf is not None and sum_net > 0) else None
+    # 只累加「同年 net 与 ocf 都有数」的配对（与下方造假分的同口径配对一致）：两列各自求和
+    # 时缺失年份不重合，分子分母来自不同年份集合，比值不对应任何一段真实经营期
+    paired = [(r['net'], r['ocf']) for r in cf_rows if r['net'] is not None and r['ocf'] is not None]
+    ratio_years = len(paired)
+    sum_net = sum(n for n, _ in paired) if paired else None
+    sum_ocf = sum(o for _, o in paired) if paired else None
+    ratio5 = sum_ocf / sum_net if (sum_net is not None and sum_net > 0) else None
 
     # ---- 杜邦分析（近 5 年年报，仅取评分用 ROE 披露值）----
     dupont_roe = []
@@ -272,7 +280,7 @@ def value_analysis(d, now=None):
 
     return {
         'divYield': div_yield, 'payout': payout, 'divConsecutive': div_consecutive,
-        'ratio5': ratio5, 'netCagr5': net_cagr5, 'dupontRoe': dupont_roe,
+        'ratio5': ratio5, 'ratioYears': ratio_years, 'netCagr5': net_cagr5, 'dupontRoe': dupont_roe,
         # 评分基准报告期：四派分与造假/管理分都建在 annual 这条序列上（annual_rows 只取 12-31），
         # 落库时得说清“这批分用的是哪一期财报”，不能拿跑数日兜底（见 compute_scores.reportDate）
         'annualDate': last_date,
@@ -424,9 +432,11 @@ def value_scores(d, va):
     else:
         ltd_score = 0.0
 
+    # 1.5~2 区间从 5 分起坡：写成 0 分会在 1.5 这一点与前一段的固定 5 分打架，
+    # 流动比率从 1.49 改善到 1.50 反而掉 5 分
     cur_score = None if cur_ratio is None else (
         20.0 if cur_ratio >= 2 else
-        (lerp_score(cur_ratio, 1.5, 2, 0, 20) if cur_ratio >= 1.5 else
+        (lerp_score(cur_ratio, 1.5, 2, 5, 20) if cur_ratio >= 1.5 else
          (5.0 if cur_ratio >= 1 else -10.0)))
 
     pos_score = 15.0 if pos_n >= 5 else (9.0 if pos_n == 4 else (4.0 if pos_n == 3 else -5.0))
