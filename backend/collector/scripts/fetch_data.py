@@ -1740,6 +1740,35 @@ def save_json(path: Path, data):
     os.replace(tmp, path)
 
 
+# 评分直接建在这四张表上，所以它们坏一轮就等于分数坏一轮
+FIN_TABLE_KEYS = ("indicators", "income", "balance", "cashflow")
+
+
+def keep_last_good(path: Path, data):
+    """本次整张抓失败的财务表，沿用上轮落盘的成功行，不就地写成空表。
+
+    四张表各自 try/except，坏的那张返回 `[]` 并记一条 `<表>: ...` 到 errors；照这个结果
+    落盘等于把上一轮抓到的财报抹掉，评分随即塌成一片缺项（实测 2026-09-12 一轮 5235 家
+    如此，列表看起来像“这些公司变差了”）。沿用旧行的事实记进 `data["stale"]`（表名→行数），
+    让“这批分数踩着上一轮数据”看得见；那条 errors 照旧留着，因为数据源确实坏了。
+    """
+    try:
+        old = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return                      # 首次抓取/文件不可读：没有可沿用的东西
+    failed = {str(e).split(":", 1)[0].strip() for e in (data.get("errors") or [])}
+    stale = {}
+    for key in FIN_TABLE_KEYS:
+        if data.get(key) or key not in failed:
+            continue                # 本次有数据，或这张表根本没报错（空表是真实状态）
+        rows = old.get(key)
+        if rows:
+            data[key] = rows
+            stale[key] = len(rows)
+    if stale:
+        data["stale"] = {**(data.get("stale") or {}), **stale}
+
+
 # ==================== 全市场扩量支持 [collector 改造] ====================
 # index.json 既服务列表页也快充当“行情快照载体”：每日仅刷估值时只改 index.json
 # 的 quote/price 字段,不重写 companies/*.json(5000+ 只 ≈ 1.6GB),使 --resume 的
@@ -2051,10 +2080,12 @@ def resolve_targets(args):
 
 
 def crawl_one(item):
-    """单只：抓取 → 落盘 → 评分 → index 条目（异常上抛由 safe 层捕获）。"""
+    """单只：抓取 → 沿用坏表的上轮数据 → 落盘 → 评分 → index 条目（异常上抛由 safe 层捕获）。"""
     code, name, market = item
     data = fetch_company(code, name, market)
-    save_json(COMPANIES_DIR / f"{code}.json", data)
+    path = COMPANIES_DIR / f"{code}.json"
+    keep_last_good(path, data)
+    save_json(path, data)
     # 预计算四大流派总分（与前端 JS 一致性由 scripts/_score_check.py 验证）
     try:
         scores = compute_scores(data)
