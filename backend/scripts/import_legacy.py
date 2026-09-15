@@ -420,6 +420,35 @@ def load_gate_facts(db):
     return hits, judgeable
 
 
+def import_scores_only(db, stats, quiet=False):
+    """index.json → score_daily 单表（评分算法变更后只刷分，不碰其他业务表）。
+
+    全量与 --snapshot-only 两条回灌路径都会顺带重写 security/quote_daily 与财务明细，
+    而改一次评分公式往往只需要把 6939 行分数换掉：本函数只做 _Writer(score_daily) 的
+    upsert，既不建主数据也不写行情，永远不会清空任何表。
+    sid 拿不到的标的（新上市、还没建主数据）跳过并报数，留给下一轮深抓。
+    """
+    index = json.loads((DATA_DIR / "index.json").read_text(encoding="utf-8"))
+    trade_date = parse_date(index["updated_at"])
+    score_rows = build_score_rows(index, trade_date, db)
+    sids = load_sid_map(db)
+    w_score = _Writer(db, stats, ScoreDaily, mode="upsert",
+                      upd_skip=("sid", "trade_date"))
+    written = 0
+    for c in index.get("companies") or []:
+        code, market = c.get("code"), c.get("market") or "A"
+        sid = sids.get((code, market))
+        if sid is None or code not in score_rows:
+            stats["skipped_nosec"] += 1
+            continue
+        w_score.add(dict(sid=sid, **score_rows[code]))
+        written += 1
+    w_score.flush()
+    db.commit()
+    if not quiet:
+        print(f"  [import] 仅评分 {written} 行 · 评分日 {trade_date}", flush=True)
+
+
 def import_index_snapshot(db, stats, quiet=False):
     """index.json → security / quote_daily / score_daily（全市场日更的唯一写入面）。
 
@@ -851,6 +880,8 @@ def main():
     ap.add_argument("--no-clean", action="store_true", help="不清空,直接导入（upsert）")
     ap.add_argument("--only-fresh", type=float, metavar="HOURS",
                     help="仅导入 N 小时内更新过的公司 JSON（全市场日更增量）")
+    ap.add_argument("--only-scores", action="store_true",
+                    help="只重算 score_daily（评分算法变更后单刷分），不碰其他业务表")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -858,39 +889,50 @@ def main():
         # 最近 N 小时改过的公司文件，窗口外的历史行永久丢失（实跑踩过：
         # periodic_report 13.7 万 → 1.1 万）。
         ap.error("--only-fresh 必须配 --no-clean：增量模式下先清空会丢掉窗口外的全部明细")
+    if args.only_scores:
+        # 同上，但这里直接改掉而不是报错：只刷分却先 TRUNCATE 18 张表、事后只回填一张，
+        # 是一个不该靠调用方记得敲 --no-clean 才能避免的坑
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
     stats = _Stats()
     t0 = time.time()
+    mode = "only-scores" if args.only_scores else ("only-fresh" if args.only_fresh else "full")
     try:
         if not args.no_clean:
             clean_tables(db)
             print("已清空业务表")
-        if args.only_fresh:
+        if args.only_scores:
+            import_scores_only(db, stats, quiet=args.quiet)
+        elif args.only_fresh:
             # 日更：表头三表走 index.json 全量（快），财务明细只读刚重抓的公司文件
             import_index_snapshot(db, stats, quiet=args.quiet)
             import_companies(db, stats, only_fresh=args.only_fresh,
                              quiet=args.quiet, head=False)
+            import_events(db, stats)
+            import_agro(db, stats)
+            import_edb(db, stats)
+            import_valuation(db, stats)
         else:
             import_companies(db, stats, quiet=args.quiet)
-        import_events(db, stats)
-        import_agro(db, stats)
-        import_edb(db, stats)
-        import_valuation(db, stats)
+            import_events(db, stats)
+            import_agro(db, stats)
+            import_edb(db, stats)
+            import_valuation(db, stats)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),
-            status="success", message=f"导入完成: {dict(stats)}", stats=dict(stats),
+            status="success", message=f"导入完成[{mode}]: {dict(stats)}", stats=dict(stats),
         ))
         db.commit()
-        print(f"导入完成（{time.time() - t0:.0f}s）:")
+        print(f"导入完成[{mode}]（{time.time() - t0:.0f}s）:")
         for k in sorted(stats):
             print(f"  {k}: {stats[k]}")
     except Exception as e:
         db.rollback()
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),
-            status="failed", message=str(e)[:2000], stats=dict(stats),
+            status="failed", message=f"[{mode}] {str(e)[:1900]}", stats=dict(stats),
         ))
         db.commit()
         raise
