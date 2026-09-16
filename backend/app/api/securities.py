@@ -776,6 +776,33 @@ def _load_actions(db: Session, sid: int) -> dict | None:
     return out
 
 
+def _load_seo_history(db: Session, sec: Security) -> list | None:
+    """定增全历史，形状与 companies/{code}.json 的 seo_actions 一致（legacy 陷阱分读它）。
+
+    上面那个 actions 是「取笔」——一家一笔，给人看最近做了什么；摊薄率要把 5 年窗口里的
+    每一笔发行量加起来除以隐含股本，逐笔都得给，两栏不能合一个。
+
+    两种「没有」分开：非 A 股（口径只覆盖 A 股）和定增行压根还没回灌（表空）都返回 None，
+    让评分把这一项判成「取不到」；只有回灌跑过而这家公司查无定增才是 `[]`，那才是
+    「近 5 年无定增」这条公开事实。都返回空表等于替没导过数据的库担保全市场没摊薄过。
+    """
+    if sec.market != "A":
+        return None
+    seeded = db.execute(
+        select(ShareAction.sid).where(ShareAction.kind == "seo").limit(1)
+    ).first()
+    if seeded is None:
+        return None
+    return [
+        {"issue_date": _d(r.issue_date), "listing_date": _d(r.listing_date), "num": _f(r.num)}
+        for r in db.execute(
+            select(ShareAction)
+            .where(ShareAction.sid == sec.sid, ShareAction.kind == "seo")
+            .order_by(ShareAction.issue_date.desc())
+        ).scalars()
+    ]
+
+
 @router.get("/{code}")
 def get_security_detail(code: str, db: Session = Depends(get_session)):
     """单证券详情:结构与原 companies/{code}.json 对齐 + scores/events 扩展。
@@ -875,6 +902,7 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         "notes": notes,
         "valuationPctile": valuation,
         "actions": _load_actions(db, sec.sid),
+        "seo_actions": _load_seo_history(db, sec),
         "scores": _load_scores(db, sec.sid),
         "events": _load_events(db, sec.sid, sec.name),
     }
