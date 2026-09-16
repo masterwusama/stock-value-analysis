@@ -22,6 +22,7 @@ from app.models import (
     QuoteDaily,
     ScoreDaily,
     Security,
+    ShareAction,
     ValuationPctile,
     WindEvent,
     WindHolder,
@@ -63,7 +64,53 @@ def _dt(v):
     return v.isoformat(timespec="seconds") if v is not None else None
 
 
+# 字段恰好叫 date 的模型（下面的 SeoCell / BuybackCell）用它注解：类体里 `date = None` 这个
+# 默认值会把同名类型遮蔽掉，直接写 date | None 在建类时就炸成 NoneType | NoneType
+date_t = date
+
+
 # ---------- 列表 ----------
+
+class SeoCell(BaseModel):
+    """列表「最近一次定增」一格：发行日 + 发行价 + 发行数量 + 募集资金。"""
+
+    date: date_t | None = None
+    price: float | None = None
+    num: float | None = None
+    amount: float | None = None
+
+
+class BuybackCell(BaseModel):
+    """回购一格。一笔回购在源侧有两种状态，格子里的价/量随之换口径：
+
+    已回购出实际成交的均价与数量；预案/终止那类根本没成交的，退到方案里的**价格上限**与
+    **拟回购数量/金额区间**（num_lo/amount_lo 只有这种行才给值，前端据此写成 8~12 亿）。
+    所以同一个 price 列既可能是均价也可能是上限，靠 finished 与 progress 区分，不换列名。
+    """
+
+    src_id: str
+    date: date_t | None = None
+    progress: str | None = None
+    finished: bool = False
+    cancel_type: str | None = None
+    price: float | None = None
+    num: float | None = None
+    num_lo: float | None = None
+    amount: float | None = None
+    amount_lo: float | None = None
+
+
+class ActionsCell(BaseModel):
+    """列表两列（定增 / 回购）的载荷。
+
+    回购给两笔：latest = 最新公告的那一笔（可能仍在实施中），done = 最近一笔**已完成**的。
+    两者 src_id 相同就说明最新那笔已经做完了，前端只显一行。
+    """
+
+    seo: SeoCell | None = None
+    buy_latest: BuybackCell | None = None
+    buy_done: BuybackCell | None = None
+
 
 class SecurityItem(BaseModel):
     """列表行:主数据 + 最新快照日行情/评分(与原 index.json 字段对齐)。"""
@@ -122,6 +169,10 @@ class SecurityItem(BaseModel):
     buy_buffett: float | None = None
     sell_cons_buffett: float | None = None
     sell_fair_buffett: float | None = None
+    # 最近一次定增 / 回购（列表两列）。只有 A 股有这两个源，港股、美股该字段整体为 null，
+    # A 股但一笔都没发生过的则是 {seo: null, buy_latest: null, buy_done: null}——
+    # 「没有这笔」与「这个市场没这个源」是两件事，前端只在后者上打 "-（无此源）"
+    actions: ActionsCell | None = None
 
 
 class SecurityListOut(BaseModel):
@@ -287,6 +338,99 @@ def _latest_sub(db: Session, model, label):
     if dates:
         q = q.where(model.trade_date >= dates[-1])
     return q.group_by(model.sid).subquery()
+
+
+# ---------- 股本事件（定增 / 回购）取数 ----------
+# 主查询不带 share_action：一家回购十几笔，join 进分页会把 total 和页内行数一起撑大，
+# 而这两列既不排序也不筛选，主查询留着它没有任何收益。改成对当页（≤200 个 sid）补一条
+# 按 sid 走主键前缀的窗口查询，一次取回每家的三笔。
+ACT_FIELDS = (
+    ShareAction.sid, ShareAction.kind, ShareAction.src_id,
+    ShareAction.notice_date, ShareAction.issue_date, ShareAction.listing_date,
+    ShareAction.finish_date, ShareAction.progress_label, ShareAction.finished,
+    ShareAction.cancel_type, ShareAction.purpose,
+    ShareAction.price, ShareAction.num, ShareAction.raise_funds,
+    ShareAction.done_price, ShareAction.done_num, ShareAction.done_amount,
+    ShareAction.plan_price_cap, ShareAction.plan_num_lower, ShareAction.plan_num_cap,
+    ShareAction.plan_amount_lower, ShareAction.plan_amount_cap,
+)
+
+
+def _action_picks(db: Session, sids: list[int]) -> dict[int, dict]:
+    """{sid: {"seo"|"buy_latest"|"buy_done": 行映射}}，没有的那笔直接缺键。
+
+    两个窗口各干一件事：rn_latest 在 (sid, kind) 内取公告/发行最近的那一笔；rn_done 把
+    finished 也放进分区，于是 finished=1 那一组里的第一名就是"最近一笔已完成"。分区里带
+    一个布尔列而不是在 WHERE 里先筛，是为了两笔一起算完，不必扫第二遍。
+    """
+    if not sids:
+        return {}
+    # 排序键两边不同：定增按发行日（实测 8 行没有发行日、上市日必有），回购按公告日
+    # （采集侧已把 171 行空公告日退到董事会决议日，这里再兜一层源侧更新日期，宁可旧也不要丢行）
+    latest_key = case(
+        (ShareAction.kind == "seo",
+         func.coalesce(ShareAction.issue_date, ShareAction.listing_date)),
+        else_=func.coalesce(ShareAction.notice_date, func.date(ShareAction.updated_at)),
+    )
+    done_key = func.coalesce(
+        ShareAction.finish_date, ShareAction.notice_date, func.date(ShareAction.updated_at))
+    ranked = (
+        select(
+            *ACT_FIELDS,
+            func.row_number().over(partition_by=(ShareAction.sid, ShareAction.kind),
+                                   order_by=latest_key.desc()).label("rn_latest"),
+            func.row_number().over(
+                partition_by=(ShareAction.sid, ShareAction.kind, ShareAction.finished),
+                order_by=done_key.desc()).label("rn_done"),
+        )
+        .where(ShareAction.sid.in_(sids))
+        .subquery()
+    )
+    rows = db.execute(select(ranked).where(
+        or_(ranked.c.rn_latest == 1,
+            and_(ranked.c.finished.is_(True), ranked.c.rn_done == 1)))).all()
+    out: dict[int, dict] = {}
+    for row in rows:
+        m = row._mapping
+        slots = []
+        if m["rn_latest"] == 1:
+            slots.append("seo" if m["kind"] == "seo" else "buy_latest")
+        # 同一行可以既是最新一笔、又是最近已完成的一笔（最新那笔已经做完），两槽都给，
+        # 前端靠 src_id 相同折叠成一行
+        if m["kind"] == "buyback" and m["finished"] and m["rn_done"] == 1:
+            slots.append("buy_done")
+        picks = out.setdefault(m["sid"], {})
+        for slot in slots:
+            picks.setdefault(slot, m)
+    return out
+
+
+def _seo_cell(m) -> SeoCell:
+    return SeoCell(date=m["issue_date"] or m["listing_date"], price=_f(m["price"]),
+                   num=_f(m["num"]), amount=_f(m["raise_funds"]))
+
+
+def _buy_cell(m, done_slot: bool = False) -> BuybackCell:
+    """一行回购 → 格子。done_slot 只决定"时间"取完成日还是公告日，口径换算是同一套。"""
+    return BuybackCell(
+        src_id=m["src_id"],
+        date=(m["finish_date"] if done_slot and m["finish_date"] else m["notice_date"]),
+        progress=m["progress_label"], finished=bool(m["finished"]),
+        cancel_type=m["cancel_type"],
+        price=_f(m["done_price"] if m["done_price"] is not None else m["plan_price_cap"]),
+        num=_f(m["done_num"] if m["done_num"] is not None else m["plan_num_cap"]),
+        num_lo=None if m["done_num"] is not None else _f(m["plan_num_lower"]),
+        amount=_f(m["done_amount"] if m["done_amount"] is not None else m["plan_amount_cap"]),
+        amount_lo=None if m["done_amount"] is not None else _f(m["plan_amount_lower"]),
+    )
+
+
+def _actions_cell(picks: dict) -> ActionsCell:
+    return ActionsCell(
+        seo=_seo_cell(picks["seo"]) if "seo" in picks else None,
+        buy_latest=_buy_cell(picks["buy_latest"]) if "buy_latest" in picks else None,
+        buy_done=_buy_cell(picks["buy_done"], True) if "buy_done" in picks else None,
+    )
 
 
 @router.get("", response_model=SecurityListOut)
@@ -462,6 +606,8 @@ def list_securities(
     q = q.order_by(*([col.is_(None)] if order == "asc" else []), prim, Security.code.asc())
 
     rows = db.execute(q.limit(page_size).offset((page - 1) * page_size)).all()
+    # 当页各家的定增/回购三笔：一条窗口查询补取，不进上面那条分页 SQL
+    act_picks = _action_picks(db, [r[0].sid for r in rows])
 
     items = [
         SecurityItem(
@@ -506,6 +652,7 @@ def list_securities(
             buy_buffett=_f(score.buy_buffett) if score else None,
             sell_cons_buffett=_f(score.sell_cons_buffett) if score else None,
             sell_fair_buffett=_f(score.sell_fair_buffett) if score else None,
+            actions=_actions_cell(act_picks[sec.sid]) if sec.sid in act_picks else None,
         )
         for sec, quote, score, val in rows
     ]
@@ -602,6 +749,30 @@ def _load_events(db: Session, sid: int, sec_name: str) -> dict | None:
     return {"name": sec_name,
             "fetched_at": fetched.isoformat(timespec="seconds") if fetched else None,
             "events": events, "holders": holders}
+
+
+def _load_actions(db: Session, sid: int) -> dict | None:
+    """详情页「股本事件」一节：与列表同一套取笔，再补上列表不带的那半行。
+
+    补的是判据与长尾——注销判据句 evidence、用途原文 objective、发行方式/锁定期/认购价、
+    实际成交价区间。列表只要 8 个字段，把这些也塞进去等于每页多读 500 KB 的文本。
+    """
+    picks = _action_picks(db, [sid]).get(sid)
+    if not picks:
+        return None
+    out = {"seo": None, "buy_latest": None, "buy_done": None}
+    for slot, m in picks.items():
+        kind = "seo" if slot == "seo" else "buyback"
+        row = db.get(ShareAction, (sid, kind, m["src_id"]))
+        if kind == "seo":
+            cell = _seo_cell(m).model_dump()
+        else:
+            cell = _buy_cell(m, slot == "buy_done").model_dump()
+            cell["evidence"] = row.evidence
+            cell["purpose"] = m["purpose"]
+        cell.update(row.detail or {})
+        out[slot] = cell
+    return out
 
 
 @router.get("/{code}")
@@ -702,6 +873,7 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         "reports": reports,
         "notes": notes,
         "valuationPctile": valuation,
+        "actions": _load_actions(db, sec.sid),
         "scores": _load_scores(db, sec.sid),
         "events": _load_events(db, sec.sid, sec.name),
     }

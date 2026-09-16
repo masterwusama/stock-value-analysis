@@ -281,7 +281,9 @@ def norm_buyback(rows):
             "code": code,
             "name": one_line(r.get("SECURITYSHORTNAME") or r.get("SECURITY_NAME_ABBR")),
             "src_id": u"%s|%s" % (code, src),
-            "notice_date": d(r.get("NOTICEDATE")),
+            # 实测 171 行（董事会预案/股东大会通过那类）NOTICEDATE 为空而 DIM_DATE 必有值
+            # （决议公告当天即方案披露日），故公告日退到决议日，原始两值都另存着可回溯
+            "notice_date": d(r.get("NOTICEDATE")) or d(r.get("DIM_DATE")),
             "dim_date": d(r.get("DIM_DATE")),
             "start_date": d(r.get("REPURSTARTDATE")),
             "end_date": d(r.get("REPURENDDATE")),
@@ -307,7 +309,6 @@ def norm_buyback(rows):
             # 判据所依据的那一句处置句。cancel_type 读的是全文，objective 只存 600 字，
             # 实测有一行的判据句在 600 字之外——只留原文就复现不出自己的标签，故单独存一句。
             "evidence": one_line(head, 200),
-            "market": one_line(r.get("MARKET")),
         })
     return out, skipped
 
