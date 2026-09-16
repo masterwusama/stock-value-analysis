@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 """只重算 index.json 里各家的 scores，不重抓任何数据。
 
-评分算法改一行、或上游财务表被修过之后，用这个把分数刷进 index，再配
-`python -m scripts.import_legacy --only-scores` 单刷 score_daily 落库——
-两段都不碰行情与明细，跑完列表页就是新分。
+现在是调度链的一环：`stock`（每日）与 `deep`（周六）都在采集结尾跑这一步，所以评分算法
+改一行不必等周六——`--only-fresh` 那条日更回灌本来就会把 index.json 的 scores 写进
+score_daily（`import_index_snapshot`），跑完列表页就是新分。手动跑同样有效，配
+`python -m scripts.import_legacy --only-scores` 可以只刷 score_daily 落库。
+
+定增史在这里按当日的整表快照（`data/actions/latest.json`）覆盖，不用 companies/*.json 里
+那份深抓时切的旧片段——否则今天新公告的摊薄要等到下次深抓才进陷阱分，而详情页读库里的
+`share_action` 当天就能看到，同一个 T 两边不同日。
 
 ⚠ 改算法要先改完 scoring.py 并与 stockLegacy.js 同步（_score_check.py 全量比对），
 否则刷出来的分与详情页现算的对不上。
@@ -25,6 +30,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from scoring import compute_scores  # noqa: E402
+from actions_lookup import seo_actions  # noqa: E402  查本地定增快照，不发请求
 
 DATA = HERE.parent / "data"
 INDEX_PATH = DATA / "index.json"
@@ -44,13 +50,22 @@ def main():
 
     idx = json.loads(INDEX_PATH.read_text(encoding="utf-8"))
     companies = idx.get("companies") or []
-    changed, failed, noscore = [], 0, 0
+    changed, failed, noscore, seo_hit = [], 0, 0, 0
     for c in companies:
         f = DATA / "companies" / f"{c['code']}.json"
         if not f.exists():
             noscore += 1
             continue
         d = json.loads(f.read_text(encoding="utf-8"))
+        # 定增史以当日整表快照为准，不以文件里那份旧切片为准：companies/*.json 的
+        # `seo_actions` 只在深抓时切一次，直接用会让列表分滞后到下次深抓，而详情页读的
+        # 是库里每日更新的 share_action —— 同一个 T 两边用了不同日的定增史。
+        # None 是「快照没落地」，此时保留文件里那份，不能替全市场担保没摊薄过。
+        if (c.get("market") or "A") == "A":
+            fresh = seo_actions(c["code"])
+            if fresh is not None:
+                d["seo_actions"] = fresh
+                seo_hit += 1
         try:
             new = compute_scores(d)
         except Exception as e:
@@ -65,7 +80,8 @@ def main():
             changed.append((c["code"], new, c.get("scores")))
             c["scores"] = new
 
-    print(f"{len(changed)}/{len(companies)} 家分数有变（无明细 {noscore} 家、算失败 {failed} 家）")
+    print(f"{len(changed)}/{len(companies)} 家分数有变（无明细 {noscore} 家、算失败 {failed} 家、"
+          f"定增快照覆盖 {seo_hit} 家）")
     for code, new, old in changed[:10]:
         print(f"  {code} " + " | ".join(
             f"{k} {'' if old is None else old.get(k)} → {new.get(k)}" for k in KEYS))

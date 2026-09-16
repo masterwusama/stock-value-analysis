@@ -359,7 +359,70 @@ def build_score_rows(index, trade_date, db):
         # 命中=True；可判但未命中=False；一个信号都判不了（未抓财务、无审计无权益）=NULL，
         # NULL 不等于通过，所以列表页默认不拿它排除任何标的
         row["gate"] = True if flags else (False if code in judgeable else None)
-    return score_rows
+    return guard_score_batch(db, score_rows, trade_date)
+
+
+# ---------- 评分批次护栏 ----------
+# 评分是财务的函数，而 fetch_data 每个数据块都是 `except → result[key] = []` 后整档盖回，
+# 所以上游一次限流就能把已经抓好的明细覆写成空（2026-09-12 实测：4832 家的三大表被清空，
+# 随后重算把 fraud=0 的家数从 647 抬到 2956）。这种「分数集体变干净」比分数算错更坏——
+# 筛选会放过一批本该拦住的标的，而链路上每一步都写着 success。
+# 所以在唯一的写入口比一次批次分布：与库里上一批比，某个「越低越好」列的零值或 NULL 家数
+# 同时超过 2 倍且多出 500 家（两个条件都要满足才判，避免把小盘日的正常抖动当成洗盘），
+# 或者行数掉了一成，就整批不写。扣住这批的后果是列表页停在旧分那一天的截面（表头快照日
+# 取行情与评分两张表最新日的交集），行情照写——宁可用昨天的分，也不用一片假的 0 分。
+SCORE_HOLD_COLS = ("fraud", "trap")     # 0 是「无红旗 / 无证据」那一端的两个分，最容易被洗成 0
+SCORE_HOLD_RATIO = 2.0
+SCORE_HOLD_FLOOR = 500
+SCORE_HOLD_ROW_DROP = 0.9
+SCORE_PREV_SQL = """
+SELECT t.trade_date, COUNT(*) n,
+       SUM(fraud = 0), SUM(fraud IS NULL), SUM(trap = 0), SUM(trap IS NULL)
+FROM score_daily t
+WHERE t.trade_date = (SELECT MAX(trade_date) FROM score_daily WHERE trade_date < :d)
+GROUP BY t.trade_date
+"""
+# 本轮扣住了哪些批（main 据此把这次回灌记成 failed 并非零退出，否则红不起来）
+hold_notes: list[str] = []
+
+
+def guard_score_batch(db, rows, trade_date):
+    """比对上一批分布，异常就返回 {}（本轮不写 score_daily）并把原因记进 `hold_notes`。"""
+    if not rows:
+        return rows
+    prev = db.execute(text(SCORE_PREV_SQL), {"d": trade_date}).first()
+    if not prev or not prev[1]:
+        return rows           # 库里没有上一批可比（首轮导入），不设卡
+    prev_date, prev_n, *prev_counts = prev
+    prev_n = int(prev_n)
+    prev_counts = [int(x or 0) for x in prev_counts]
+    new_n = len(rows)
+    counters = {c: [0, 0] for c in SCORE_HOLD_COLS}
+    for r in rows.values():
+        for i, c in enumerate(SCORE_HOLD_COLS):
+            v = r.get(c)
+            if v is None:
+                counters[c][1] += 1
+            elif v == 0:
+                counters[c][0] += 1
+    bad = []
+    if new_n < prev_n * SCORE_HOLD_ROW_DROP:
+        bad.append(f"行数 {prev_n} → {new_n}")
+    for idx, c in enumerate(SCORE_HOLD_COLS):
+        was_zero, was_null = prev_counts[idx * 2], prev_counts[idx * 2 + 1]
+        if was_null >= prev_n:
+            continue     # 上一批整列没值 = 这一列刚上线，没有基线可比，别把首批判成洗盘
+        for label, now, was in (("零值", counters[c][0], was_zero),
+                                ("NULL", counters[c][1], was_null)):
+            if now > max(was * SCORE_HOLD_RATIO, was + SCORE_HOLD_FLOOR):
+                bad.append(f"{c} {label}家数 {was} → {now}")
+    if not bad:
+        return rows
+    note = (f"评分批次护栏触发（对比 {prev_date} 那批）：{'；'.join(bad)} —— "
+            f"本轮 {new_n} 行评分不写 score_daily，列表页停在上一批分数")
+    hold_notes.append(note)
+    print(f"⚠ {note}", flush=True)
+    return {}
 
 
 # ---------- 硬门槛（score_daily.gate / gate_flags）----------
@@ -1002,14 +1065,21 @@ def main():
             import_edb(db, stats)
             import_valuation(db, stats)
             import_actions(db, stats)
+        held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),
-            status="success", message=f"导入完成[{mode}]: {dict(stats)}", stats=dict(stats),
+            status="failed" if held else "success",
+            message=("；".join(held) + f" | 导入完成[{mode}]: {dict(stats)}") if held
+            else f"导入完成[{mode}]: {dict(stats)}",
+            stats=dict(stats),
         ))
         db.commit()
         print(f"导入完成[{mode}]（{time.time() - t0:.0f}s）:")
         for k in sorted(stats):
             print(f"  {k}: {stats[k]}")
+        for note in held:
+            print(f"⚠ {note}", flush=True)
+        return 1 if held else 0
     except Exception as e:
         db.rollback()
         db.add(EtlJobLog(

@@ -64,9 +64,17 @@ JOBS = {
     # stock ：每日分钟级（只刷腾讯批量行情→估值/价格，不重抓财务）
     # fetch_actions 两页表全量约 25 秒，且与行情无依赖，跟在后面跑；放在本 job 而不是独立
     # job，是因为它没有自己的数据目录游标，每天都会整表重取——独立时刻表只会多一次重复抓取。
-    "stock": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "fetch_actions.py")],
+    # _refresh_scores 排在最后：定增摊薄那一项的输入就是上一步那份整表快照，日更全市场重算
+    # 实测 20 秒（只读本地 companies/，不发请求），跑完 `--only-fresh` 那条回灌顺手把新分写进
+    # score_daily（`import_index_snapshot` 本来就干这张表），所以不需要再补一遍导入。
+    # 抢不到 .fetch.lock 时它以 exit=2 退出，这一轮日志会红一次——那是「今天没刷分」的正确
+    # 记录，不是把分刷坏了。
+    "stock": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "fetch_actions.py"),
+              (SCRIPTS, "_refresh_scores.py")],
     # deep  ：全市场财务重抓（季报到账后/周末跑一次，数小时）
-    "deep": [(SCRIPTS, "fetch_data.py")],
+    # 末尾同样补一次重算：fetch_data 只给本轮真爬过的公司算分，带 --resume/--max-age 时
+    # 大部分公司是跳过的，改了评分公式就得靠这一步铺满全市场。
+    "deep": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "_refresh_scores.py")],
     # agro 只跑生意社价格：行业 EDB 的唯一数据源是本机 Wind 客户端 CLI（要客户端登录、按
     # 指标耗积分），属于自动链管不到的外部依赖。2026-09-03 09:05 那轮已经碰到：
     # etl_job_log 里 agro 至今唯一一条记录就是 failed / `fetch_edb.py exit=1`（价格数据
