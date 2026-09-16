@@ -37,6 +37,7 @@
 用法（只读库、零积分、不需要服务在跑）:
     cd backend; python -X utf8 -m scripts.trap_validity
     python -X utf8 -m scripts.trap_validity --years 2021 2022 2023
+    python -X utf8 -m scripts.trap_validity --orthogonal
     python -X utf8 -m scripts.trap_validity --detail bvps_g5 seo_dilu
 """
 import argparse
@@ -93,6 +94,10 @@ DETER = ("loss", "imp5", "imp3", "divcut", "bvpsdn")
 RULES = {"lo": lambda v, c: v <= c[0], "hi": lambda v, c: v >= c[1], "bin": lambda v, c: v >= 1.0,
          "pos": lambda v, c: v > 0, "ge0.10": lambda v, c: v >= 0.10, "gt50": lambda v, c: v > 50}
 LABEL = {k: lab for k, lab, _ in FEATS}
+# 「增长水平」那一族——它们同时是拟议成长分 G 的主料。留在 T 里，T 的第二名就等于把
+# 「这家公司这几年净资产不怎么涨」又数了一遍，两轴退化成一条轴。--orthogonal 剔掉它，
+# 量 T 在只保留「减速 + 盈利质量 + 稀释 + 减值弹药」时还剩多少判别力。
+GROWTH_LVL = ("bvps_g5", "equity_g5", "rev_g5")
 
 
 def _g(cur, prev, span):
@@ -417,11 +422,14 @@ def _vc(obs, k, j):
                   if r.get(k) is not None and r.get(j) is not None])
 
 
-def hazard(obs, cuts, lifts, top_o, cons, xs):
+def hazard(obs, cuts, lifts, top_o, cons, xs, drop=(), title="全候选"):
     """合成危险比：正交且逐年同向的分项按 ln(lift) 相加，看合起来能拉开多少。"""
     years = sorted({r["t"] for r in obs})
     sel, skip = [], []
     for k, lab, kind in sorted(FEATS, key=lambda x: -lifts.get(x[0], 0)):
+        if k in drop:
+            skip.append(f"{lab}（增长水平，归成长分 G）")
+            continue
         if lifts.get(k, 0) < 1.4:
             skip.append(f"{lab}（lift {lifts.get(k, 0):.2f} < 1.4）")
             continue
@@ -464,7 +472,8 @@ def hazard(obs, cuts, lifts, top_o, cons, xs):
         miss.append(sum(1 for k in sel if x[k] is None))
     q = quantiles(c, [0.2, 0.4, 0.6, 0.8])
     print("\n" + "=" * 122)
-    print("合成危险比 C = Σ ln(lift_i)·x_i（权重按 leave-one-T-year-out 估；缺项记 x=0 当中性）")
+    print("合成危险比 C = Σ ln(lift_i)·x_i · " + title +
+          "（权重按 leave-one-T-year-out 估；缺项记 x=0 当中性）")
     print("=" * 122)
     print("入选 " + str(len(sel)) + " 项：" + " · ".join(
         f"{LABEL[k]} ln={statistics.mean([w[t][k] for t in years]):.2f}" for k in sel))
@@ -536,7 +545,7 @@ def detail_grid(obs, cuts, k, lab, kind):
                         for k2, _ in OUTS))
 
 
-def report(obs, counts, cuts, detail):
+def report(obs, counts, cuts, detail, orthogonal=False):
     print(f"样本：A 股 {len({r['sid'] for r in obs})} 家 · 观测 {counts['观测']} 条 "
           f"（T ∈ {sorted({r['t'] for r in obs})}）")
     for k in ("公开年报不足3期", "事件窗内没出年报", "锚点早于信号年（拖延披露）", "无指标行"):
@@ -594,7 +603,12 @@ def report(obs, counts, cuts, detail):
         print(f"  lift={lmax[k]:5.2f}x  坏侧 {r1*100:5.2f}% vs 其余 {r2*100:5.2f}%  "
               f"{w}/{n_yr} 年同向  最强在「{lb}」  {lab}{flag}")
 
-    hazard(obs, cuts, lifts, top_o, cons, _indicators(obs, cuts))
+    xi = _indicators(obs, cuts)
+    hazard(obs, cuts, lifts, top_o, cons, xi)
+    if orthogonal:
+        # 一次跑里并排两个变体：为比较而跑两遍全样本是 4 分钟，没必要
+        hazard(obs, cuts, lifts, top_o, cons, xi, drop=GROWTH_LVL,
+               title="正交变体（增长水平项已让给成长分 G）")
 
     print("\n" + "=" * 122)
     print("重叠度（皮尔逊 r，两列都有值的同一条观测才算；|r|>0.5 说明两处会在同一个量上重复计分）")
@@ -635,13 +649,15 @@ def main():
     ap.add_argument("--years", nargs="*", type=int, default=[2019, 2020, 2021, 2022, 2023, 2024])
     ap.add_argument("--detail", nargs="*", default=[], help="这些分项额外打印三分档明细")
     ap.add_argument("--limit", type=int, default=0, help="只跑前 N 家（冒烟测用）")
+    ap.add_argument("--orthogonal", action="store_true",
+                    help="再打印一个剔掉「增长水平」项的合成变体（那几项归成长分 G）")
     a = ap.parse_args()
     obs, counts = run(a.years, a.limit)
     cuts = {}
     for k, lab, kind in FEATS:
         vals = [r[k] for r in obs if r.get(k) is not None]
         cuts[k] = quantiles(vals, [1 / 3, 2 / 3]) if kind in ("lo", "hi") and len(vals) > 10 else (0.0, 0.0)
-    report(obs, counts, cuts, a.detail)
+    report(obs, counts, cuts, a.detail, a.orthogonal)
 
 
 if __name__ == "__main__":
