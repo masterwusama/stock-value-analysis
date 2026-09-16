@@ -131,10 +131,13 @@ class SecurityItem(BaseModel):
     fraud: float | None = None
     mgmt: float | None = None
     cycle: float | None = None
-    # 价值陷阱分（与 fraud 同为「越低越好」列）与「这分建在几项证据上」。固定分母下缺项只
-    # 压低分数，实测约三成 A 股一项证据都没亮，只给分会被读成「干净」，故两项并列输出。
-    # 非 A 股两列同为 NULL：口径不适用，不是「查过了没毛病」
+    # 价值陷阱分（与 fraud 同为「越低越好」列）、「这分建在几项证据上」，以及未归一的证据合计 C。
+    # 覆盖项数必须与分数并列：固定分母下缺项只压低分数，实测约三成 A 股一项证据都没亮，
+    # 只给分会被读成「干净」。C 是给前端查档位着色用的——分数舍入到一位小数后落在档位
+    # 边界上会串档，按分着色就会与详情页按 C 着色对不上。非 A 股三列同为 NULL：口径不适用，
+    # 不是「查过了没毛病」
     trap: float | None = None
+    trap_c: float | None = None
     trap_eval: int | None = None
     # 硬门槛（1=触发，0=可判且未触发，null=一个信号都判不了）与命中项，口径见 import_legacy.GATE_FLAGS
     gate: bool | None = None
@@ -634,6 +637,7 @@ def list_securities(
             mgmt=score.mgmt if score else None,
             cycle=score.cycle if score else None,
             trap=score.trap if score else None,
+            trap_c=score.trap_c if score else None,
             trap_eval=score.trap_eval if score else None,
             gate=score.gate if score else None,
             gate_flags=score.gate_flags if score else None,

@@ -58,6 +58,7 @@ from app.models import (Dividend, FinBalance, FinCashflow, FinIncome,  # noqa: E
                         ShareAction)
 from scripts.fraud_validity import (WINDOW_MAX, Avail, ashare_sids, load_announce,  # noqa: E402
                                     load_audit, load_batch, score_at, ztest, _d, _num, _plus)
+from scoring import TRAP_BANDS, TRAP_CUT, TRAP_W  # noqa: E402  出厂常量：权重/阈值/切点与发生率
 
 BATCH = 300
 # 有息负债全口径：与 scoring.py 的 int_debt 同五个科目（缺键当 0）
@@ -629,6 +630,88 @@ def report(obs, counts, cuts, detail, orthogonal=False):
     for k in detail:
         lab = dict((x[0], x[1]) for x in FEATS).get(k, k)
         detail_grid(obs, cuts, k, lab, dict((x[0], x[2]) for x in FEATS)[k])
+
+    band_report(obs)
+
+
+# 出厂配置下的七项：权重取 TRAP_W、阈值取 TRAP_CUT（ded_half/gw_asset/fraud/seo_dilu 四项
+# 的阈值与回测 FEATS 的规则同一个，roe_delta/gm_delta/ocfnp_med 用固定绝对值而不是三分位）。
+# 判不动（值为 None）一律不计入 C，与 trap_score 同纪律。
+SHIPPED_BAD = {
+    "ded_half": lambda v: v >= 1.0,
+    "gw_asset": lambda v: v >= 0.10,
+    "roe_delta": lambda v: v <= TRAP_CUT["roe_delta"],
+    "gm_delta": lambda v: v <= TRAP_CUT["gm_delta"],
+    "ocfnp_med": lambda v: v <= TRAP_CUT["ocfnp_med"],
+    "fraud": lambda v: v > 50,
+    "seo_dilu": lambda v: v > 0,
+}
+# TRAP_BANDS 元组里第 3~7 位依次是这五类「变坏了」的出厂印值
+BAND_OUTS = ("loss", "imp5", "imp3", "divcut", "bvpsdn")
+
+
+def band_report(obs):
+    """钉在出厂常量上重跑一遍：换的是「站点里真的印着那五档」这个前提，不是当期分位。
+
+    上面那张五分位表每次都用当期数据重算边界，回答「这套逻辑灵不灵」；这张表回答
+    「此刻印在页面上的档位宽度与发生率，换到今天还成不成立」——所以它既判单调，也给漂移。
+    """
+    olab = dict(OUTS)
+    gs, cs = [], []
+    for r in obs:
+        c = sum(TRAP_W[k] for k, f in SHIPPED_BAD.items()
+                if r.get(k) is not None and f(r[k]))
+        for i, band in enumerate(TRAP_BANDS):
+            if c <= band[0]:
+                gs.append(i)
+                cs.append(c)
+                break
+    cells = [Cell() for _ in TRAP_BANDS]
+    lo = [None] * len(cells)
+    hi = [None] * len(cells)
+    for g, c, r in zip(gs, cs, obs):
+        cells[g].add(r["o"])
+        lo[g] = c if lo[g] is None else min(lo[g], c)
+        hi[g] = c if hi[g] is None else max(hi[g], c)
+
+    print("\n" + "=" * 122)
+    print("出厂档位（TRAP_W 权重 + TRAP_CUT 阈值 + TRAP_BANDS 切点）在本期回测人群上的单调性")
+    print("=" * 122)
+    print("  " + _pad("档", 12) + _pad("观测数", 9) + _pad("占比", 8) + _pad("C 实测", 14)
+          + "".join(_pad(olab[k] + " 实测|出厂", 19) for k in BAND_OUTS))
+    for i, cc in enumerate(cells):
+        print("  " + _pad(TRAP_BANDS[i][1], 12) + _pad(str(cc.obs), 9)
+              + _pad(f"{cc.obs / len(obs) * 100:.1f}%", 8)
+              + _pad(f"{lo[i]:.2f}~{hi[i]:.2f}" if cc.obs else "—", 14)
+              + "".join(_pad(f"{cc.rate(k) * 100:.2f}%|{TRAP_BANDS[i][2 + j]:.2f}%"
+                             if cc.rate(k) is not None else "—", 19)
+                        for j, k in enumerate(BAND_OUTS)))
+
+    n_cmp = inv = 0
+    print("\n  相邻档比较（每类结局 4 对，要求高档不低于低档）：")
+    for k in BAND_OUTS:
+        rs = [cc.rate(k) for cc in cells]
+        bad = []
+        for i in range(len(cells) - 1):
+            a, b = rs[i], rs[i + 1]
+            if a is None or b is None:
+                continue
+            n_cmp += 1
+            if b < a:
+                z = ztest(cells[i + 1].hit[k], cells[i + 1].n[k],
+                          cells[i].hit[k], cells[i].n[k])
+                bad.append((TRAP_BANDS[i][1], TRAP_BANDS[i + 1][1], a, b, z))
+                inv += 1
+        for l1, l2, a, b, z in bad:
+            tag = "显著倒挂" if z is not None and abs(z) >= 1.96 else "噪声级"
+            print(f"    {olab[k]:<10} {l1}→{l2} {a * 100:.2f}%→{b * 100:.2f}%"
+                  f"（{tag} z={z:+.1f}）")
+        if not bad:
+            print(f"    {olab[k]:<10} 单调不降 ✓")
+    dr = [abs(cells[i].rate(k) * 100 - TRAP_BANDS[i][2 + j])
+          for i, cc in enumerate(cells) for j, k in enumerate(BAND_OUTS) if cc.rate(k) is not None]
+    print(f"  共 {n_cmp} 组相邻比较，倒挂 {inv} 处；出厂印值与本期实测最大偏差 "
+          f"{max(dr):.2f}pp（中位 {statistics.median(dr):.2f}pp）")
 
 
 def _pear(pairs):

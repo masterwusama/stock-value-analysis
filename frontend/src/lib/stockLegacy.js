@@ -388,10 +388,11 @@
     var ovD = (state.eventOverlay && state.eventOverlay[d.code]) ? state.eventOverlay[d.code] : null;
     var hasEvents = evHasAny(d._events);
     var hasAct = hasActions(d.actions);
-    // ⑨ 只在有 Wind 事件明细时出，股本事件跟着顶上空缺的那个号，免得出现 ⑧ → ⑩ 的跳号
-    var actNo = hasEvents ? '⑩' : '⑨';
+    // ⑨ 恒在（陷阱分对非 A 股也占一个位子，整节显示「不适用」而不是消失）；⑩ 只在有 Wind
+    // 事件明细时出，股本事件跟着顶上空缺的那个号，免得出现 ⑨ → ⑪ 的跳号
+    var actNo = hasEvents ? '⑪' : '⑩';
 
-    // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑧ 恒在，⑨ ⑩ 按有无数据出
+    // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑨ 恒在，⑩ ⑪ 按有无数据出
     html += '<nav class="va-nav" aria-label="详情模块导航">' +
       '<a href="#sec-basic" data-scroll="sec-basic">① 基础财务信息</a>' +
       '<a href="#sec-value" data-scroll="sec-value">② 通用价值标准</a>' +
@@ -401,7 +402,8 @@
       '<a href="#sec-fraud" data-scroll="sec-fraud">⑥ 造假风险</a>' +
       '<a href="#sec-mgmt" data-scroll="sec-mgmt">⑦ 管理水平</a>' +
       '<a href="#sec-cycle" data-scroll="sec-cycle">⑧ 周期位置</a>' +
-      (hasEvents ? '<a href="#sec-events" data-scroll="sec-events">⑨ 事件与股东</a>' : '') +
+      '<a href="#sec-trap" data-scroll="sec-trap">⑨ 价值陷阱分</a>' +
+      (hasEvents ? '<a href="#sec-events" data-scroll="sec-events">⑩ 事件与股东</a>' : '') +
       (hasAct ? '<a href="#sec-actions" data-scroll="sec-actions">' + actNo + ' 股本事件</a>' : '') +
       '</nav>';
 
@@ -628,14 +630,18 @@
       '<div class="stock-chart" id="stock-chart-cycle"></div>' +
       '<p class="stock-chart-note">逐年回溯：以各年报年为窗口末尾取最近 8 年年报，按与当期相同的 8 维逻辑打分；单季环比逐年参与（历史年用该年自身单季营收环比，末年用最新单季环比），各年均为满 8 维、同口径可比。</p></div></section>';
 
-    // ---- 模块九：公司事件与股东结构（仅当有 Wind 事件明细时展示；港美股/未抓公司自动隐藏）----
+    // ---- 模块九：价值陷阱分 T（七项坏消息证据的加权合计，分高＝坏消息堆得多；口径只覆盖 A 股）----
+    html += '<section id="sec-trap" class="stock-section va-module"><h2 class="va-module-title"><span>⑨</span>价值陷阱分 · 坏消息证据</h2>' +
+      '<div class="score-card" id="stock-score-trap"></div></section>';
+
+    // ---- 模块十：公司事件与股东结构（仅当有 Wind 事件明细时展示；港美股/未抓公司自动隐藏）----
     if (hasEvents) {
-      html += '<section id="sec-events" class="stock-section va-module"><h2 class="va-module-title"><span>⑨</span>公司事件与股东结构</h2>' +
+      html += '<section id="sec-events" class="stock-section va-module"><h2 class="va-module-title"><span>⑩</span>公司事件与股东结构</h2>' +
         renderEvents(d._events, ovD) + '</section>';
     }
 
-    // ---- 模块十：股本事件（定增 / 回购，东财全市场快照；港美股不采，整节不出）----
-    // 编号跟着 ⑨ 的有无走：没有 Wind 事件明细时 ⑨ 这个位子空着，由本节顶上
+    // ---- 模块⑩/⑪：股本事件（定增 / 回购，东财全市场快照；港美股不采，整节不出）----
+    // 编号跟着 ⑩ 的有无走：没有 Wind 事件明细时 ⑩ 这个位子空着，由本节顶上
     if (hasAct) {
       html += '<section id="sec-actions" class="stock-section va-module"><h2 class="va-module-title"><span>' + actNo + '</span>股本事件 · 定增与回购</h2>' +
         renderActions(d.actions) + '</section>';
@@ -659,6 +665,8 @@
     var ca = cycleAnalysis(d);
     var cycleEl = $('stock-score-cycle');
     if (cycleEl) cycleEl.innerHTML = cycleCard(ca);
+    var trapEl = $('stock-score-trap');
+    if (trapEl) trapEl.innerHTML = trapCard(trapScore(d));
     renderCycleChart(d, ca);
     bindMoreButtons();
   }
@@ -1554,13 +1562,14 @@
   };
   var TRAP_SUM_W = 4.92;                       // Σ TRAP_W，固定分母
   var TRAP_CUT = { roe_delta: -0.04, gm_delta: -0.03, ocfnp_med: 0.80 };
-  // 回测五分位边界（C = Σ 权重×亮灯）与该档实测发生率，% —— 分数自己没有含义，这张表才有
+  // 回测五分位边界（C = Σ 权重×亮灯）与该档实测发生率，% —— 分数自己没有含义，这张表才有。
+  // grade 是列表与详情共用的着色：档位单调变坏，故只往 bad 方向走，不再有「高分=好」那套反向。
   var TRAP_BANDS = [
-    { hi: 0.001, label: '档1 无证据', loss: 3.66, imp5: 6.47, imp3: 13.48, divcut: 5.92, bvpsdn: 9.75 },
-    { hi: 0.50, label: '档2 单点', loss: 4.87, imp5: 7.75, imp3: 16.18, divcut: 9.32, bvpsdn: 11.35 },
-    { hi: 1.00, label: '档3 两点', loss: 6.27, imp5: 11.76, imp3: 20.17, divcut: 8.90, bvpsdn: 17.04 },
-    { hi: 1.60, label: '档4 成串', loss: 10.38, imp5: 17.90, imp3: 27.26, divcut: 13.25, bvpsdn: 22.88 },
-    { hi: Infinity, label: '档5 叠加', loss: 28.70, imp5: 23.31, imp3: 35.88, divcut: 24.11, bvpsdn: 23.44 }
+    { hi: 0.001, label: '档1 无证据', grade: 'good', loss: 3.66, imp5: 6.47, imp3: 13.48, divcut: 5.92, bvpsdn: 9.75 },
+    { hi: 0.50, label: '档2 单点', grade: 'mid', loss: 4.87, imp5: 7.75, imp3: 16.18, divcut: 9.32, bvpsdn: 11.35 },
+    { hi: 1.00, label: '档3 两点', grade: 'mid', loss: 6.27, imp5: 11.76, imp3: 20.17, divcut: 8.90, bvpsdn: 17.04 },
+    { hi: 1.60, label: '档4 成串', grade: 'low', loss: 10.38, imp5: 17.90, imp3: 27.26, divcut: 13.25, bvpsdn: 22.88 },
+    { hi: Infinity, label: '档5 叠加', grade: 'bad', loss: 28.70, imp5: 23.31, imp3: 35.88, divcut: 24.11, bvpsdn: 23.44 }
   ];
 
   function trapBandOf(c) {
@@ -1616,7 +1625,7 @@
     var gw = curBa['商誉'], ta = curBa['资产总计'];
     push('gw_asset', '商誉/总资产 ≥ 10%', (gw != null && ta > 0) ? gw / ta : null,
       (gw == null || !(ta > 0)) ? null : (gw / ta >= 0.10 ? 1 : 0),
-      gw == null ? '最新年报未单列商誉' : fmtMoney(gw) + ' / 总资产 ' + fmtMoney(ta));
+      gw == null ? '最新年报未单列商誉' : '商誉 ' + fmtMoney(gw) + ' / 总资产 ' + fmtMoney(ta));
 
     // 3~4. ROE 与毛利率「最新 − 近5年中位」：看减速，不看水平（水平归成长分）
     var roeMed = medOf(win.map(function (r) { return r['净资产收益率']; }));
@@ -1641,7 +1650,7 @@
     }));
     push('ocfnp_med', '净现比 5 年中位 ≤ 0.80', ocfnp,
       ocfnp == null ? null : (ocfnp <= TRAP_CUT.ocfnp_med ? 1 : 0),
-      ocfnp == null ? '可算年份不足 3 期' : fmtNum(ocfnp));
+      ocfnp == null ? '可算年份不足 3 期' : '5 年中位 ' + fmtNum(ocfnp));
 
     // 6. 造假分 >50：与列表页门槛、刷池线同一个数，不另起口径
     var fa = fraudAnalysis(d);
@@ -1676,8 +1685,57 @@
       eff: { evaluated: ev, missing: items.length - ev, na: 0 },
       note: '把「利润是撑出来的、资产里压着要减的、股本被摊过、回报在往下走」这几类各自亮灯的证据，'
         + '按回测出的对数危险比相加后折成 0~100。分母固定为全部 7 项，所以缺项只会压低分数、'
-        + '不会加分——查不动的项按「没证据」计，分数低不等于没陷阱，看 eff.evaluated 有几项。'
+        + '不会加分——查不动的项按「没证据」计，分数低不等于没陷阱，先看抬头那行「可判 N/7 项」。'
     };
+  }
+
+  // 陷阱分项的「当前值」格式化：比率和差值是 0~1 的小数，金额是元，其余是百分制分
+  var TRAP_VALUE_FMT = {
+    ded_half: fmtMoney, gw_asset: fmtPct, roe_delta: fmtPct, gm_delta: fmtPct,
+    ocfnp_med: fmtNum, fraud: fmtNum, seo_dilu: fmtPct
+  };
+
+  // 价值陷阱分评分卡：分数只是七项证据的加权合计，看得懂要靠分项三态 + 档位实测发生率
+  function trapCard(ts) {
+    var g = ts.total == null ? 'na' : ts.band.grade;
+    var head = '<div class="score-card-head"><h4>价值陷阱分 T</h4>' +
+      '<div class="score-circle va-grade-' + g + '"><span>陷阱分</span><b>' +
+      (ts.total == null ? '不适用' : fmtNum(ts.total)) + '</b><i>' +
+      (ts.total == null ? (ts.na ? '不适用' : '判不动') : ts.band.label) + '</i></div></div>';
+    if (ts.reason) {
+      return head + '<p class="score-note">' + ts.reason + '。</p>';
+    }
+    var rows = ts.items.map(function (x) {
+      var cls = x.bad === null ? 'sc-na' : x.bad ? 'sc-bad' : 'sc-good';
+      var txt = x.bad === null ? '判不动' : x.bad ? '亮灯' : '未触发';
+      var fmt = TRAP_VALUE_FMT[x.key] || fmtNum;
+      return '<tr><td>' + x.label + '</td>' +
+        '<td class="v">' + (x.value == null ? '-' : fmt(x.value)) + '</td>' +
+        '<td class="v" style="text-align:left">' + x.why + '</td>' +
+        '<td class="v">' + x.weight + '</td>' +
+        '<td class="v ' + cls + '">' + txt + '</td></tr>';
+    }).join('');
+    var bands = TRAP_BANDS.map(function (b, i) {
+      var on = i === TRAP_BANDS.indexOf(ts.band);
+      var lo = i === 0 ? 0 : TRAP_BANDS[i - 1].hi;
+      return '<tr' + (on ? ' class="cmp-group"' : '') + '><td>' + b.label + '</td>' +
+        '<td class="v">' + (b.hi === Infinity ? '> ' + lo : '≤ ' + b.hi) + '</td>' +
+        '<td class="v"><b>' + b.loss + '%</b></td>' +
+        '<td class="v">' + b.imp5 + '%</td><td class="v">' + b.imp3 + '%</td>' +
+        '<td class="v">' + b.divcut + '%</td><td class="v">' + b.bvpsdn + '%</td></tr>';
+    }).join('');
+    return head +
+      '<p class="score-basis">' + ts.basis + '　证据合计 C = ' + fmtNum(ts.c) +
+      '，可判 ' + ts.eff.evaluated + '/7 项（缺项按「没证据」计，不给分也不加罚）</p>' +
+      '<div class="stock-compare-wrap"><table class="stock-compare">' +
+      '<thead><tr><th>证据项</th><th>当前值</th><th>依据</th><th>权重</th><th>判定</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>' +
+      '<div class="stock-compare-wrap"><h4 style="margin:8px 0 4px">档位实测发生率（A 股 32,178 条「公司 × T 年」回测，结局取信号日之后公开的第一份年报）</h4>' +
+      '<table class="stock-compare">' +
+      '<thead><tr><th>档位</th><th>C 上界</th><th>转亏</th><th>减值≥净资产5%</th><th>减值≥净资产3%</th>' +
+      '<th>分红中断</th><th>每股净资产降≥10%</th></tr></thead>' +
+      '<tbody>' + bands + '</tbody></table></div>' +
+      '<p class="score-note">' + ts.note + '</p>';
   }
 
   // 造假分析评分卡（与 scoreCard 同构但等级方向相反：分低=安全=绿）；ov 为 Wind 事件覆盖层条目，有则并列基础分+事件明细+优化分
@@ -3131,5 +3189,5 @@
   export { renderDetail, showDetail, state, valueAnalysis, valueScores, priceReferences,
     netCashFormula,
     cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
-    trapScore, TRAP_W, TRAP_CUT, TRAP_BANDS,
+    trapScore, trapBandOf, TRAP_W, TRAP_CUT, TRAP_BANDS,
     unbindResize };

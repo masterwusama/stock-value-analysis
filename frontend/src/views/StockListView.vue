@@ -31,6 +31,7 @@ const COLS = [
   { key: 'fraud', label: '造假' },
   { key: 'mgmt', label: '管理' },
   { key: 'cycle', label: '周期' },
+  { key: 'trap', label: '陷阱', trap: true },
   // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
   { key: 'fair_liq', label: '清算', ratio: true },
   { key: 'net_cash_ratio', label: '净现金/市值' },
@@ -190,6 +191,13 @@ function dispScore(s, kind) {
 }
 const FRAUD_TIP = '财报造假可能性（0-100，越高越可疑）：净现背离/高应计/应收存货增速背离/毛利率逆势上升/其他应收占用等量化红旗加权'
 const MGMT_TIP = '管理层水平（0-100，越高越好）：分红连续性与规模、回购、股权激励、机构持股等治理口径加权'
+const TRAP_TIP = '价值陷阱分 T（0-100，越高越可疑）：把「扣非撑不起报告净利、商誉占比高、ROE/毛利率减速、利润兑不出钱、造假红旗高、近 5 年定增摊薄」七类各自亮灯的坏消息，'
+  + '按 A 股回测出的危险比加权成合成分。分母固定为 7 项，所以缺项只压低分数——低分不等于没风险，看格子右上角「可判项数/7」。'
+  + '口径只覆盖 A 股，港美股显示 -（不适用，不是查过没毛病）。各档实测发生率见详情页「价值陷阱分」一节。'
+// 档位边界按 C（未归一的证据合计）查，不按显示分——分四舍五入到一位小数后压在边界上会串档。
+// 镜像 stockLegacy.js 的 TRAP_BANDS（列表页不加载那个库，沿本页 gradeOf 的既有做法在此复述切点）；
+// 改那边要同步这边。发生率表刻意不复述，只在详情页给，避免两处各写一份数字。
+const TRAP_BAND_CUTS = [[0.001, '档1', 'good'], [0.5, '档2', 'mid'], [1.0, '档3', 'mid'], [1.6, '档4', 'low']]
 function windTip(s, kind, baseTip) {
   if (!windMode.value) return baseTip
   if (!s.wind_hit) {
@@ -394,6 +402,7 @@ function thTip(c) {
   if (!c.key) return ''
   if (c.ref) return '按买入性价比排序：现价相对买入参考价的折价越深越靠前（保守/公允价点格内小字），再点切换升/降序'
   if (c.ratio) return '按清算性价比排序：现价相对每股清算价值折得越深越靠前（格内是清算价值本身），再点切换升/降序'
+  if (c.trap) return TRAP_TIP + '｜点击按陷阱分排序（降序＝最可疑的在前），再点切换升/降序'
   return '点击排序，再点切换升/降序'
 }
 const refTitle = (s, k) => {
@@ -406,6 +415,17 @@ const liqTitle = (s) => {
   const sp = liqSpace(s)
   const tail = sp == null ? '' : `｜现价较清算价值${sp <= 0 ? '折价' : '溢价'} ${sp >= 9.995 ? '>999' : (Math.abs(sp) * 100).toFixed(1)}%`
   return `公允清算价值估算：(流动资产合计-负债合计)/股本${tail}`
+}
+// 陷阱分格子：格内是分，右上角是「可判几项」，档位与着色按 C 查（见 TRAP_BAND_CUTS 的注释）
+function bandOfC(c) {
+  for (const [hi, label, grade] of TRAP_BAND_CUTS) if (c <= hi) return [label, grade]
+  return ['档5', 'bad']
+}
+const trapGrade = (s) => s.trap_c == null ? 'na' : bandOfC(s.trap_c)[1]
+function trapTitle(s) {
+  if (s.trap_c == null) return TRAP_TIP + '｜本标的：不适用（非 A 股），不是「查过了没毛病」'
+  const [label] = bandOfC(s.trap_c)
+  return `${TRAP_TIP}｜本标的：${label}（证据合计 C ${s.trap_c.toFixed(2)}）· 七项里查得动 ${s.trap_eval} 项`
 }
 const cls = (n) => n > 0 ? 'up' : n < 0 ? 'down' : 'flat'
 const MARKET_NAME = { A: 'A股', HK: '港股', US: '美股' }
@@ -628,6 +648,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <span class="sc-bd" :class="'sc-' + fraudGradeOf(s.cycle)"
                   :title="'周期位置（0-100，越低越接近周期底部）：' + FRAUD_GRADE_TEXT[fraudGradeOf(s.cycle)]">
               <em>周期</em><b>{{ score(s.cycle) }}</b></span>
+            <span class="sc-bd" :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">
+              <em>陷阱</em><b>{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></b></span>
             <span class="sc-bd" :class="{ 'sc-good': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                   :title="NCR_CELL_TIP">
               <em>净现金/市值</em><b>{{ score2(s.net_cash_ratio) }}</b></span>
@@ -697,6 +719,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :title="windTip(s, 'fraud', FRAUD_TIP)">{{ score(dispScore(s, 'fraud')) }}</td>
             <td :title="windTip(s, 'mgmt', MGMT_TIP)">{{ score(dispScore(s, 'mgmt')) }}</td>
             <td>{{ score(s.cycle) }}</td>
+            <td :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></td>
             <td class="c-liq" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
                 :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
@@ -877,6 +900,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
 .sc-act span { grid-column: 2; overflow-wrap: anywhere; }
 /* 币种角标：只在非 A 股出现，右上角小字，不参与排序也不撑宽列 */
 .ccy { font-style: normal; font-size: 9px; color: #999; vertical-align: super; margin-left: 1px; }
+/* 陷阱分右上角的「可判项数/7」：口径是覆盖度而不是分数的一部分，故只给到能认出的对比度 */
+.tp-ev { font-style: normal; font-size: 9px; color: #9aa5b5; vertical-align: super; margin-left: 1px; }
 /* 硬门槛角标：定性否决，只标注不着色不排序，故用最高对比的红而不是等级色（--bad 那套是给分数用的） */
 .gate-flag { color: #d43b3b; font-size: 12px; margin-left: 3px; cursor: help; }
 /* 财报期龄超阈标注：比门槛弱一级（多为「新一期年报还没披露」的常态），故灰字不加粗 */
