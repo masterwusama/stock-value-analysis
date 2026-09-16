@@ -38,6 +38,8 @@ backend/collector/data/*.err
 # Wind 估值分位累计快照 + 滚动游标（全市场 6939 只 ≈3MB，每 1.8 天整文件重写一轮）：
 # 与 index.json 同理，MySQL 才是服务层，进 git 只有 churn 没有可读差异
 backend/collector/data/valuation/
+# 定增/回购全量明细快照（fetch_actions.py 重抓一轮 ~10 秒可重生，12MB）：同上，只 churn 不差异
+backend/collector/data/actions/
 # 全市场扫描缓存(screen_stocks/auto_screen 副产物)
 _screen_cache.json
 # screen_stocks 输出(内含本机绝对路径,每次运行重写)
