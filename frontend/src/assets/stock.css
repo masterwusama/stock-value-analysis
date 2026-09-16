@@ -763,3 +763,13 @@
 @media (max-width: 600px) {
   .ev-tbl { min-width: 420px; }
 }
+
+.va-actions { font-size: 13px; }
+.ac-tbl { min-width: 0; table-layout: fixed; }
+.ac-tbl th { font-weight: 400; color: #657086; width: 130px; }
+.ac-tbl td { text-align: left; }
+.ac-tbl .ac-long { line-height: 1.7; overflow-wrap: anywhere; }
+.ac-dk { display: block; font-style: normal; color: #657086; font-size: 11px; line-height: 1.5; }
+.ac-tag { white-space: nowrap; color: #34405a; }
+.ac-note { color: #657086; font-size: 12px; line-height: 1.7; margin: 6px 0; overflow-wrap: anywhere; }
+.va-actions details summary { cursor: pointer; }

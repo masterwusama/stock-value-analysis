@@ -7,6 +7,14 @@ import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
 const router = useRouter()
 const isMobile = useMediaQuery(MOBILE_QUERY)
 
+const SEO_TIP = '最近一次已发行定增：发行价（元/股）、发行年月、发行数量；完整日期与募集资金见悬浮和详情。'
+  + '定增只指非公开发行，公开增发与配股不计。发行日缺失取上市日。历史价格未复权。'
+  + '仅 A 股，来源东方财富；未收录或未覆盖显示 -，不参与评分、买卖点或排序筛选。'
+const BUY_TIP = '新=最新公告记录，完=最近已完成回购；同一笔合并展示。价、量、金额各自优先取累计成交值，缺项标注方案上限或计划区间。'
+  + '新行日期为公告日（缺失取决议日），完行为完成日（缺失取公告日）。价格单位元/股，历史价格未复权。'
+  + '注销/非注销/待核是公告中的股份用途分类；注销不代表已办理注销，回购完成也不等于注销完成。'
+  + '仅 A 股，未收录或未覆盖显示 -；不参与评分、买卖点或排序筛选。'
+
 const COLS = [
   // stick：横向滚动时固定在左侧，滚到右边仍知道当前是哪只（同原站 .stick）
   { key: 'code', label: '代码/名称', l: true, stick: true },
@@ -29,6 +37,8 @@ const COLS = [
   // PB 十年分位（外源 Wind 口径）：只放这一列，PE/PS 分位在详情页——
   // PE 分位对亏损股无意义（一片 “-”）、PS 分位又宽又少人看，摆进这张表只会稀释信号。
   { key: 'pb_pctile', label: 'PB十年分位' },
+  { key: null, label: '定增', noSort: true, tip: SEO_TIP },
+  { key: null, label: '回购', noSort: true, tip: BUY_TIP },
   // 价格参考合并列:每流派一列,竖排 买→保守/公允(同原站 listCells)
   // 列头排序键 buy_* 走的是"买入性价比"（现价相对买价的折价深度，后端算），不是买价绝对值；
   // 格内保守/公允两档小字仍按各自卖价排。键名与 score_daily 列/SecurityItem 字段保持一致。
@@ -118,6 +128,42 @@ const pbCellTip = (s) => 'PB 近十年分位（Wind 口径）：十年内 PB 低
   + '，样本 ' + (s.pb_days == null ? '-' : s.pb_days) + ' 个交易日'
   + (data.value?.valuation_date ? '，外源观测日 ' + data.value.valuation_date : '')
   + '；点击列头可按分位排序，此列仅展示与筛选，不进四派评分'
+
+const ym = (v) => (v ? String(v).slice(0, 7) : '-')
+const qty = (n) => n == null ? '-' : n >= 1e8 ? fmt(n / 1e8) + '亿' : n >= 1e4 ? fmt(n / 1e4) + '万' : fmt(n, 0)
+const rng = (f, lo, hi) => hi == null ? (lo == null ? '-' : '≥' + f(lo))
+  : lo == null ? '≤' + f(hi) : lo === hi ? f(hi) : f(lo) + '~' + f(hi)
+const seoTip = (s) => {
+  const v = s.actions?.seo
+  if (!v) return '未收录定增记录或不在覆盖范围\n' + SEO_TIP
+  return `最近一次定增：${v.date || '-'}，发行价 ${fmt(v.price, 4)} 元/股，发行量 ${fmt(v.num, 0)} 股，募集资金 ${fmt(v.amount)} 元\n${SEO_TIP}`
+}
+function buyRow(tag, b) {
+  return {
+    tag, date: ym(b.date), full: b.date || '-',
+    price: (b.price != null && !b.price_actual ? '≤' : '') + fmt(b.price),
+    kind: b.price == null ? '缺失' : b.price_actual ? '成交均价' : '方案上限',
+    num: b.num_actual ? qty(b.num) : '拟' + rng(qty, b.num_lo, b.num),
+    numFull: b.num_actual ? fmt(b.num, 0) : '计划 ' + rng((v) => fmt(v, 0), b.num_lo, b.num),
+    amount: b.amount_actual ? fmt(b.amount) : '计划 ' + rng(fmt, b.amount_lo, b.amount),
+    cx: b.cancel_type || '待核', progress: b.progress || '-',
+  }
+}
+function buyRows(s) {
+  const a = s.actions
+  if (!a) return []
+  const latest = a.buy_latest, done = a.buy_done
+  // 同一方案保留完成日，避免把公告日误当完成日。
+  if (latest && done && done.src_id === latest.src_id) return [buyRow('完', done)]
+  return [...(latest ? [buyRow('新', latest)] : []), ...(done ? [buyRow('完', done)] : [])]
+}
+const buyTip = (s) => {
+  const rows = buyRows(s)
+  if (!rows.length) return '未收录回购记录或不在覆盖范围\n' + BUY_TIP
+  return rows.map((r) => `${r.tag === '完' ? '最近已完成' : '最新公告'}：${r.progress}｜${r.full}`
+    + `｜价 ${r.price} 元/股（${r.kind}）｜量 ${r.numFull} 股｜额 ${r.amount} 元｜用途 ${r.cx}`
+  ).join('\n') + '\n' + BUY_TIP
+}
 
 // Wind 事件增强分档：造假/管理两列在“基础财报分”与“基础分 + 一次性 Wind 事件增量”之间切换，
 // 显示值在本页算（dispScore），筛选与排序把 wind=1 透给后端用同一公式的 SQL 表达式，
@@ -343,6 +389,8 @@ function sortActive(c) {
 }
 // 表头提示：买价与清算价值两档排的都是折价率，要说清「排序看比率、格内是绝对值」
 function thTip(c) {
+  // 静态口径说明（股本事件两列既不排序也不筛选，列头是唯一的解释入口）
+  if (c.tip) return c.tip
   if (!c.key) return ''
   if (c.ref) return '按买入性价比排序：现价相对买入参考价的折价越深越靠前（保守/公允价点格内小字），再点切换升/降序'
   if (c.ratio) return '按清算性价比排序：现价相对每股清算价值折得越深越靠前（格内是清算价值本身），再点切换升/降序'
@@ -586,6 +634,14 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <span class="sc-bd" :class="{ 'sc-good': s.pb_pctile != null && s.pb_pctile <= 20 }"
                   :title="pbCellTip(s)">
               <em>PB十年分位</em><b>{{ pbCell(s) }}</b></span>
+            <div class="sc-act" :title="seoTip(s)"><em>定增</em>
+              <span v-if="s.actions?.seo">{{ fmt(s.actions.seo.price) }} 元/股 · {{ s.actions.seo.date || '-' }} · {{ qty(s.actions.seo.num) }} 股</span>
+              <span v-else>-</span>
+            </div>
+            <div class="sc-act" :title="buyTip(s)"><em>回购</em>
+              <span v-for="r in buyRows(s)" :key="r.tag">{{ r.tag }} {{ r.price }} 元/股（{{ r.kind }}） · {{ r.full }} · {{ r.num }} 股 · {{ r.cx }}（用途）</span>
+              <span v-if="!buyRows(s).length">-</span>
+            </div>
           </div>
 
           <div class="sc-scores">
@@ -646,6 +702,18 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                 :title="NCR_CELL_TIP">{{ score2(s.net_cash_ratio) }}</td>
             <td :class="{ 'r-hit': s.pb_pctile != null && s.pb_pctile <= 20 }" :title="pbCellTip(s)">{{ pbCell(s) }}</td>
+            <td class="c-act" :title="seoTip(s)">
+              <div class="ac-l" v-if="s.actions?.seo">
+                <span class="ac-p">{{ fmt(s.actions.seo.price) }}</span><span class="ac-s">{{ ym(s.actions.seo.date) }} {{ qty(s.actions.seo.num) }}</span>
+              </div>
+              <div class="ac-l" v-else>-</div>
+            </td>
+            <td class="c-act" :title="buyTip(s)">
+              <div v-for="r in buyRows(s)" :key="r.tag" class="ac-l">
+                <span class="ac-p">{{ r.price }}</span><i class="ac-cx">{{ r.cx }}</i><span class="ac-s">{{ r.tag }} {{ r.date }} {{ r.num }}股</span>
+              </div>
+              <div v-if="!buyRows(s).length" class="ac-l">-</div>
+            </td>
             <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :title="refTitle(s, c.school)">
               <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>
               <span class="rf-sell">
@@ -800,6 +868,13 @@ const REF_COLS = COLS.filter((c) => c.ref)
 /* 格内保/公允卖价：可点排序（不靠色块区分，靠下划线提示） */
 .c-ref .sl-sort { cursor: pointer; }
 .c-ref .sl-sort:hover { text-decoration: underline; }
+.c-act { white-space: nowrap; }
+.c-act .ac-l { line-height: 1.35; }
+.c-act .ac-s { font-size: 11px; color: var(--sub); margin-left: 6px; }
+.c-act .ac-cx { font-style: normal; font-size: 11px; margin-left: 4px; color: var(--sub); }
+.sc-act { flex-basis: 100%; display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 4px 6px; font-size: 12px; }
+.sc-act em { grid-column: 1; grid-row: 1 / span 2; font-style: normal; color: var(--sub); }
+.sc-act span { grid-column: 2; overflow-wrap: anywhere; }
 /* 币种角标：只在非 A 股出现，右上角小字，不参与排序也不撑宽列 */
 .ccy { font-style: normal; font-size: 9px; color: #999; vertical-align: super; margin-left: 1px; }
 /* 硬门槛角标：定性否决，只标注不着色不排序，故用最高对比的红而不是等级色（--bad 那套是给分数用的） */
@@ -807,7 +882,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
 /* 财报期龄超阈标注：比门槛弱一级（多为「新一期年报还没披露」的常态），故灰字不加粗 */
 .stale-flag { color: var(--sub); font-size: 10px; margin-left: 3px; cursor: help; }
 table.grid th.unsort { cursor: default; }
-/* ---- 宽屏铺开 + 密集排版：21 列争取在 1440 视口下不横向滚动（装不下仍由 .tbl-wrap 滚动兜底） ---- */
+/* ---- 宽屏铺开 + 密集排版：23 列争取在 1440 视口下不横向滚动（装不下仍由 .tbl-wrap 滚动兜底） ---- */
 .tbl-wrap { overflow-x: auto; }
 /* 表头允许折行：列宽改由数值决定（“格进取 买/保/公”不再硬撑一行的宽度），CJK 可任意断字 */
 table.grid-list th { white-space: normal; line-height: 1.25; }

@@ -81,17 +81,15 @@ class SeoCell(BaseModel):
 
 
 class BuybackCell(BaseModel):
-    """回购一格。一笔回购在源侧有两种状态，格子里的价/量随之换口径：
-
-    已回购出实际成交的均价与数量；预案/终止那类根本没成交的，退到方案里的**价格上限**与
-    **拟回购数量/金额区间**（num_lo/amount_lo 只有这种行才给值，前端据此写成 8~12 亿）。
-    所以同一个 price 列既可能是均价也可能是上限，靠 finished 与 progress 区分，不换列名。
-    """
+    """价、量、金额独立优先取累计成交值，缺项回退方案值并标明口径。"""
 
     src_id: str
     date: date_t | None = None
     progress: str | None = None
     finished: bool = False
+    price_actual: bool = False
+    num_actual: bool = False
+    amount_actual: bool = False
     cancel_type: str | None = None
     price: float | None = None
     num: float | None = None
@@ -378,10 +376,10 @@ def _action_picks(db: Session, sids: list[int]) -> dict[int, dict]:
         select(
             *ACT_FIELDS,
             func.row_number().over(partition_by=(ShareAction.sid, ShareAction.kind),
-                                   order_by=latest_key.desc()).label("rn_latest"),
+                                   order_by=(latest_key.desc(), ShareAction.src_id.desc())).label("rn_latest"),
             func.row_number().over(
                 partition_by=(ShareAction.sid, ShareAction.kind, ShareAction.finished),
-                order_by=done_key.desc()).label("rn_done"),
+                order_by=(done_key.desc(), ShareAction.src_id.desc())).label("rn_done"),
         )
         .where(ShareAction.sid.in_(sids))
         .subquery()
@@ -416,6 +414,9 @@ def _buy_cell(m, done_slot: bool = False) -> BuybackCell:
         src_id=m["src_id"],
         date=(m["finish_date"] if done_slot and m["finish_date"] else m["notice_date"]),
         progress=m["progress_label"], finished=bool(m["finished"]),
+        price_actual=m["done_price"] is not None,
+        num_actual=m["done_num"] is not None,
+        amount_actual=m["done_amount"] is not None,
         cancel_type=m["cancel_type"],
         price=_f(m["done_price"] if m["done_price"] is not None else m["plan_price_cap"]),
         num=_f(m["done_num"] if m["done_num"] is not None else m["plan_num_cap"]),
