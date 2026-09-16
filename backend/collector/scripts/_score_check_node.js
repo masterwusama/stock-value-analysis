@@ -93,7 +93,8 @@ async function main() {
       // 价值陷阱分：分、证据合计权重、查得动几项（入库留给下一阶段，先只校验算得一致）
       trap: num(tp.total),
       trapC: num(tp.c),
-      trapEval: num(tp.eff ? tp.eff.evaluated : null),
+      // 覆盖项数与 Python compute_scores 同口径：非 A 股整列不适用给 null，不给 0
+      trapEval: num(tp.na ? null : (tp.eff ? tp.eff.evaluated : null)),
     };
   }
   process.stdout.write(JSON.stringify(out));

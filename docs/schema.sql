@@ -122,6 +122,9 @@ CREATE TABLE score_daily (
 	cycle DOUBLE, 
 	cyclical BOOL, 
 	cycle_trend VARCHAR(8), 
+	trap DOUBLE, 
+	trap_c DOUBLE, 
+	trap_eval INTEGER, 
 	fair_liq DOUBLE, 
 	net_cash_ratio DOUBLE, 
 	net_cash_calc JSON, 
@@ -147,19 +150,21 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
-CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
-
-CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
-
 CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
 
-CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
-
-CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
+CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
 
 CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
+
+CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
+
+CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
+
+CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
+
+CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 
@@ -275,9 +280,9 @@ CREATE TABLE share_action (
 	PRIMARY KEY (sid, kind, src_id)
 );
 
-CREATE INDEX idx_action_date ON share_action (kind, issue_date);
-
 CREATE INDEX idx_action_sid_kind ON share_action (sid, kind, notice_date);
+
+CREATE INDEX idx_action_date ON share_action (kind, issue_date);
 
 CREATE TABLE agro_product (
 	product_id VARCHAR(64) NOT NULL, 

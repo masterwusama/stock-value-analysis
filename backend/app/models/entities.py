@@ -191,6 +191,13 @@ class ScoreDaily(Base):
     cycle: Mapped[float | None] = mapped_column(Double)
     cyclical: Mapped[bool | None] = mapped_column(Boolean)
     cycle_trend: Mapped[str | None] = mapped_column(String(8))
+    # 价值陷阱分（0~100，分高＝坏消息堆得多，与 fraud 同为「越低越好」列）。三列一起存的原因：
+    # trap_c 是分数的未归一原值（Σ ln(lift)×亮灯），档位表按它查——分数舍入到一位小数后
+    # 正好落在档位边界上会串档；trap_eval 是「这分建在几项证据上」，固定分母下缺项只压低
+    # 分数，实测约三成 A 股一项都没亮，光给 0 分会被读成「干净」。非 A 股三列同为 NULL（不适用）。
+    trap: Mapped[float | None] = mapped_column(Double)
+    trap_c: Mapped[float | None] = mapped_column(Double)
+    trap_eval: Mapped[int | None] = mapped_column(Integer)
     fair_liq: Mapped[float | None] = mapped_column(Double)
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
@@ -223,6 +230,7 @@ class ScoreDaily(Base):
         Index("idx_list_gate", "trade_date", "gate"),
         Index("idx_list_mgmt", "trade_date", "mgmt"),
         Index("idx_list_cycle", "trade_date", "cycle"),
+        Index("idx_list_trap", "trade_date", "trap"),
         Index("idx_list_graham_agg", "trade_date", "score_graham_agg"),
         Index("idx_list_graham_def", "trade_date", "score_graham_def"),
         Index("idx_list_schloss", "trade_date", "score_schloss"),

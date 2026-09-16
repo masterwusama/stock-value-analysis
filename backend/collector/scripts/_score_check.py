@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.path.insert(0, str(Path(__file__).parent))
-from scoring import compute_scores, cycle_analysis, cycle_history, trap_score  # noqa: E402
+from scoring import compute_scores, cycle_analysis, cycle_history  # noqa: E402
 
 BASE = Path(__file__).parent.parent
 companies_dir = BASE / 'data' / 'companies'
@@ -123,15 +123,15 @@ for f in sorted(companies_dir.glob('*.json')):
     # 评分基准报告期（入库成 score_daily.report_date）：期次错一位，报告龄与「用的哪一期财报」就全错
     if py.get('reportDate') != js.get('reportDate'):
         diffs.append((code, 'reportDate', py.get('reportDate'), js.get('reportDate')))
-    # 价值陷阱分：还没进 compute_scores（入库是下一阶段），直接调 trap_score 与 JS 对账
-    pt = trap_score(d)
-    for fld, jv in (('total', js.get('trap')), ('c', js.get('trapC')),
-                    ('evaluated', js.get('trapEval'))):
-        pv = pt.get(fld)
+    # 价值陷阱分：按 compute_scores 的产出键比（score_daily 落的就是这三个值），
+    # 单独调 trap_score 只能对算法，对不了「接线有没有把它带进分数块」
+    for fld, jv in (('trap', js.get('trap')), ('trapC', js.get('trapC')),
+                    ('trapEval', js.get('trapEval'))):
+        pv = py.get(fld)
         if pv is None and jv is None:
             continue
         if (pv is None or jv is None or abs(pv - jv) > 1e-9):
-            diffs.append((code, 'trap.' + fld, pv, jv))
+            diffs.append((code, fld, pv, jv))
 
 if diffs:
     print('不一致 %d 处:' % len(diffs))

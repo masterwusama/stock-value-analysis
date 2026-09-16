@@ -131,6 +131,11 @@ class SecurityItem(BaseModel):
     fraud: float | None = None
     mgmt: float | None = None
     cycle: float | None = None
+    # 价值陷阱分（与 fraud 同为「越低越好」列）与「这分建在几项证据上」。固定分母下缺项只
+    # 压低分数，实测约三成 A 股一项证据都没亮，只给分会被读成「干净」，故两项并列输出。
+    # 非 A 股两列同为 NULL：口径不适用，不是「查过了没毛病」
+    trap: float | None = None
+    trap_eval: int | None = None
     # 硬门槛（1=触发，0=可判且未触发，null=一个信号都判不了）与命中项，口径见 import_legacy.GATE_FLAGS
     gate: bool | None = None
     gate_flags: list | None = None
@@ -197,6 +202,7 @@ SORT_COLS = {
     "fraud": ScoreDaily.fraud,
     "mgmt": ScoreDaily.mgmt,
     "cycle": ScoreDaily.cycle,
+    "trap": ScoreDaily.trap,
     # 现价、净现金/市值(后者本身已是比率，跨标的可比，直接按值排)
     "price": QuoteDaily.price,
     "net_cash_ratio": ScoreDaily.net_cash_ratio,
@@ -627,6 +633,8 @@ def list_securities(
             fraud=score.fraud if score else None,
             mgmt=score.mgmt if score else None,
             cycle=score.cycle if score else None,
+            trap=score.trap if score else None,
+            trap_eval=score.trap_eval if score else None,
             gate=score.gate if score else None,
             gate_flags=score.gate_flags if score else None,
             report_date=score.report_date if score else None,
@@ -713,6 +721,9 @@ def _load_scores(db: Session, sid: int) -> dict | None:
         "cycle": s.cycle,
         "cyclical": s.cyclical,
         "cycleTrend": s.cycle_trend,
+        "trap": s.trap,
+        "trapC": s.trap_c,
+        "trapEval": s.trap_eval,
         "priceRefs": refs,
     }
     if s.wind_fraud_delta is not None or s.wind_mgmt_delta is not None or s.wind_flags:

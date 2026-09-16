@@ -1538,6 +1538,14 @@ def compute_scores(company, now=None):
     ca = cycle_analysis(company)
     scores['cycle'] = ca['total']
     scores['cyclical'] = ca['cyclical']
+    tp = trap_score(company)
+    scores['trap'] = tp['total']
+    # C = Σ ln(lift)×亮灯，是分数未经归一的原始证据权重合计；档位表按 C 查而不是按分数查
+    # （分数是 C/ΣW 舍入到一位小数，边界上会串档），存下来也便于回库核对。
+    scores['trapC'] = tp['c']
+    # 可评估项数必须与分数并列：固定分母下缺项只压低分数，约三成公司一项证据都没亮，
+    # 光看 0 分会被读成「干净」。整列不适用（非 A 股）给 None 而不是 0——那是两件事。
+    scores['trapEval'] = None if tp['na'] else tp['evaluated']
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。
