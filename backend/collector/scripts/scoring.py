@@ -356,7 +356,6 @@ def value_scores(d, va):
     pnetcash = mcap / net_cash if (mcap is not None and net_cash is not None and net_cash > 0) else None
     pepb = pe * pb if (pe is not None and pb is not None) else None
     intang_share = intang / assets if (intang is not None and assets is not None and assets > 0) else None
-    goodwill_share = goodwill / assets if (goodwill is not None and assets is not None and assets > 0) else None
 
     # 近5年年报净利润（盈利稳定性）与近5年净利累计增长
     net5 = [r.get('净利润') for r in annual[-5:]]
@@ -558,14 +557,15 @@ def value_scores(d, va):
     s_total = _school_total(s_items, (25, 20, 20, 15, 10, 10), risk_items)
 
     # ---- 巴菲特芒格 ----
-    share = None
-    if intang_share is not None or goodwill_share is not None:
-        share = (intang_share or 0.0) + (goodwill_share or 0.0)
     moat_items = (
         lerp_score(g_margin, 0.2, 0.4, 0, 5),          # 销售毛利率 ≥ 40%
         # 近5年 ROE ≥ 10% 的达标年数占比：2/5 起给分，5/5 满分（护城河看的是持续，不是某一年）
         lerp_score(roe_ok_frac, 0.4, 1.0, 0, 4),
-        lerp_score(share, 0, 0.1, 0, 3),               # 无形+商誉占比 ≥ 10%
+        # 只认无形资产、不含商誉：A 股 33,318 个「公司×年」实测（scripts/fraud_validity.py B 节），
+        # 商誉/总资产 ≥10% 那组其后出现大额减值（≥净资产5%）的比例 29.01% vs 其余 12.28%
+        # （lift 2.36、z=+20.7、四档单调），无形 ≥10% 那组 13.73% vs 13.22%（lift 1.04，分不开）。
+        # 商誉是减值前兆而非定价权证据，且它在施洛斯侧已按 /归母权益 扣分，同侧再给分是自我反号
+        lerp_score(intang_share, 0, 0.1, 0, 3),        # 无形资产占比 ≥ 10%
         # 连续分红 ≥ 5 年且分红率 ≤ 70%
         (3.0 if (va['payout'] is not None and va['payout'] <= 0.7) else 1.5)
         if div_consecutive >= 5 else 0.0,

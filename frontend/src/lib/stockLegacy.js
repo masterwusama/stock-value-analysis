@@ -1367,8 +1367,10 @@
       it('销售毛利率', fmtPct(gMargin), '≥ 40%（定价权迹象）', 5, lerpScore(gMargin, 0.2, 0.4, 0, 5), noGM),
       it('近5年 ROE ≥ 10% 达标年数 · 护城河', roeOkFrac == null ? '-' : roeOkYears + '/' + nRoe + ' 年', '5/5 年达标（2/5 起给分）', 4,
         lerpScore(roeOkFrac, 0.4, 1.0, 0, 4)),
-      it('无形资产+商誉 / 总资产', fmtPct((intangShare != null || goodwillShare != null) ? (intangShare || 0) + (goodwillShare || 0) : null), '≥ 10%（品牌/专利/特许权）', 3,
-        lerpScore((intangShare != null || goodwillShare != null) ? (intangShare || 0) + (goodwillShare || 0) : null, 0, 0.1, 0, 3)),
+      // 不含商誉：商誉/总资产 ≥10% 组其后大额减值（≥净资产5%）率 29.01% vs 其余 12.28%（lift 2.36、
+      // z=+20.7、四档单调），无形 ≥10% 组 13.73% vs 13.22%（lift 1.04，分不开）——判据见 backend/scripts/fraud_validity.py B 节
+      it('无形资产 / 总资产', fmtPct(intangShare), '≥ 10%（品牌/专利/特许权）', 3,
+        lerpScore(intangShare, 0, 0.1, 0, 3)),
       it('连续分红且分红率 ≤ 70%', (divConsecutive || 0) + ' 年 / ' + fmtPct(va.payout), '≥ 5 年且 ≤ 70%', 3,
         divConsecutive >= 5 ? (va.payout != null && va.payout <= 0.7 ? 3 : 1.5) : 0)
     ];
@@ -1385,7 +1387,9 @@
     // 护城河备注：无形资产/商誉明细 + 特许经营（定价权）证据说明
     var moatNote = '';
     if (intang != null || goodwill != null) {
-      moatNote = '无形资产 ' + fmtMoney(intang) + '（占总资产 ' + fmtPct(intangShare) + '），商誉 ' + fmtMoney(goodwill) + '（占 ' + fmtPct(goodwillShare) + '）。';
+      moatNote = '无形资产 ' + fmtMoney(intang) + '（占总资产 ' + fmtPct(intangShare) + '），商誉 ' + fmtMoney(goodwill) + '（占 ' + fmtPct(goodwillShare) + '）。'
+        + '本项只按无形资产计量：商誉占比 ≥10% 的公司其后出现大额减值（≥ 净资产 5%）的比例是其余的 2.36 倍（z=20.7），'
+        + '而无形资产看不出这个关系（1.04 倍），所以商誉在这里是风险信号、不计入护城河得分。';
       if (gMargin != null && gMargin >= 0.4 && roeMed5 != null && roeMed5 >= 0.15) {
         moatNote += '高毛利率（≥40%）+ 高 ROE（近5年中位 ≥15%）组合通常意味着品牌溢价或特许经营（定价权）等护城河，是无形资产创造超额回报的量化证据；若该特征为行业通性（如医药/软件），则更多体现行业属性而非个体优势，需结合行业地位判断。';
       } else if (gMargin != null && gMargin >= 0.4 || roeMed5 != null && roeMed5 >= 0.15) {
