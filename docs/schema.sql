@@ -147,21 +147,21 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
-CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
-
-CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
-
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
-
-CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
-
-CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
-
-CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
+CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 
-CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
+CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
+
+CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
+
+CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
+
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+
+CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
+
+CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -242,6 +242,42 @@ CREATE TABLE wind_holder (
 );
 
 CREATE INDEX idx_holder_sid ON wind_holder (sid, holder_type, report_date);
+
+CREATE TABLE share_action (
+	sid BIGINT NOT NULL, 
+	kind ENUM('seo','buyback') NOT NULL, 
+	src_id VARCHAR(64) NOT NULL, 
+	name VARCHAR(64), 
+	issue_date DATE, 
+	listing_date DATE, 
+	plan_notice_date DATE, 
+	price NUMERIC(18, 4), 
+	num NUMERIC(24, 4), 
+	raise_funds NUMERIC(24, 4), 
+	notice_date DATE, 
+	finish_date DATE, 
+	progress VARCHAR(8), 
+	progress_label VARCHAR(16), 
+	finished BOOL, 
+	plan_price_cap NUMERIC(18, 4), 
+	plan_num_lower NUMERIC(24, 4), 
+	plan_num_cap NUMERIC(24, 4), 
+	plan_amount_lower NUMERIC(24, 4), 
+	plan_amount_cap NUMERIC(24, 4), 
+	done_num NUMERIC(24, 4), 
+	done_amount NUMERIC(24, 4), 
+	done_price NUMERIC(18, 4), 
+	purpose VARCHAR(32), 
+	cancel_type VARCHAR(8), 
+	evidence VARCHAR(200), 
+	updated_at DATETIME NOT NULL, 
+	detail JSON, 
+	PRIMARY KEY (sid, kind, src_id)
+);
+
+CREATE INDEX idx_action_date ON share_action (kind, issue_date);
+
+CREATE INDEX idx_action_sid_kind ON share_action (sid, kind, notice_date);
 
 CREATE TABLE agro_product (
 	product_id VARCHAR(64) NOT NULL, 

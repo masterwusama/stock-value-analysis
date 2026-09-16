@@ -8,6 +8,7 @@
     data/events/*.json         → wind_event / wind_holder
     data/events/index.json     → score_daily.wind_*(事件增量覆盖层)
     data/valuation/latest.json → valuation_pctile(Wind 口径 PE/PB/PS 十年分位截面)
+    data/actions/latest.json   → share_action(定增 / 回购全市场明细)
     agro-price/data/products.json → agro_product / agro_price
     agro-price/data/edb.json   → edb_indicator / edb_value
 
@@ -58,6 +59,7 @@ from app.models import (
     QuoteDaily,
     ScoreDaily,
     Security,
+    ShareAction,
     ValuationPctile,
     WindEvent,
     WindHolder,
@@ -168,6 +170,22 @@ NOTE_KEYS = ("sid", "report_date", "term_deposit", "restricted_cash",
 # 本轮判定不可信（亏损 / 序列停更）就是要抹空，不能 COALESCE 留住上一轮的假数
 PCT_KEYS = ("sid", "trade_date", "pe_pctile", "pb_pctile", "ps_pctile",
             "pe_days", "pb_days", "ps_days", "source", "updated_at")
+# 股本事件表（定增 + 回购一表两族）。列名与 collector/fetch_actions.py 产出的字段一一对应，
+# 只有两处例外：日期列要过 parse（源是文本），长尾字段收进 detail JSON。
+ACTION_KEYS = ("sid", "kind", "src_id", "name", "issue_date", "listing_date",
+               "plan_notice_date", "price", "num", "raise_funds", "notice_date",
+               "finish_date", "progress", "progress_label", "finished",
+               "plan_price_cap", "plan_num_lower", "plan_num_cap",
+               "plan_amount_lower", "plan_amount_cap", "done_num", "done_amount",
+               "done_price", "purpose", "cancel_type", "evidence", "updated_at",
+               "detail")
+_ACT_DATES = ("issue_date", "listing_date", "plan_notice_date", "notice_date",
+              "finish_date")
+# 列表页用不上的字段：存进行级 JSON，既保住核对所需的原文，又不占列宽
+_ACT_JSON = ("apply_price", "price_before", "raise_ratio", "share_before",
+             "share_after", "way", "lockin", "target", "market", "objective",
+             "dim_date", "start_date", "end_date", "done_price_high",
+             "done_price_low")
 # 证券主数据：名称/行业/上市日缺失时不用 NULL 覆盖已有值
 SEC_UPD = ("name=VALUES(name), "
            "industry=COALESCE(VALUES(industry), industry), "
@@ -815,6 +833,65 @@ def import_edb(db, stats):
                     stats["edb_value_delete_skipped"] += 1
 
 
+def _as_date(v):
+    """源侧日期是文本（'2026-05-20' / '2026-05-20 00:00:00'），认不出的当缺失而不是抛错。"""
+    return parse_date(v) if isinstance(v, str) and DATE_RE.match(v) else None
+
+
+def import_actions(db, stats):
+    """actions/latest.json → share_action（定增 + 回购全市场明细）。
+
+    一个文件两类行（kind 分），(sid, kind, src_id) 自然主键，故按主键 upsert。
+    源是全市场权威快照，所以本轮没再出现的 (kind, src_id) 要跟着删：东财撤一行
+    （撤公告、改 REPURCODE）时不删就永久多出一笔再没有任何来源能命中它的旧事件。
+    删的口子只会放过整文件级的变化——采集侧的行数守卫已经把大面积掉行挡在写盘之前。
+    """
+    path = DATA_DIR / "actions" / "latest.json"
+    if not path.exists():
+        return  # 首轮采集还没跑过：无源可读不是回灌失败
+    src = json.loads(path.read_text(encoding="utf-8"))
+    sids = load_sid_map(db)
+    now = parse_dt(src.get("fetched_at"))
+    w = _Writer(db, stats, ShareAction, ACTION_KEYS, mode="upsert",
+                upd_skip=("sid", "kind", "src_id"), upd_coalesce=True)
+    live = {}
+    for kind in ("seo", "buyback"):
+        for r in src.get(kind) or []:
+            sid = sids.get((r.get("code"), "A"))
+            if sid is None:
+                # 新上市代码还没进 index.json 的表头，下一轮深抓补上主数据即自动回填
+                stats["actions.skipped_nosec"] += 1
+                continue
+            src_id = r.get("src_id")
+            if not src_id:
+                stats["actions.skipped_noid"] += 1
+                continue
+            live.setdefault(kind, set()).add(src_id)
+            row = {k: v for k, v in r.items() if k in ACTION_KEYS}
+            for k in _ACT_DATES:
+                row[k] = _as_date(row.get(k))
+            row["updated_at"] = datetime.combine(
+                _as_date(r.get("updated_at")) or (now or datetime.now()).date(),
+                datetime.min.time())
+            row["detail"] = {k: v for k, v in r.items()
+                             if k in _ACT_JSON and v not in (None, "")}
+            row["sid"], row["kind"], row["src_id"] = sid, kind, src_id
+            w.add(row)
+    w.flush()
+
+    for kind, ids in live.items():
+        stale = [r[0] for r in db.execute(
+            select(ShareAction.src_id).where(ShareAction.kind == kind)).all()
+            if r[0] not in ids]
+        if stale:
+            for i in range(0, len(stale), BULK_ROWS):
+                db.execute(text("DELETE FROM share_action"
+                                " WHERE kind = :k AND src_id = :i"),
+                           [{"k": kind, "i": x} for x in stale[i:i + BULK_ROWS]])
+            stats["actions.stale_deleted"] += len(stale)
+    db.commit()
+
+
 def import_valuation(db, stats):
     """valuation/latest.json → valuation_pctile（每个标的一行最新观测）。
 
@@ -854,7 +931,7 @@ def import_valuation(db, stats):
 TABLES = [
     "wind_holder", "wind_event", "score_daily", "periodic_report", "dividend",
     "fin_cashflow", "fin_balance", "fin_income", "fin_indicator", "fin_note",
-    "quote_daily", "valuation_pctile",
+    "quote_daily", "valuation_pctile", "share_action",
     "security", "agro_price", "agro_product", "edb_value", "edb_indicator", "etl_job_log",
 ]
 
@@ -914,12 +991,14 @@ def main():
             import_agro(db, stats)
             import_edb(db, stats)
             import_valuation(db, stats)
+            import_actions(db, stats)
         else:
             import_companies(db, stats, quiet=args.quiet)
             import_events(db, stats)
             import_agro(db, stats)
             import_edb(db, stats)
             import_valuation(db, stats)
+            import_actions(db, stats)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),
             status="success", message=f"导入完成[{mode}]: {dict(stats)}", stats=dict(stats),

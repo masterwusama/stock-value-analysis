@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ORM 模型:db_va 全部 18 张表。
+"""ORM 模型:db_va 全部 19 张表。
 
 约定:
 - security.sid 为内键,子表以 sid 外联(避免重复 (code, market) 复合键);
@@ -346,6 +346,64 @@ class WindHolder(Base):
     fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     __table_args__ = (Index("idx_holder_sid", "sid", "holder_type", "report_date"),)
+
+
+class ShareAction(Base):
+    """股本事件明细（定增 / 回购，东财 datacenter 全市场快照）。
+
+    一表两族：kind='seo' 只填定增那半列，kind='buyback' 只填回购那半列，另一半恒为
+    NULL（两族的字段没有交集，硬拗成"事件日期/事件数量"这种通用名反而谁都读不懂）。
+    src_id 是源侧主键（定增拼 代码|发行日|数量|价，回购取 REPURCODE），全市场内已去重，
+    与 sid 一起构成自然主键，故回灌走 upsert 而非先删后插（见 import_legacy）。
+
+    口径（采集侧判过一次，这里只是留档）：
+    - 定增只留定向增发，公开增发与吸收合并已剔除；
+    - 回购全进度都落库，"最新一笔/最近已完成一笔"由查询侧排序决定；
+    - cancel_type 是**三态**（注销 / 非注销 / 待核），源侧没有结构化的处置列，只能按
+      REPUROBJECTIVE 的处置句判，判据句存在 evidence、全文在 detail.objective，
+      所以「待核」不是缺失而是"文本没有可判的处置句"，与评分项的三态同一套逻辑。
+    """
+
+    __tablename__ = "share_action"
+
+    sid: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    kind: Mapped[str] = mapped_column(Enum("seo", "buyback"), primary_key=True)
+    src_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str | None] = mapped_column(String(64))
+
+    # ---- 定增 ----
+    issue_date: Mapped[date | None] = mapped_column(Date)
+    listing_date: Mapped[date | None] = mapped_column(Date)
+    plan_notice_date: Mapped[date | None] = mapped_column(Date)
+    price: Mapped[float | None] = mapped_column(Numeric(18, 4))
+    num: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    raise_funds: Mapped[float | None] = mapped_column(Numeric(24, 4))
+
+    # ---- 回购 ----
+    notice_date: Mapped[date | None] = mapped_column(Date)
+    finish_date: Mapped[date | None] = mapped_column(Date)
+    progress: Mapped[str | None] = mapped_column(String(8))
+    progress_label: Mapped[str | None] = mapped_column(String(16))
+    finished: Mapped[bool | None] = mapped_column(Boolean)
+    plan_price_cap: Mapped[float | None] = mapped_column(Numeric(18, 4))
+    plan_num_lower: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    plan_num_cap: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    plan_amount_lower: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    plan_amount_cap: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    done_num: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    done_amount: Mapped[float | None] = mapped_column(Numeric(24, 4))
+    done_price: Mapped[float | None] = mapped_column(Numeric(18, 4))
+    purpose: Mapped[str | None] = mapped_column(String(32))
+    cancel_type: Mapped[str | None] = mapped_column(String(8))
+    evidence: Mapped[str | None] = mapped_column(String(200))
+
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    detail: Mapped[dict | None] = mapped_column(JSON)
+
+    __table_args__ = (
+        Index("idx_action_sid_kind", "sid", "kind", "notice_date"),
+        Index("idx_action_date", "kind", "issue_date"),
+    )
 
 
 class AgroProduct(Base):
