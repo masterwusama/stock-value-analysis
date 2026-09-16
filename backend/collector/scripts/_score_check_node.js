@@ -51,6 +51,7 @@ async function main() {
     const pr = m.priceReferences(d, va);
     const ca = m.cycleAnalysis(d);
     const hist = m.cycleHistory(d);
+    const tp = m.trapScore(d) || {};
 
     function refs(key) {
       const r = pr[key] || {};
@@ -89,6 +90,10 @@ async function main() {
       cycleTrend: ca.total == null ? null : m.cycleTrendOf(hist),
       // 评分基准报告期（入库成 score_daily.report_date）
       reportDate: va.annualDate == null ? null : va.annualDate,
+      // 价值陷阱分：分、证据合计权重、查得动几项（入库留给下一阶段，先只校验算得一致）
+      trap: num(tp.total),
+      trapC: num(tp.c),
+      trapEval: num(tp.eff ? tp.eff.evaluated : null),
     };
   }
   process.stdout.write(JSON.stringify(out));

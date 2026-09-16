@@ -1051,6 +1051,138 @@ def fraud_analysis(d):
     return math.floor(total * 10 + 0.5) / 10.0
 
 
+# ---- 价值陷阱分 T（0~100，分高＝坏消息堆得多）：对应 JS trapScore，逐项同构 ----
+# 权重与阈值来自 backend/scripts/trap_validity.py 的实测（A 股 32,178 条「公司 × T 年」观测，
+# 事件时信息集，结局取信号日之后公开的第一份年报）。ln(lift) 是该项坏侧相对其余的最强结局
+# 对数危险比；TRAP_CUT 取当时三分位边界后四舍五成绝对值——阈值若按当日横截面分位算，一家
+# 公司的分会被当天其他公司的涨跌改掉，按日入库就不可复现。
+TRAP_W = {'ded_half': 1.63, 'gw_asset': 0.70, 'roe_delta': 0.69, 'fraud': 0.51,
+          'seo_dilu': 0.49, 'gm_delta': 0.48, 'ocfnp_med': 0.42}
+TRAP_SUM_W = 4.92          # Σ TRAP_W，固定分母
+TRAP_CUT = {'roe_delta': -0.04, 'gm_delta': -0.03, 'ocfnp_med': 0.80}
+# 回测五分位边界（C = Σ 权重×亮灯）与该档实测发生率 %：分数自己没有含义，这张表才有
+TRAP_BANDS = (
+    (0.001, '档1 无证据', 3.66, 6.47, 13.48, 5.92, 9.75),
+    (0.50, '档2 单点', 4.87, 7.75, 16.18, 9.32, 11.35),
+    (1.00, '档3 两点', 6.27, 11.76, 20.17, 8.90, 17.04),
+    (1.60, '档4 成串', 10.38, 17.90, 27.26, 13.25, 22.88),
+    (float('inf'), '档5 叠加', 28.70, 23.31, 35.88, 24.11, 23.44),
+)
+BAND_KEYS = ('label', 'loss', 'imp5', 'imp3', 'divcut', 'bvpsdn')
+
+
+def trap_band_of(c):
+    for row in TRAP_BANDS:
+        if c <= row[0]:
+            return dict(zip(BAND_KEYS, row[1:]))
+    return dict(zip(BAND_KEYS, TRAP_BANDS[-1][1:]))
+
+
+def _trap_med(vals):
+    """近 5 期里那一项的中位数；不足 3 期返回 None——两期的中位数就是平均数，噪声当不了趋势。
+    NaN/inf 一并丢掉（对齐 JS 的 isFinite 过滤）：带着 NaN 排序，中位数会静默错位。"""
+    got = sorted(v for v in vals
+                 if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v))
+    if len(got) < 3:
+        return None
+    mid = len(got) // 2
+    return got[mid] if len(got) % 2 else (got[mid - 1] + got[mid]) / 2.0
+
+
+def trap_score(d):
+    """对应 JS trapScore。返回 {total, c, band, evaluated, missing, na}；缺项按 0 计入分子、
+    分母恒为 TRAP_SUM_W，**不走** _weighted_total 那套「按可用项归一」：那会让只查得动 1 项且
+    恰好亮灯的公司拿满 100 分，而陷阱分最怕的正是「没查到」被读成「没毛病」。覆盖度由
+    evaluated 单独出，压低方向是「看不准就别声称干净」。
+    """
+    d = d or {}
+    if (d.get('market') or 'A') != 'A':
+        # 定增/回购源、扣非口径、减值科目只在这一侧成立——不适用，不是缺失
+        return {'total': None, 'c': None, 'band': None, 'evaluated': 0, 'missing': 0, 'na': 7}
+    annual = annual_rows(d.get('indicators') or [])
+    if not annual:
+        return {'total': None, 'c': None, 'band': None, 'evaluated': 0, 'missing': 7, 'na': 0}
+    win = annual[-5:]
+    cur = win[-1]
+    ba_annual = annual_balance_rows(d.get('balance'))
+    cf_annual = annual_balance_rows(d.get('cashflow'))
+    cur_date = str(cur.get('报告期') or '')[:10]
+    hi_y, lo_y = int(cur_date[:4]), int(str(win[0].get('报告期') or '')[:4])
+    cur_ba = sheet_row_by_date(ba_annual, cur_date) or {}
+    c, ev, n_items = 0.0, 0, 0
+
+    def hit(key, bad):
+        """bad: None=判不动（不进分子也不点亮）/ 0 / 1"""
+        nonlocal c, ev, n_items
+        n_items += 1
+        if bad is None:
+            return
+        ev += 1
+        if bad:
+            c += TRAP_W[key]
+
+    # 1. 扣非不足报告净利一半（利润靠一次性收益撑）——实测最强单项，转亏 lift 5.08×
+    ded, net = cur.get('扣非净利润'), cur.get('净利润')
+    hit('ded_half', None if (ded is None or not net or net <= 0)
+        else (1 if ded < 0.5 * net else 0))
+
+    # 2. 商誉/总资产 ≥10%（减值弹药）
+    gw, ta = cur_ba.get('商誉'), cur_ba.get('资产总计')
+    hit('gw_asset', None if (gw is None or not ta or ta <= 0)
+        else (1 if gw / ta >= 0.10 else 0))
+
+    # 3~4. ROE / 毛利率「最新 − 近5年中位」：取减速而不是水平（水平归成长分）。
+    # ROE 用披露的「净资产收益率」原列，与巴菲特那项的 va['dupontRoe'] 序列不同源——回测的
+    # 权重是在这一列上量的，换源等于换分项。
+    cur_roe = cur.get('净资产收益率')
+    roe_med = _trap_med([r.get('净资产收益率') for r in win])
+    hit('roe_delta', None if (roe_med is None or cur_roe is None)
+        else (1 if cur_roe - roe_med <= TRAP_CUT['roe_delta'] else 0))
+    cur_gm = cur.get('销售毛利率')
+    gm_med = _trap_med([r.get('销售毛利率') for r in win])
+    hit('gm_delta', None if (gm_med is None or cur_gm is None)
+        else (1 if cur_gm - gm_med <= TRAP_CUT['gm_delta'] else 0))
+
+    # 5. 净现比 5 年中位 ≤0.80。上档发生率同样偏高（净利太薄时比值虚高），故只取低侧作证据
+    ratios = []
+    for r in win:
+        cf = sheet_row_by_date(cf_annual, str(r.get('报告期') or '')[:10]) or {}
+        ocf, n = cf.get('经营活动产生的现金流量净额'), r.get('净利润')
+        ratios.append(ocf / n if (ocf is not None and n and n > 0) else None)
+    ocfnp = _trap_med(ratios)
+    hit('ocfnp_med', None if ocfnp is None else (1 if ocfnp <= TRAP_CUT['ocfnp_med'] else 0))
+
+    # 6. 造假分 >50：与列表页门槛、刷池线同一个数，不另起口径
+    fa = fraud_analysis(d)
+    hit('fraud', None if fa is None else (1 if fa > 50 else 0))
+
+    # 7. 近 5 年定增摊薄 / 隐含股本。分母用 归母权益÷每股净资产 反推，不用「股本」列——
+    # 送股转增会把那一列放大却不摊薄任何人的权益。无定增是公开事实（A 股定增史全量可查），
+    # 记 0 而非判不动；但**字段压根没给**是判不动——两者差一格，混起来等于在采集接通之前
+    # 替全市场担保没摊薄过。有定增而股本算不出，同样留 None。
+    # 只喂定增行（d['seo_actions']）：回购族没有一项进 T（注销式回购实测 lift 1.31、方向还存疑）。
+    acts = d.get('seo_actions')
+    eq = cur_ba.get('归属于母公司股东权益合计')
+    if eq is None:
+        eq = cur_ba.get('所有者权益(或股东权益)合计')
+    bps = cur.get('每股净资产')
+    sh = eq / bps if (eq is not None and bps and bps > 0) else None
+    issued, seen = 0.0, False
+    for r in (acts or []):
+        ds = str(r.get('issue_date') or r.get('listing_date') or '')[:10]
+        if ds and lo_y <= int(ds[:4]) <= hi_y and r.get('num'):
+            issued += float(r['num'])
+            seen = True
+    hit('seo_dilu', None if acts is None
+        else (0 if not seen else (None if not sh else (1 if issued / sh > 0 else 0))))
+
+    return {
+        'total': (math.floor(c / TRAP_SUM_W * 1000 + 0.5) / 10.0) if ev else None,
+        'c': c, 'band': trap_band_of(c) if ev else None,
+        'evaluated': ev, 'missing': n_items - ev, 'na': 0,
+    }
+
+
 def management_analysis(d):
     """对应 JS managementAnalysis —— 管理层管理水平评分（0~100，越高越好）。
     融合 DEA 投入产出效率思想的 8 维透明加权：费用纪律/资产周转/资本回报/成长质量/

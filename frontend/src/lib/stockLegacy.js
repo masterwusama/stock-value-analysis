@@ -1532,6 +1532,154 @@
     };
   }
 
+  /* ---------------- 价值陷阱分 T（0~100，分高＝坏消息堆得多） ----------------
+   * 权重与阈值来自 backend/scripts/trap_validity.py 的实测：A 股 32,178 条「公司 × T 年」观测，
+   * 信息集按「信号日当天真的公开了」截断，结局取信号日之后公开的第一份年报（上限 18 个月）。
+   * 权重是该项坏侧相对其余的最强结局对数危险比 ln(lift)，标定表是同一次回测的五档实测发生率。
+   *
+   * 三处与四派刻意不同，改之前先读：
+   * 1. 阈值是**固定绝对值**，不是当日横截面分位。按分位取的话，一家公司的分会被当天其他公司
+   *    的涨跌改掉，存进按日入库的分数就不可复现。数值取回测当时的三分位边界后四舍五入。
+   * 2. 归一化用「固定分母 Σ权重」，**故意不用** weightedTotal。那套归一让缺项变中性，而陷阱分
+   *    最怕的正是「没查到」被读成「没毛病」——只查得动 1 项、而那 1 项恰好亮灯的公司，按可用项
+   *    归一会拿满 100 分。这里缺项记 0、分母恒为满分母，覆盖度由 eff.evaluated 单独出。代价是
+   *    覆盖不足会把分压低：7 项里只有商誉稀疏（最新年报未单列那一行，实测 5,553 家 A 股中 2,854 家
+   *    判不动，占 14% 分母），压低幅度有界，且方向是「看不准就别声称干净」而非「看不准就更可疑」。
+   * 3. 只覆盖 A 股：定增/回购源、扣非口径、减值科目都只在这一侧成立，港美股整列**不适用**
+   *    （不适用不是缺失，见 eff.na）。
+   */
+  var TRAP_W = {
+    ded_half: 1.63, gw_asset: 0.70, roe_delta: 0.69, fraud: 0.51,
+    seo_dilu: 0.49, gm_delta: 0.48, ocfnp_med: 0.42
+  };
+  var TRAP_SUM_W = 4.92;                       // Σ TRAP_W，固定分母
+  var TRAP_CUT = { roe_delta: -0.04, gm_delta: -0.03, ocfnp_med: 0.80 };
+  // 回测五分位边界（C = Σ 权重×亮灯）与该档实测发生率，% —— 分数自己没有含义，这张表才有
+  var TRAP_BANDS = [
+    { hi: 0.001, label: '档1 无证据', loss: 3.66, imp5: 6.47, imp3: 13.48, divcut: 5.92, bvpsdn: 9.75 },
+    { hi: 0.50, label: '档2 单点', loss: 4.87, imp5: 7.75, imp3: 16.18, divcut: 9.32, bvpsdn: 11.35 },
+    { hi: 1.00, label: '档3 两点', loss: 6.27, imp5: 11.76, imp3: 20.17, divcut: 8.90, bvpsdn: 17.04 },
+    { hi: 1.60, label: '档4 成串', loss: 10.38, imp5: 17.90, imp3: 27.26, divcut: 13.25, bvpsdn: 22.88 },
+    { hi: Infinity, label: '档5 叠加', loss: 28.70, imp5: 23.31, imp3: 35.88, divcut: 24.11, bvpsdn: 23.44 }
+  ];
+
+  function trapBandOf(c) {
+    for (var i = 0; i < TRAP_BANDS.length; i++) {
+      if (c <= TRAP_BANDS[i].hi) return TRAP_BANDS[i];
+    }
+    return TRAP_BANDS[TRAP_BANDS.length - 1];
+  }
+
+  // 近 5 期年报里那一项的中位数（不足 3 期不算——两期的中位数就是平均数，噪声当趋势）
+  function medOf(vals) {
+    var got = vals.filter(function (v) { return v != null && isFinite(v); });
+    if (got.length < 3) return null;
+    got.sort(function (a, b) { return a - b; });
+    var m = Math.floor(got.length / 2);
+    return got.length % 2 ? got[m] : (got[m - 1] + got[m]) / 2;
+  }
+
+  function trapScore(d) {
+    d = d || {};
+    if ((d.market || 'A') !== 'A') {
+      return { total: null, c: null, na: true,
+        reason: '口径只覆盖 A 股（定增/回购源与扣非科目只在这一侧成立）',
+        items: [], eff: { evaluated: 0, missing: 0, na: 7 } };
+    }
+    var annual = annualRows(d.indicators || []);
+    var baAnnual = annualBalanceRows(d.balance);
+    var cfAnnual = annualBalanceRows(d.cashflow);
+    var win = annual.slice(-5);                       // 截至最新年报的最近 5 期
+    var cur = annual.length ? win[win.length - 1] : null;
+    if (!cur) return { total: null, c: null, na: false, reason: '无年报序列', items: [],
+      eff: { evaluated: 0, missing: 7, na: 0 } };
+    var hiY = Number(String(cur['报告期']).slice(0, 4));
+    var loY = Number(String(win[0]['报告期']).slice(0, 4));
+    var curBa = sheetRowByDate(baAnnual, String(cur['报告期']).slice(0, 10)) || {};
+    var items = [], c = 0;
+
+    function push(key, label, value, bad, why) {
+      var it = { key: key, label: label, value: value, bad: bad, weight: TRAP_W[key] };
+      if (bad === null) it.na = true;                 // 判不动：不进分子也不点亮
+      else if (bad) c += TRAP_W[key];
+      it.why = why;
+      items.push(it);
+    }
+
+    // 1. 扣非不足报告净利一半（利润靠一次性收益撑）——本轮实测最强单项，5.08× 于转亏
+    var ded = cur['扣非净利润'], net = cur['净利润'];
+    push('ded_half', '扣非 < 0.5×报告净利', ded,
+      (ded == null || !(net > 0)) ? null : (ded < 0.5 * net ? 1 : 0),
+      net > 0 ? '扣非 ' + fmtMoney(ded) + ' vs 报告净利 ' + fmtMoney(net) : '报告净利非正，比值无意义');
+
+    // 2. 商誉/总资产 ≥10%（减值弹药）
+    var gw = curBa['商誉'], ta = curBa['资产总计'];
+    push('gw_asset', '商誉/总资产 ≥ 10%', (gw != null && ta > 0) ? gw / ta : null,
+      (gw == null || !(ta > 0)) ? null : (gw / ta >= 0.10 ? 1 : 0),
+      gw == null ? '最新年报未单列商誉' : fmtMoney(gw) + ' / 总资产 ' + fmtMoney(ta));
+
+    // 3~4. ROE 与毛利率「最新 − 近5年中位」：看减速，不看水平（水平归成长分）
+    var roeMed = medOf(win.map(function (r) { return r['净资产收益率']; }));
+    push('roe_delta', 'ROE 最新 − 近5年中位 ≤ −4pp',
+      (roeMed == null || cur['净资产收益率'] == null) ? null : cur['净资产收益率'] - roeMed,
+      (roeMed == null || cur['净资产收益率'] == null) ? null
+        : (cur['净资产收益率'] - roeMed <= TRAP_CUT.roe_delta ? 1 : 0),
+      '最新 ' + fmtPct(cur['净资产收益率']) + ' vs 中位 ' + (roeMed == null ? '-' : fmtPct(roeMed)));
+    var gmMed = medOf(win.map(function (r) { return r['销售毛利率']; }));
+    push('gm_delta', '毛利率 最新 − 近5年中位 ≤ −3pp',
+      (gmMed == null || cur['销售毛利率'] == null) ? null : cur['销售毛利率'] - gmMed,
+      (gmMed == null || cur['销售毛利率'] == null) ? null
+        : (cur['销售毛利率'] - gmMed <= TRAP_CUT.gm_delta ? 1 : 0),
+      '最新 ' + fmtPct(cur['销售毛利率']) + ' vs 中位 ' + (gmMed == null ? '-' : fmtPct(gmMed)));
+
+    // 5. 净现比 5 年中位 ≤0.80（利润兑不出钱）。上档发生率同样偏高，故只取低侧作证据
+    var ocfnp = medOf(win.map(function (r) {
+      var cf = sheetRowByDate(cfAnnual, String(r['报告期']).slice(0, 10));
+      var n = r['净利润'];
+      return (cf && cf['经营活动产生的现金流量净额'] != null && n > 0)
+        ? cf['经营活动产生的现金流量净额'] / n : null;
+    }));
+    push('ocfnp_med', '净现比 5 年中位 ≤ 0.80', ocfnp,
+      ocfnp == null ? null : (ocfnp <= TRAP_CUT.ocfnp_med ? 1 : 0),
+      ocfnp == null ? '可算年份不足 3 期' : fmtNum(ocfnp));
+
+    // 6. 造假分 >50：与列表页门槛、刷池线同一个数，不另起口径
+    var fa = fraudAnalysis(d);
+    push('fraud', '造假分 > 50', fa.total,
+      fa.total == null ? null : (fa.total > 50 ? 1 : 0),
+      fa.total == null ? '指标行不足' : '红旗加权 ' + fa.total);
+
+    // 7. 近 5 年定增摊薄 / 隐含股本。分母用 归母权益÷每股净资产 反推，不用「股本」列——
+    //    送股转增会把那一列放大却不摊薄任何人的权益。只喂定增行：回购族没有一项进 T
+    var acts = d.seo_actions;              // 没给这个字段 ≠ 给空数组：前者判不动，后者才是「近5年无定增」
+    var eq = curBa['归属于母公司股东权益合计'];
+    if (eq == null) eq = curBa['所有者权益(或股东权益)合计'];
+    var bps = cur['每股净资产'];
+    var sh = (eq != null && bps > 0) ? eq / bps : null;
+    var issued = 0, seen = false;
+    (acts || []).forEach(function (r) {
+      var ds = String(r.issue_date || r.listing_date || '').slice(0, 10);
+      var yy = Number(ds.slice(0, 4));
+      if (ds && yy >= loY && yy <= hiY && r.num) { issued += r.num; seen = true; }
+    });
+    var dilu = acts == null ? null : (seen ? (sh ? issued / sh : null) : 0);
+    push('seo_dilu', '近5年定增新增股本 / 现股本', dilu,
+      dilu == null ? null : (dilu > 0 ? 1 : 0),
+      acts == null ? '未取到股本事件数据'
+        : (seen ? '新增 ' + fmtMoney(issued) + ' 股 / 隐含股本 ' + (sh ? fmtMoney(sh) : '算不出')
+          : '近5年无定增（A 股定增史全量可查，无事件是公开事实而非缺失）'));
+
+    var ev = items.filter(function (x) { return x.bad !== null; }).length;
+    return {
+      na: false, c: c, total: ev ? Math.round(c / TRAP_SUM_W * 1000) / 10 : null,
+      band: trapBandOf(c), items: items, basis: '评分基准：' + hiY + ' 年报（窗口 ' + loY + '~' + hiY + '）',
+      eff: { evaluated: ev, missing: items.length - ev, na: 0 },
+      note: '把「利润是撑出来的、资产里压着要减的、股本被摊过、回报在往下走」这几类各自亮灯的证据，'
+        + '按回测出的对数危险比相加后折成 0~100。分母固定为全部 7 项，所以缺项只会压低分数、'
+        + '不会加分——查不动的项按「没证据」计，分数低不等于没陷阱，看 eff.evaluated 有几项。'
+    };
+  }
+
   // 造假分析评分卡（与 scoreCard 同构但等级方向相反：分低=安全=绿）；ov 为 Wind 事件覆盖层条目，有则并列基础分+事件明细+优化分
   function fraudCard(fa, ov) {
     var g = fraudGradeOf(fa.total);
@@ -2983,4 +3131,5 @@
   export { renderDetail, showDetail, state, valueAnalysis, valueScores, priceReferences,
     netCashFormula,
     cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
+    trapScore, TRAP_W, TRAP_CUT, TRAP_BANDS,
     unbindResize };
