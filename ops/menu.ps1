@@ -24,7 +24,7 @@ param(
 # 顺序即"越靠前越该常有新数据"。Wind = 依赖本机 Wind 客户端登录且按调用烧积分，
 # 选它要先二次确认（积分是日预算制，见 docs\使用说明书.md §8.1）。
 $Meta = [ordered]@{
-    stock     = @{ Desc = '全市场行情快照（腾讯批量估值）';      Est = '≈2 分钟';     Wind = $false }
+    stock     = @{ Desc = '全市场行情快照（腾讯批量估值）+ 定增/回购明细'; Est = '≈3 分钟'; Wind = $false }
     agro      = @{ Desc = '生意社/中农立华 6 个产品价格';         Est = '20~40 分钟';  Wind = $false }
     deep      = @{ Desc = '全市场财务深抓（四表/分红/报告/评分）'; Est = '3~5 小时';    Wind = $false }
     import    = @{ Desc = '只回灌：JSON 工作目录 → MySQL';        Est = '≈3 分钟';     Wind = $false }

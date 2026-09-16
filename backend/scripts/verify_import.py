@@ -13,7 +13,7 @@ from app.config import LEGACY_DATA_DIR
 from app.db import SessionLocal
 from app.models import (
     AgroPrice, Dividend, FinBalance, FinIndicator, PeriodicReport,
-    QuoteDaily, ScoreDaily, Security, ValuationPctile, WindEvent,
+    QuoteDaily, ScoreDaily, Security, ShareAction, ValuationPctile, WindEvent,
 )
 
 DATA = Path(LEGACY_DATA_DIR) / "data"
@@ -22,8 +22,21 @@ db = SessionLocal()
 
 print("== 1. 各表行数 ==")
 for m in (Security, QuoteDaily, ScoreDaily, FinIndicator, FinBalance,
-          Dividend, PeriodicReport, WindEvent, AgroPrice, ValuationPctile):
+          Dividend, PeriodicReport, WindEvent, ShareAction, AgroPrice, ValuationPctile):
     print(f"  {m.__tablename__}: {db.execute(select(func.count()).select_from(m)).scalar_one()}")
+
+print("== 1b. share_action 两族与源快照对账 ==")
+# 源是整表快照、库里按自然主键 upsert，两边行数应逐族相等；差额只可能来自
+# 源里那些还没进 security 主数据的代码（新上市还没深抓），以及源侧已撤的行。
+ACT = json.loads((DATA / "actions" / "latest.json").read_text(encoding="utf-8"))
+codes = {c for c, in db.execute(select(Security.code).where(Security.market == "A"))}
+for kind in ("seo", "buyback"):
+    rows = ACT.get(kind) or []
+    live = {r["src_id"] for r in rows if r.get("code") in codes and r.get("src_id")}
+    got = db.execute(select(func.count()).select_from(ShareAction)
+                     .where(ShareAction.kind == kind)).scalar_one()
+    print(f"  {kind}: 源 {len(rows)} 行 · 其中可落库 {len(live)} · DB {got}")
+    assert got == len(live), f"{kind}: DB {got} != 源可落库 {len(live)}"
 
 print("== 2. security 按市场 ==")
 for market, n in db.execute(select(Security.market, func.count()).group_by(Security.market)):

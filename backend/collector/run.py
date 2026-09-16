@@ -2,7 +2,7 @@
 """P5 采集任务驱动:跑原采集脚本(产 JSON)→ 回灌 MySQL(import_legacy --no-clean 增量 upsert)。
 
 用法(在 backend/ 目录):
-    python -m collector.run stock     # 日更：腾讯批量刷全市场估值 → 调仓 → 回灌（分钟级）
+    python -m collector.run stock     # 日更：腾讯批量刷全市场估值 + 定增/回购明细 → 回灌（分钟级）
     python -m collector.run deep      # 深抓：全市场财务/报告重抓（--resume 增量，数小时）
     python -m collector.run agro      # fetch_prices → 回灌（生意社/中农立华价格，不碰 Wind）
     python -m collector.run edb       # Wind 行业 EDB 量价（手动，不进调度，理由见 JOBS 注）
@@ -62,7 +62,9 @@ def _stale_note(code):
 # job → 采集步骤序列(每项 cwd/脚本);全部步骤跑完后统一回灌
 JOBS = {
     # stock ：每日分钟级（只刷腾讯批量行情→估值/价格，不重抓财务）
-    "stock": [(SCRIPTS, "fetch_data.py")],
+    # fetch_actions 两页表全量约 25 秒，且与行情无依赖，跟在后面跑；放在本 job 而不是独立
+    # job，是因为它没有自己的数据目录游标，每天都会整表重取——独立时刻表只会多一次重复抓取。
+    "stock": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "fetch_actions.py")],
     # deep  ：全市场财务重抓（季报到账后/周末跑一次，数小时）
     "deep": [(SCRIPTS, "fetch_data.py")],
     # agro 只跑生意社价格：行业 EDB 的唯一数据源是本机 Wind 客户端 CLI（要客户端登录、按
@@ -208,8 +210,10 @@ def main():
         return 0
     for i, (cwd, script) in enumerate(steps):
         try:
-            # 仅首个脚本吃参数（多步 job 里后续脚本无自定义参数）
-            _run_script(cwd, script, (extra if i == 0 else []) or JOB_DEFAULTS.get(args.job, []))
+            # 仅首个脚本吃参数：尾部透传参数优先，其次该 job 的默认参数；后续脚本一律空参
+            # （fetch_data 的 --all-market/--snapshot-only 传给 fetch_actions 会被 argparse 拒掉）
+            argv = (extra or JOB_DEFAULTS.get(args.job, [])) if i == 0 else []
+            _run_script(cwd, script, argv)
         except subprocess.CalledProcessError as e:
             status = "failed"
             messages.append(f"{script} exit={e.returncode}")
