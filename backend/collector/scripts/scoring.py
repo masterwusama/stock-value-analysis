@@ -1183,6 +1183,107 @@ def trap_score(d):
     }
 
 
+# ---- 成长综合分 G（0~100，分高＝过去五年更能长）：对应 JS growthScore，逐项同构 ----
+# 权重与锚点来自 backend/scripts/g_validity.py 的实测（A 股 21,926 条「公司 × 信号年」观测，
+# 事件时信息集，结局为锚点之后公开的真实净利增速、平滑分母口径）。锚点是**固定绝对阈值**：
+# 按当日横截面分位取会让一家公司的分被其余六千家的涨跌改掉，按日入库就不可复现。
+# accel 那一项的锚点按面板输入端 p10→p90（实测 −0.74/+0.42）取整定，写死 ±10% 会把 56% 的公司
+# 挤在零分上、一项退化成开关。stab 的锚点写成 (3, 0) 是故意的：负增长年数越少越好。
+G_ITEMS = (
+    ('np_g5', 22, -0.05, 0.15),
+    ('rev_g5', 16, -0.05, 0.15),
+    ('roe_med', 16, 0.05, 0.18),
+    ('bps_g5', 14, -0.02, 0.12),
+    ('stab', 14, 3.0, 0.0),
+    ('accel', 10, -0.70, 0.40),
+    ('roe_trend', 8, -0.05, 0.05),
+)
+G_SUM_W = 100.0      # Σ G_ITEMS 权重，固定分母
+G_CAP = 0.5          # 增速 winsorize 边界 ±50%/年
+G_MIN_PAIRS = 4      # 5 年窗本该有 5 个同比间隔，缺 1 个仍算判得动
+
+
+def _g_num(v):
+    """对应 JS 的 `typeof v === 'number' && isFinite(v)`：bool、NaN、inf 都不是一个可用的数。"""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _g_growth(cur, prev, span):
+    """年化增速，夹到 ±G_CAP。与既有的 cagr 刻意不同两处：基期为正而当期转负记成下界（那是
+    真实的坏消息，不是「算不出」），以及上界夹逼（一次重组不该把整轴拉爆）。基期非正 → None。
+    """
+    if cur is None or prev is None or span <= 0 or prev <= 0:
+        return None
+    if cur <= 0:
+        return -G_CAP
+    return max(-G_CAP, min(G_CAP, (cur / prev) ** (1.0 / span) - 1.0))
+
+
+def growth_score(d):
+    """对应 JS growthScore。返回 {total, evaluated, missing, na, raw}；分母恒为 G_SUM_W，
+    缺项不进分子也不重新归一（同陷阱分的纪律：按可用项归一会让只算得动一项的公司顶到榜首）。
+    全市场适用——七项只读年报四列，港美股同样有，故不出 na（覆盖度差异由 evaluated 出）。
+    """
+    d = d or {}
+    by_year = {}
+    for r in annual_rows(d.get('indicators') or []):
+        ys = str(r.get('报告期') or '')[:4]
+        if not ys.isdigit() or int(ys) == 0:
+            continue
+        slot = by_year.setdefault(int(ys), {})
+        for k, col in (('net', '净利润'), ('rev', '营业总收入'),
+                       ('roe', '净资产收益率'), ('bps', '每股净资产')):
+            v = r.get(col)
+            if _g_num(v):                     # 同年后一行覆盖前一行，缺列留空
+                slot[k] = v
+    years = sorted(by_year)
+    if len(years) < 3:
+        return {'total': None, 'evaluated': 0, 'missing': len(G_ITEMS), 'na': 0, 'raw': {}}
+    ay = years[-1]
+    # 基期必须真是 5 年前：取不晚于「锚点年−5」的最近一期，历史不足 5 年才退回最早一期
+    base = next((y for y in reversed(years[:-1]) if y <= ay - 5), years[0])
+    span = ay - base
+    cur, b = by_year[ay], by_year[base]
+
+    # ROE 中位取「基期之后到锚点」那几年（与回测同窗）；不足 3 期不算
+    roe_med = _trap_med([by_year[y].get('roe') for y in years if y > base])
+
+    neg = pairs = 0
+    for y in range(base, ay):
+        p = by_year.get(y, {}).get('net')
+        q = by_year.get(y + 1, {}).get('net')
+        if p is not None and q is not None:
+            pairs += 1
+            if q < p:
+                neg += 1
+    mid = by_year.get(ay - 2, {}).get('net')
+    accel = None
+    if span >= 3 and mid is not None and b.get('net') is not None:
+        a1, a2 = _g_growth(cur.get('net'), mid, 2), _g_growth(mid, b.get('net'), span - 2)
+        if a1 is not None and a2 is not None:
+            accel = a1 - a2
+    raw = {
+        'np_g5': _g_growth(cur.get('net'), b.get('net'), span),
+        'rev_g5': _g_growth(cur.get('rev'), b.get('rev'), span),
+        'roe_med': roe_med,
+        'bps_g5': _g_growth(cur.get('bps'), b.get('bps'), span),
+        'stab': float(neg) if pairs >= G_MIN_PAIRS else None,
+        'accel': accel,
+        'roe_trend': None if (roe_med is None or cur.get('roe') is None)
+        else cur.get('roe') - roe_med,
+    }
+    ev, total = 0, 0.0
+    for key, w, lo, hi in G_ITEMS:
+        v = raw.get(key)
+        if v is None:
+            continue
+        ev += 1
+        total += w * max(0.0, min(1.0, (v - lo) / (hi - lo)))
+    # 与 JS Math.round(total / ΣW * 1000) / 10 一致（Python round 为银行家舍入，不能直接用）
+    return {'total': (math.floor(total / G_SUM_W * 1000 + 0.5) / 10.0) if ev else None,
+            'evaluated': ev, 'missing': len(G_ITEMS) - ev, 'na': 0, 'raw': raw}
+
+
 def management_analysis(d):
     """对应 JS managementAnalysis —— 管理层管理水平评分（0~100，越高越好）。
     融合 DEA 投入产出效率思想的 8 维透明加权：费用纪律/资产周转/资本回报/成长质量/
@@ -1546,6 +1647,10 @@ def compute_scores(company, now=None):
     # 可评估项数必须与分数并列：固定分母下缺项只压低分数，约三成公司一项证据都没亮，
     # 光看 0 分会被读成「干净」。整列不适用（非 A 股）给 None 而不是 0——那是两件事。
     scores['trapEval'] = None if tp['na'] else tp['evaluated']
+    # 成长综合分：七项各自夹到 0~1 后按先验权重折成 0~100，分母固定，故可评估项数必须并列
+    gr = growth_score(company)
+    scores['growth'] = gr['total']
+    scores['growthEval'] = gr['evaluated']
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。

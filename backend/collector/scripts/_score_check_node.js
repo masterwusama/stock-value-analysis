@@ -52,6 +52,7 @@ async function main() {
     const ca = m.cycleAnalysis(d);
     const hist = m.cycleHistory(d);
     const tp = m.trapScore(d) || {};
+    const gs = m.growthScore(d) || {};
 
     function refs(key) {
       const r = pr[key] || {};
@@ -95,6 +96,9 @@ async function main() {
       trapC: num(tp.c),
       // 覆盖项数与 Python compute_scores 同口径：非 A 股整列不适用给 null，不给 0
       trapEval: num(tp.na ? null : (tp.eff ? tp.eff.evaluated : null)),
+      // 成长综合分：分数 + 可评估项数（固定分母下缺项只压低分数，两者必须并列看）
+      growth: num(gs.total),
+      growthEval: num(gs.eff ? gs.eff.evaluated : null),
     };
   }
   process.stdout.write(JSON.stringify(out));

@@ -1738,6 +1738,135 @@
       '<p class="score-note">' + ts.note + '</p>';
   }
 
+  /* ---------------- 成长综合分 G（0~100，分高＝过去五年更能长） ----------------
+   * 权重与锚点来自 backend/scripts/g_validity.py 的实测：A 股 21,926 条「公司 × 信号年」观测，
+   * 信息集按「信号日当天真的公开了」截断，结局取锚点之后公开的真实净利增速（平滑分母口径）。
+   * 三条判定线全过才出厂：甲 五分位单调 + ρ≥0.05 + 转负率不升、乙 与四派 max|ρ|≤0.85、丙 覆盖与
+   * 打满/打零分布。权重是先验声明后按判别效度复核的，不是对那段历史拟合出来的。
+   *
+   * 三处与四派刻意不同，改之前先读：
+   * 1. 锚点是**固定绝对阈值**，不是当日横截面分位。按分位取的话，一家公司的分会被当天其他公司
+   *    的涨跌改掉，存进按日入库的分数就不可复现，改一家还会牵动其余六千家。
+   * 2. 归一化用「固定分母 ΣW=100」，**故意不用** weightedTotal：缺项只压低分数、不参与归一，
+   *    否则「只算得动一项且恰好拿满」的公司会顶到榜首。覆盖度由 eff.evaluated 单独出。
+   * 3. 增速一律先夹到 ±50%/年（gGrowth），基期非正则压根算不出 → 判不动。基期必须真是 5 年前：
+   *    取不晚于「锚点年−5」的最近一期，历史不足 5 年才退回最早一期；直接取序列首行等于把 3 年增速当 5 年卖。
+   * 全市场适用（不像陷阱分只覆盖 A 股）：七项只读年报的四列（净利/营收/ROE/每股净资产），各市场
+   * 都有；覆盖度差异由 evaluated 出——实测 A 股平均 6.58/7 项、美股只有 4.99/7。
+   */
+  var G_ITEMS = [
+    { key: 'np_g5', label: '净利 5 年年化增速', weight: 22, lo: -0.05, hi: 0.15 },
+    { key: 'rev_g5', label: '营收 5 年年化增速', weight: 16, lo: -0.05, hi: 0.15 },
+    { key: 'roe_med', label: 'ROE 近 5 年中位', weight: 16, lo: 0.05, hi: 0.18 },
+    { key: 'bps_g5', label: '每股净资产 5 年年化增速', weight: 14, lo: -0.02, hi: 0.12 },
+    { key: 'stab', label: '近 5 年净利负增长年数', weight: 14, lo: 3, hi: 0 },
+    // accel 量的是两段增速之差，离散度由市场整体在减速还是加速主导：锚点按面板输入端 p10→p90
+    // （实测 −0.74/+0.42）取整定的，写死 ±10% 会把 56% 的公司挤在零分上、一项退化成开关。
+    { key: 'accel', label: '近 2 年年化 − 前 3 年年化', weight: 10, lo: -0.7, hi: 0.4 },
+    { key: 'roe_trend', label: 'ROE 最新 − 近 5 年中位', weight: 8, lo: -0.05, hi: 0.05 }
+  ];
+  var G_SUM_W = 100;      // Σ G_ITEMS.weight，固定分母
+  var G_CAP = 0.5;        // 增速 winsorize 边界 ±50%/年
+  var G_MIN_PAIRS = 4;    // 5 年窗本该有 5 个同比间隔，缺 1 个仍算判得动
+
+  // 年化增速，夹到 ±G_CAP。与既有的 cagr 刻意不同两处：基期为正而当期转负记成下界（那是真实
+  // 的坏消息，不是「算不出」），以及上界夹逼（否则一次重组就能把整轴拉爆）。
+  function gGrowth(cur, prev, span) {
+    if (cur == null || prev == null || !(span > 0) || !(prev > 0)) return null;
+    if (cur <= 0) return -G_CAP;
+    return Math.max(-G_CAP, Math.min(G_CAP, Math.pow(cur / prev, 1 / span) - 1));
+  }
+
+  function growthScore(d) {
+    d = d || {};
+    var annual = annualRows(d.indicators || []);
+    var byYear = {};
+    var cols = [['net', '净利润'], ['rev', '营业总收入'], ['roe', '净资产收益率'], ['bps', '每股净资产']];
+    annual.forEach(function (r) {
+      var y = Number(String(r['报告期']).slice(0, 4));
+      if (!y) return;
+      var slot = byYear[y] || (byYear[y] = {});
+      cols.forEach(function (p) {
+        var v = r[p[1]];
+        if (typeof v === 'number' && isFinite(v)) slot[p[0]] = v;   // 同年后一行覆盖前一行，缺列留空
+      });
+    });
+    var years = Object.keys(byYear).map(Number).sort(function (a, b) { return a - b; });
+    if (years.length < 3) {
+      return { total: null, reason: '公开年报不足 3 期', items: [], na: false,
+        eff: { evaluated: 0, missing: G_ITEMS.length, na: 0 } };
+    }
+    var ay = years[years.length - 1], base = null;
+    for (var i = years.length - 2; i >= 0; i--) {
+      if (years[i] <= ay - 5) { base = years[i]; break; }
+    }
+    if (base == null) base = years[0];          // 上市晚，历史不足 5 年：按实际跨度年化
+    var span = ay - base;
+    var cur = byYear[ay], b = byYear[base];
+
+    // ROE 中位取「基期之后到锚点」那几年（与回测同窗）；不足 3 期不算——两期的中位数就是平均数
+    var roes = [];
+    years.forEach(function (y) {
+      if (y > base && byYear[y].roe != null) roes.push(byYear[y].roe);
+    });
+    var roeMed = medOf(roes);
+
+    var neg = 0, pairs = 0;
+    for (var y2 = base; y2 < ay; y2++) {
+      var p = byYear[y2] ? byYear[y2].net : null;
+      var q = byYear[y2 + 1] ? byYear[y2 + 1].net : null;
+      if (p != null && q != null) { pairs++; if (q < p) neg++; }
+    }
+    var mid = byYear[ay - 2] ? byYear[ay - 2].net : null;
+    var a1 = (span >= 3 && mid != null && b.net != null) ? gGrowth(cur.net, mid, 2) : null;
+    var a2 = (span >= 3 && mid != null && b.net != null) ? gGrowth(mid, b.net, span - 2) : null;
+
+    var raw = {
+      np_g5: gGrowth(cur.net, b.net, span),
+      rev_g5: gGrowth(cur.rev, b.rev, span),
+      roe_med: roeMed,
+      bps_g5: gGrowth(cur.bps, b.bps, span),
+      stab: pairs >= G_MIN_PAIRS ? neg : null,
+      accel: (a1 != null && a2 != null) ? a1 - a2 : null,
+      roe_trend: (roeMed != null && cur.roe != null) ? cur.roe - roeMed : null
+    };
+    // 判不动的原因逐分项给：把「算不出」写成一句笼统的「数据不足」，使用者就没法区分
+    // 「这家公司没披露」和「口径压根不适用」，而前者过两个月就会变。
+    function growthWhy(col, name) {
+      if (cur[col] == null) return '最新年报缺' + name;
+      if (b[col] == null) return base + ' 年缺' + name;
+      return base + ' 年' + name + '非正，年化增速无意义';
+    }
+    var naWhy = {
+      np_g5: growthWhy('net', '净利润'),
+      rev_g5: growthWhy('rev', '营业总收入'),
+      bps_g5: growthWhy('bps', '每股净资产'),
+      roe_med: 'ROE 可算年份不足 3 期',
+      stab: '可测同比不足 ' + G_MIN_PAIRS + ' 组',
+      accel: span < 3 ? '跨度不足 3 年，拆不出两段'
+        : (mid == null ? (ay - 2) + ' 年缺净利润' : '前段或近段增速算不出（基期非正）'),
+      roe_trend: roeMed == null ? 'ROE 中位算不出' : '最新年报缺 ROE'
+    };
+    var items = [], sum = 0, ev = 0;
+    G_ITEMS.forEach(function (it) {
+      var v = raw[it.key];
+      var sc = v == null ? null : Math.max(0, Math.min(1, (v - it.lo) / (it.hi - it.lo)));
+      if (v != null) { ev++; sum += it.weight * sc; }
+      items.push({ key: it.key, label: it.label, value: v, sc: sc, weight: it.weight,
+        na: v == null, why: v == null ? naWhy[it.key]
+          : (it.hi > it.lo ? '锚点 ' + it.lo + '~' + it.hi : '越少越好，' + it.lo + '→' + it.hi) });
+    });
+    return {
+      na: false, total: ev ? Math.round(sum / G_SUM_W * 1000) / 10 : null,
+      items: items,
+      basis: '评分基准：' + ay + ' 年报（基期 ' + base + '，跨度 ' + span + ' 年）',
+      eff: { evaluated: ev, missing: G_ITEMS.length - ev, na: 0 },
+      note: '把「过去五年长得多快、长得稳不稳、回报率水平与走向」七项量纲不同的证据，各自夹到 0~1 '
+        + '后按先验权重折成 0~100。分母固定为 100 权重，缺项只压低分数不重新归一——可评估项数并列在'
+        + '抬头，7 项齐全与只剩 3 项算得出的两家同样拿 60 分时，前者才是真的高增长。'
+    };
+  }
+
   // 造假分析评分卡（与 scoreCard 同构但等级方向相反：分低=安全=绿）；ov 为 Wind 事件覆盖层条目，有则并列基础分+事件明细+优化分
   function fraudCard(fa, ov) {
     var g = fraudGradeOf(fa.total);
@@ -3190,4 +3319,5 @@
     netCashFormula,
     cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
     trapScore, trapBandOf, TRAP_W, TRAP_CUT, TRAP_BANDS,
+    growthScore, G_ITEMS, G_SUM_W,
     unbindResize };

@@ -132,6 +132,13 @@ for f in sorted(companies_dir.glob('*.json')):
             continue
         if (pv is None or jv is None or abs(pv - jv) > 1e-9):
             diffs.append((code, fld, pv, jv))
+    # 成长综合分：同样按 compute_scores 的产出键比（列表页与 score_daily 用的就是这两个值）
+    for fld, jv in (('growth', js.get('growth')), ('growthEval', js.get('growthEval'))):
+        pv = py.get(fld)
+        if pv is None and jv is None:
+            continue
+        if (pv is None or jv is None or abs(pv - jv) > 1e-9):
+            diffs.append((code, fld, pv, jv))
 
 if diffs:
     print('不一致 %d 处:' % len(diffs))
@@ -139,7 +146,7 @@ if diffs:
         print(f'  {code} {key}: Python={p} JS={j}')
     sys.exit(1)
 else:
-    print('全部一致: %d 家 × (4 项分数 + 价格参考含净现金代入明细 + 造假分 + 管理分 + 周期判定/强度/位置 + 趋势回溯 + 评分基准报告期 + 陷阱分含证据权重与覆盖项数) 完全相同' % len(js_scores))
+    print('全部一致: %d 家 × (4 项分数 + 价格参考含净现金代入明细 + 造假分 + 管理分 + 周期判定/强度/位置 + 趋势回溯 + 评分基准报告期 + 陷阱分含证据权重与覆盖项数 + 成长分含覆盖项数) 完全相同' % len(js_scores))
     print('示例 3 家:')
     for f in sorted(companies_dir.glob('*.json'))[:3]:
         d = json.loads(f.read_text(encoding='utf-8'))
