@@ -384,15 +384,15 @@
       '<span class="s-meta">更新于 ' + fmtDate(s.time || d.updated_at) + '</span>' +
       '</div>';
 
-    // Wind 事件覆盖层当前代码条目（⑥⑦优化说明 + ⑪事件模块共用）；无事件数据（港美股/未抓公司）为 null
+    // Wind 事件覆盖层当前代码条目（⑥⑦优化说明 + ⑫事件模块共用）；无事件数据（港美股/未抓公司）为 null
     var ovD = (state.eventOverlay && state.eventOverlay[d.code]) ? state.eventOverlay[d.code] : null;
     var hasEvents = evHasAny(d._events);
     var hasAct = hasActions(d.actions);
-    // ⑨⑩ 两个综合分恒在（陷阱分对非 A 股也占一个位子，整节显示「不适用」而不是消失）；⑪ 只在有
-    // Wind 事件明细时出，股本事件跟着顶上空缺的那个号，免得出现 ⑩ → ⑫ 的跳号
-    var actNo = hasEvents ? '⑫' : '⑪';
+    // ⑨⑩⑪ 三个综合分恒在（陷阱分对非 A 股也占一个位子，整节显示「不适用」而不是消失）；⑫ 只在有
+    // Wind 事件明细时出，股本事件跟着顶上空缺的那个号，免得出现 ⑫ → ⑬ 的跳号
+    var actNo = hasEvents ? '⑬' : '⑫';
 
-    // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑩ 恒在，⑪ ⑫ 按有无数据出
+    // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑪ 恒在，⑫ ⑬ 按有无数据出
     html += '<nav class="va-nav" aria-label="详情模块导航">' +
       '<a href="#sec-basic" data-scroll="sec-basic">① 基础财务信息</a>' +
       '<a href="#sec-value" data-scroll="sec-value">② 通用价值标准</a>' +
@@ -402,9 +402,10 @@
       '<a href="#sec-fraud" data-scroll="sec-fraud">⑥ 造假风险</a>' +
       '<a href="#sec-mgmt" data-scroll="sec-mgmt">⑦ 管理水平</a>' +
       '<a href="#sec-cycle" data-scroll="sec-cycle">⑧ 周期位置</a>' +
-      '<a href="#sec-growth" data-scroll="sec-growth">⑨ 成长综合分</a>' +
-      '<a href="#sec-trap" data-scroll="sec-trap">⑩ 价值陷阱分</a>' +
-      (hasEvents ? '<a href="#sec-events" data-scroll="sec-events">⑪ 事件与股东</a>' : '') +
+      '<a href="#sec-value-score" data-scroll="sec-value-score">⑨ 价值综合分</a>' +
+      '<a href="#sec-growth" data-scroll="sec-growth">⑩ 成长综合分</a>' +
+      '<a href="#sec-trap" data-scroll="sec-trap">⑪ 价值陷阱分</a>' +
+      (hasEvents ? '<a href="#sec-events" data-scroll="sec-events">⑫ 事件与股东</a>' : '') +
       (hasAct ? '<a href="#sec-actions" data-scroll="sec-actions">' + actNo + ' 股本事件</a>' : '') +
       '</nav>';
 
@@ -631,22 +632,26 @@
       '<div class="stock-chart" id="stock-chart-cycle"></div>' +
       '<p class="stock-chart-note">逐年回溯：以各年报年为窗口末尾取最近 8 年年报，按与当期相同的 8 维逻辑打分；单季环比逐年参与（历史年用该年自身单季营收环比，末年用最新单季环比），各年均为满 8 维、同口径可比。</p></div></section>';
 
-    // ---- 模块九：成长综合分 G（七项过去五年的增长证据加权，分高＝更能长；全市场可算）----
-    html += '<section id="sec-growth" class="stock-section va-module"><h2 class="va-module-title"><span>⑨</span>成长综合分 · 过去五年的增长证据</h2>' +
+    // ---- 模块九：价值综合分 V（七项便宜 + 质量证据加权，分高＝又便宜又赚得到钱；全市场可算）----
+    html += '<section id="sec-value-score" class="stock-section va-module"><h2 class="va-module-title"><span>⑨</span>价值综合分 · 便宜与质量的证据</h2>' +
+      '<div class="score-card" id="stock-score-value"></div></section>';
+
+    // ---- 模块十：成长综合分 G（七项过去五年的增长证据加权，分高＝更能长；全市场可算）----
+    html += '<section id="sec-growth" class="stock-section va-module"><h2 class="va-module-title"><span>⑩</span>成长综合分 · 过去五年的增长证据</h2>' +
       '<div class="score-card" id="stock-score-growth"></div></section>';
 
-    // ---- 模块十：价值陷阱分 T（七项坏消息证据的加权合计，分高＝坏消息堆得多；口径只覆盖 A 股）----
-    html += '<section id="sec-trap" class="stock-section va-module"><h2 class="va-module-title"><span>⑩</span>价值陷阱分 · 坏消息证据</h2>' +
+    // ---- 模块十一：价值陷阱分 T（七项坏消息证据的加权合计，分高＝坏消息堆得多；口径只覆盖 A 股）----
+    html += '<section id="sec-trap" class="stock-section va-module"><h2 class="va-module-title"><span>⑪</span>价值陷阱分 · 坏消息证据</h2>' +
       '<div class="score-card" id="stock-score-trap"></div></section>';
 
-    // ---- 模块十一：公司事件与股东结构（仅当有 Wind 事件明细时展示；港美股/未抓公司自动隐藏）----
+    // ---- 模块十二：公司事件与股东结构（仅当有 Wind 事件明细时展示；港美股/未抓公司自动隐藏）----
     if (hasEvents) {
-      html += '<section id="sec-events" class="stock-section va-module"><h2 class="va-module-title"><span>⑪</span>公司事件与股东结构</h2>' +
+      html += '<section id="sec-events" class="stock-section va-module"><h2 class="va-module-title"><span>⑫</span>公司事件与股东结构</h2>' +
         renderEvents(d._events, ovD) + '</section>';
     }
 
-    // ---- 模块⑪/⑫：股本事件（定增 / 回购，东财全市场快照；港美股不采，整节不出）----
-    // 编号跟着 ⑪ 的有无走：没有 Wind 事件明细时 ⑪ 这个位子空着，由本节顶上
+    // ---- 模块⑫/⑬：股本事件（定增 / 回购，东财全市场快照；港美股不采，整节不出）----
+    // 编号跟着 ⑫ 的有无走：没有 Wind 事件明细时 ⑫ 这个位子空着，由本节顶上
     if (hasAct) {
       html += '<section id="sec-actions" class="stock-section va-module"><h2 class="va-module-title"><span>' + actNo + '</span>股本事件 · 定增与回购</h2>' +
         renderActions(d.actions) + '</section>';
@@ -670,6 +675,8 @@
     var ca = cycleAnalysis(d);
     var cycleEl = $('stock-score-cycle');
     if (cycleEl) cycleEl.innerHTML = cycleCard(ca);
+    var valueEl = $('stock-score-value');
+    if (valueEl) valueEl.innerHTML = valueCard(valueScore(d));
     var growthEl = $('stock-score-growth');
     if (growthEl) growthEl.innerHTML = growthCard(growthScore(d));
     var trapEl = $('stock-score-trap');
@@ -1962,7 +1969,7 @@
    * 3. 「算得出而为负」记 0 分档（有形账面价值为负、利润为负、五年一股没回过钱），
    *    「科目取不到」才判不动——把前者记成判不动，等于让最没有安全边际的公司因为算不出而不被扣分。
    * 便宜那三项（30+25+10＝65 分）吃快照市值，质量那三项与回报那一项不吃；回测只证明了不吃价格的
-   * 那半边有判别效度（C+D 块五分位对其后转亏率 25.4%→5.8%），便宜块本库量不了（没有历史市值）。
+   * 那半边有判别效度（C+D 块五分位对其后转亏率 25.5%→5.8%），便宜块本库量不了（没有历史市值）。
    */
   var V_ITEMS = [
     { key: 'edge_tbv', label: 'ln(有形账面价值 ÷ 市值)', weight: 30, lo: -1.5, hi: 0.5 },
@@ -2117,6 +2124,69 @@
     edge_tbv: fmtNum, ocfnp: fmtNum,
     ep: fmtPct, cash_yld: fmtPct, roe_med5: fmtPct, debt_rev: fmtPct, return_cash: fmtPct
   };
+  // 档位切点与两个率取自 v_validity 那份 A 股面板（2021~2023 信号年、16,373 条「公司 × 信号年」）
+  // 的 V 总分五分位。⚠ 那张面板的价格三项是「今天的市值 × 当年的年报」，今天的市值里已经装着
+  // 信号日之后的一切，所以这两个率不是预测——它们只回答「档位形状对不对」（同一批观测里，
+  // 真正有预测效度的是不含价格那半边：C+D 块五分位对转亏率 25.5%→5.8%，见 §甲-2）。
+  // 落差几乎全在档1 与其余各档之间：档2~档5 的转亏率 9.2%~11.3% 已不分上下，减值率仍拉得开。
+  var V_BANDS = [
+    { hi: 19.3, label: '档1 价值最低', grade: 'bad', loss: 24.2, imp5: 33.7 },
+    { hi: 26.7, label: '档2 偏低', grade: 'low', loss: 11.3, imp5: 11.7 },
+    { hi: 34.0, label: '档3 中位', grade: 'mid', loss: 9.2, imp5: 8.7 },
+    { hi: 45.9, label: '档4 偏高', grade: 'mid', loss: 10.1, imp5: 7.2 },
+    { hi: Infinity, label: '档5 价值最高', grade: 'good', loss: 7.9, imp5: 8.6 }
+  ];
+
+  function vBandOf(total) {
+    for (var i = 0; i < V_BANDS.length; i++) {
+      if (total <= V_BANDS[i].hi) return V_BANDS[i];
+    }
+    return V_BANDS[V_BANDS.length - 1];
+  }
+
+  function valueCard(vr) {
+    var band = vr.total == null ? null : vBandOf(vr.total);
+    var g = band ? band.grade : 'na';
+    var head = '<div class="score-card-head"><h4>价值综合分 V</h4>' +
+      '<div class="score-circle va-grade-' + g + '"><span>价值分</span><b>' +
+      (vr.total == null ? '算不出' : fmtNum(vr.total)) + '</b><i>' +
+      (band ? band.label : (vr.reason || '分项全部判不动')) + '</i></div></div>';
+    if (vr.reason) return head + '<p class="score-note">' + vr.reason + '，七项全部判不动。</p>';
+    var rows = vr.items.map(function (x) {
+      var cls = x.na ? 'sc-na' : x.sc >= 0.8 ? 'sc-good' : x.sc >= 0.4 ? 'sc-mid' : 'sc-low';
+      var fmt = V_VALUE_FMT[x.key] || fmtNum;
+      return '<tr><td>' + x.label + '</td>' +
+        '<td class="v">' + (x.value == null ? '-' : fmt(x.value)) + '</td>' +
+        '<td class="v ' + cls + '">' + (x.na ? '判不动' : (x.sc * 100).toFixed(0) + '%') + '</td>' +
+        '<td class="v">' + x.weight + '</td>' +
+        '<td class="v"><b>' + (x.na ? '-' : fmtNum(x.weight * x.sc)) + '</b></td>' +
+        '<td class="v" style="text-align:left">' + x.why + '</td></tr>';
+    }).join('');
+    var bands = V_BANDS.map(function (b, i) {
+      var on = b === band;
+      var lo = i === 0 ? 0 : V_BANDS[i - 1].hi;
+      return '<tr' + (on ? ' class="cmp-group"' : '') + '><td>' + b.label + '</td>' +
+        '<td class="v">' + (b.hi === Infinity ? '> ' + lo : lo + ' ~ ' + b.hi) + '</td>' +
+        '<td class="v"><b>' + b.loss + '%</b></td><td class="v">' + b.imp5 + '%</td></tr>';
+    }).join('');
+    return head +
+      '<p class="score-basis">' + vr.basis + '　可判 ' + vr.eff.evaluated + '/7 项' +
+      '（分母固定为 100 权重，缺项只压低分数、不重新归一）</p>' +
+      '<div class="stock-compare-wrap"><table class="stock-compare">' +
+      '<thead><tr><th>分项</th><th>当前值</th><th>符合度</th><th>权重</th><th>贡献分</th><th>口径</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>' +
+      '<div class="stock-compare-wrap"><h4 style="margin:8px 0 4px">档位结局对照（A 股 16,373 条「公司 × 信号年」，' +
+      '信号年 2021~2023，结局为该期之后公开的真实年报）</h4>' +
+      '<table class="stock-compare">' +
+      '<thead><tr><th>档位</th><th>V 区间</th><th>其后转亏率</th><th>其后减值≥5%净资产率</th></tr></thead>' +
+      '<tbody>' + bands + '</tbody></table></div>' +
+      '<p class="score-note">' + vr.note + ' 这张对照表不是预测：面板上的便宜那 65 分用的是今天的市值' +
+      '乘当年的年报，今天的市值里已经装着信号日之后的一切消息，所以它只证明档位形状没反（分数越高、' +
+      '其后变坏的越少）。真正的预测证据在不含价格的那 35 分上——同一批观测里，质量与回报两项的五分位' +
+      '对「其后转亏率」是 25.5% → 15.0% → 10.6% → 7.3% → 5.8%、对「减值≥5%净资产率」是 37.3% → 3.8%。' +
+      '对照表里的落差则几乎全在档1 与其余各档之间（24.2% 对 8~11%），档2~档5 在转亏率上已不分上下：' +
+      '这一列擅长挑出「既不便宜又赚不到钱」的那一批，拉不动中间那一大片。</p>';
+  }
 
   // 造假分析评分卡（与 scoreCard 同构但等级方向相反：分低=安全=绿）；ov 为 Wind 事件覆盖层条目，有则并列基础分+事件明细+优化分
   function fraudCard(fa, ov) {

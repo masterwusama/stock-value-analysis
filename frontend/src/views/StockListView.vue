@@ -32,6 +32,8 @@ const COLS = [
   { key: 'mgmt', label: '管理' },
   { key: 'cycle', label: '周期' },
   { key: 'trap', label: '陷阱', trap: true },
+  // 价值列：格内是 V（0-100，越高越便宜且有质量），右上角是「七项里查得动几项」
+  { key: 'value', label: '价值', value: true },
   // 成长列：格内是 G（0-100，越高越好，与陷阱分方向相反），右上角是「七项里查得动几项」
   { key: 'growth', label: '成长', growth: true },
   // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
@@ -200,6 +202,13 @@ const TRAP_TIP = '价值陷阱分 T（0-100，越高越可疑）：把「扣非�
 // 镜像 stockLegacy.js 的 TRAP_BANDS（列表页不加载那个库，沿本页 gradeOf 的既有做法在此复述切点）；
 // 改那边要同步这边。发生率表刻意不复述，只在详情页给，避免两处各写一份数字。
 const TRAP_BAND_CUTS = [[0.001, '档1', 'good'], [0.5, '档2', 'mid'], [1.0, '档3', 'mid'], [1.6, '档4', 'low']]
+const V_TIP = '价值综合分 V（0-100，越高越便宜且不是烂账）：每股账面价的边际（PB 倒数减近 5 年 ROE 中位）、收益率 EP、现金收益率、ROE 近 5 年中位、有息负债率、经营现金流/净利、连续分红年数，七项加权。'
+  + '分母固定为 100 权重，缺项只压低分数——低分不等于贵，看格子右上角「可判项数/7」。'
+  + '前三项要吃市值，行情没返市值的标的那三项一起判不动，剩下的质量分照样能给出一个看着不错的数，所以覆盖项数必须跟分数一起看。各档实测结局见详情页「价值综合分」一节。'
+// 档位切点镜像 stockLegacy.js 的 V_BANDS（列表页不加载那个库，沿本页既有做法在此复述切点），改那边要同步这边。
+// 与 G 同形：查的就是那个舍入到一位小数的显示分本身，两页用同一个值所以不会各说一套。
+// 各档实测结局刻意不复述，只在详情页给，避免两处各写一份数字。
+const V_BAND_CUTS = [[19.3, '档1 价值最低', 'bad'], [26.7, '档2 偏低', 'low'], [34.0, '档3 中位', 'mid'], [45.9, '档4 偏高', 'mid']]
 const G_TIP = '成长综合分 G（0-100，越高越好）：净利/营收/每股净资产各自的近 5 年年化增速、ROE 近 5 年中位与其趋势、近 5 年净利负增长年数、增长加速度，七项加权。'
   + '分母固定为 100 权重，缺项只压低分数——低分不等于没增长，看格子右上角「可判项数/7」。'
   + '七项只用公开年报，各市场都有分（不像陷阱分只覆盖 A 股）；档位与该档实测的未来增速来自 A 股回测，数字见详情页「成长综合分 G」一节。'
@@ -412,6 +421,7 @@ function thTip(c) {
   if (c.ref) return '按买入性价比排序：现价相对买入参考价的折价越深越靠前（保守/公允价点格内小字），再点切换升/降序'
   if (c.ratio) return '按清算性价比排序：现价相对每股清算价值折得越深越靠前（格内是清算价值本身），再点切换升/降序'
   if (c.trap) return TRAP_TIP + '｜点击按陷阱分排序（降序＝最可疑的在前），再点切换升/降序'
+  if (c.value) return V_TIP + '｜点击按价值分排序（降序＝最便宜且有质量的在前），再点切换升/降序'
   if (c.growth) return G_TIP + '｜点击按成长分排序（降序＝过去五年更能长的在前），再点切换升/降序'
   return '点击排序，再点切换升/降序'
 }
@@ -436,6 +446,17 @@ function trapTitle(s) {
   if (s.trap_c == null) return TRAP_TIP + '｜本标的：不适用（非 A 股），不是「查过了没毛病」'
   const [label] = bandOfC(s.trap_c)
   return `${TRAP_TIP}｜本标的：${label}（证据合计 C ${s.trap_c.toFixed(2)}）· 七项里查得动 ${s.trap_eval} 项`
+}
+// 价值分格子：与成长分同一形状（格内分 + 右上角可判项数），档位同样是越高越好，兜底档给 good
+function bandOfV(v) {
+  for (const [hi, label, grade] of V_BAND_CUTS) if (v <= hi) return [label, grade]
+  return ['档5 价值最高', 'good']
+}
+const vGrade = (s) => s.value == null ? 'na' : bandOfV(s.value)[1]
+function vTitle(s) {
+  if (s.value == null) return V_TIP + '｜本标的：七项全部判不动（公开年报不足 3 期，或年报有但市值与质量项一起取不到），不是「查过了不便宜」'
+  const [label] = bandOfV(s.value)
+  return `${V_TIP}｜本标的：${label}${s.value_eval == null ? '' : ' · 七项里查得动 ' + s.value_eval + ' 项'}`
 }
 // 成长分格子：与陷阱分同一形状（格内分 + 右上角可判项数），但档位是越高越好，所以兜底档给 good
 function bandOfG(v) {
@@ -671,6 +692,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
               <em>周期</em><b>{{ score(s.cycle) }}</b></span>
             <span class="sc-bd" :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">
               <em>陷阱</em><b>{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></b></span>
+            <span class="sc-bd" :class="'sc-' + vGrade(s)" :title="vTitle(s)">
+              <em>价值</em><b>{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></b></span>
             <span class="sc-bd" :class="'sc-' + gGrade(s)" :title="gTitle(s)">
               <em>成长</em><b>{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></b></span>
             <span class="sc-bd" :class="{ 'sc-good': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
@@ -743,6 +766,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :title="windTip(s, 'mgmt', MGMT_TIP)">{{ score(dispScore(s, 'mgmt')) }}</td>
             <td>{{ score(s.cycle) }}</td>
             <td :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></td>
+            <td :class="'sc-' + vGrade(s)" :title="vTitle(s)">{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></td>
             <td :class="'sc-' + gGrade(s)" :title="gTitle(s)">{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></td>
             <td class="c-liq" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
                 :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
