@@ -139,6 +139,11 @@ class SecurityItem(BaseModel):
     trap: float | None = None
     trap_c: float | None = None
     trap_eval: int | None = None
+    # 成长综合分（0~100，与上面几列反向：分高＝过去五年更能长）与「这分建在几项上」。
+    # 七项只读年报四列，各市场都有，故不像 trap 那样整列不适用；缺项只压低分数不重新归一，
+    # 两项并排看才知道 60 分是七项齐全还是三项勉强算得出
+    growth: float | None = None
+    growth_eval: int | None = None
     # 硬门槛（1=触发，0=可判且未触发，null=一个信号都判不了）与命中项，口径见 import_legacy.GATE_FLAGS
     gate: bool | None = None
     gate_flags: list | None = None
@@ -206,6 +211,7 @@ SORT_COLS = {
     "mgmt": ScoreDaily.mgmt,
     "cycle": ScoreDaily.cycle,
     "trap": ScoreDaily.trap,
+    "growth": ScoreDaily.growth,
     # 现价、净现金/市值(后者本身已是比率，跨标的可比，直接按值排)
     "price": QuoteDaily.price,
     "net_cash_ratio": ScoreDaily.net_cash_ratio,
@@ -639,6 +645,8 @@ def list_securities(
             trap=score.trap if score else None,
             trap_c=score.trap_c if score else None,
             trap_eval=score.trap_eval if score else None,
+            growth=score.growth if score else None,
+            growth_eval=score.growth_eval if score else None,
             gate=score.gate if score else None,
             gate_flags=score.gate_flags if score else None,
             report_date=score.report_date if score else None,
@@ -728,6 +736,8 @@ def _load_scores(db: Session, sid: int) -> dict | None:
         "trap": s.trap,
         "trapC": s.trap_c,
         "trapEval": s.trap_eval,
+        "growth": s.growth,
+        "growthEval": s.growth_eval,
         "priceRefs": refs,
     }
     if s.wind_fraud_delta is not None or s.wind_mgmt_delta is not None or s.wind_flags:

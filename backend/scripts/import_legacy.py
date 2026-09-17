@@ -327,6 +327,8 @@ def build_score_rows(index, trade_date, db):
             "trap": sc.get("trap"),
             "trap_c": sc.get("trapC"),
             "trap_eval": sc.get("trapEval"),
+            "growth": sc.get("growth"),
+            "growth_eval": sc.get("growthEval"),
             "fair_liq": refs.get("fairLiq"),
             "net_cash_ratio": refs.get("netCashRatio"),
             "net_cash_calc": calc or None,
@@ -367,17 +369,21 @@ def build_score_rows(index, trade_date, db):
 # 所以上游一次限流就能把已经抓好的明细覆写成空（2026-09-12 实测：4832 家的三大表被清空，
 # 随后重算把 fraud=0 的家数从 647 抬到 2956）。这种「分数集体变干净」比分数算错更坏——
 # 筛选会放过一批本该拦住的标的，而链路上每一步都写着 success。
-# 所以在唯一的写入口比一次批次分布：与库里上一批比，某个「越低越好」列的零值或 NULL 家数
+# 所以在唯一的写入口比一次批次分布：与库里上一批比，某个受盯列的零值或 NULL 家数
 # 同时超过 2 倍且多出 500 家（两个条件都要满足才判，避免把小盘日的正常抖动当成洗盘），
 # 或者行数掉了一成，就整批不写。扣住这批的后果是列表页停在旧分那一天的截面（表头快照日
 # 取行情与评分两张表最新日的交集），行情照写——宁可用昨天的分，也不用一片假的 0 分。
-SCORE_HOLD_COLS = ("fraud", "trap")     # 0 是「无红旗 / 无证据」那一端的两个分，最容易被洗成 0
+# 三列都是「零值或 NULL 家数最容易被上游事故洗出来」的那一列：fraud/trap 越低越干净，明细被
+# 覆写成空时集体掉到 0；growth 方向相反，同一起事故让它七项全算不出而整列变 NULL（年报不足 3 期）。
+# 两端的家数都盯，故一把尺共用。新增列的首批无基线，guard 里会跳过。
+SCORE_HOLD_COLS = ("fraud", "trap", "growth")
 SCORE_HOLD_RATIO = 2.0
 SCORE_HOLD_FLOOR = 500
 SCORE_HOLD_ROW_DROP = 0.9
 SCORE_PREV_SQL = """
 SELECT t.trade_date, COUNT(*) n,
-       SUM(fraud = 0), SUM(fraud IS NULL), SUM(trap = 0), SUM(trap IS NULL)
+       SUM(fraud = 0), SUM(fraud IS NULL), SUM(trap = 0), SUM(trap IS NULL),
+       SUM(growth = 0), SUM(growth IS NULL)
 FROM score_daily t
 WHERE t.trade_date = (SELECT MAX(trade_date) FROM score_daily WHERE trade_date < :d)
 GROUP BY t.trade_date

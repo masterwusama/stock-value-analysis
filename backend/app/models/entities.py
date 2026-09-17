@@ -198,6 +198,11 @@ class ScoreDaily(Base):
     trap: Mapped[float | None] = mapped_column(Double)
     trap_c: Mapped[float | None] = mapped_column(Double)
     trap_eval: Mapped[int | None] = mapped_column(Integer)
+    # 成长综合分（0~100，分高＝过去五年更能长）与「这分建在几项上」。覆盖项数同样必须并列：
+    # G 也是固定分母 ΣW=100，缺项只压低分数不重新归一，7 项齐全的 60 分与 3 项算得出的 60 分
+    # 不是一回事。各市场都能算（只读年报四列），故没有陷阱分那种整列不适用的情形。
+    growth: Mapped[float | None] = mapped_column(Double)
+    growth_eval: Mapped[int | None] = mapped_column(Integer)
     fair_liq: Mapped[float | None] = mapped_column(Double)
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
@@ -231,6 +236,7 @@ class ScoreDaily(Base):
         Index("idx_list_mgmt", "trade_date", "mgmt"),
         Index("idx_list_cycle", "trade_date", "cycle"),
         Index("idx_list_trap", "trade_date", "trap"),
+        Index("idx_list_growth", "trade_date", "growth"),
         Index("idx_list_graham_agg", "trade_date", "score_graham_agg"),
         Index("idx_list_graham_def", "trade_date", "score_graham_def"),
         Index("idx_list_schloss", "trade_date", "score_schloss"),
