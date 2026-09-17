@@ -53,6 +53,7 @@ async function main() {
     const hist = m.cycleHistory(d);
     const tp = m.trapScore(d) || {};
     const gs = m.growthScore(d) || {};
+    const vscore = m.valueScore(d) || {};
 
     function refs(key) {
       const r = pr[key] || {};
@@ -99,6 +100,9 @@ async function main() {
       // 成长综合分：分数 + 可评估项数（固定分母下缺项只压低分数，两者必须并列看）
       growth: num(gs.total),
       growthEval: num(gs.eff ? gs.eff.evaluated : null),
+      // 价值综合分：同 growth 口径
+      value: num(vscore.total),
+      valueEval: num(vscore.eff ? vscore.eff.evaluated : null),
     };
   }
   process.stdout.write(JSON.stringify(out));

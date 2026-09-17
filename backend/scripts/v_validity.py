@@ -35,31 +35,39 @@
 第三版是 A 块只留一个账面锚、股东回报改成数近五年回钱年数，全量跑四条线全过；定稿再按 ⑥ 的合并
 纪律摘掉两个 r>0.5 的重复项（流动比率、商誉+无形/总资产），12 分还给同块兄弟，块间 65/32/3 不动。
 
-**定稿指表与全量实测**（2026-09-17 跑，面板 A 股 5486 家 / 16373 条观测 / 信号年 2021~2023，
-截面 6909 家＝A 5553＋港股 592＋美股 764）：
+**定稿之后、进阶段 1 之前又改了两处输入端**（判据依旧一条没动，指表也没动）：
+- `return_cash` 摘掉「注销式回购年」那一半，只数现金分红年。生产侧没有注销回购这条数据链，
+  为一个 3 分项去加采集会污染整条链；实测摘掉只影响 51 家（全在 A 股）、平均 0.73 分、上限 3 分，
+  另有 385 家分红与注销都有、完全不受影响。
+- `v_facts` 补「归母权益」的两个中文键名变体（A 股银行系的「归属于母公司股东的权益」、港股的
+  「股东权益合计」）。核心列映射两个都不认，导致 98 家（A 42＋港 56，实测全是金融）整条权益链
+  在回测里取不到、V 的 40 分凭空判不动；值本身在 `extras` 里无损，读取端兜一层即可。
+
+**定稿指表与全量实测**（两处输入端改完后重跑于 2026-09-17，面板 A 股 5486 家 / 16373 条观测 /
+信号年 2021~2023，截面 6909 家＝A 5553＋港股 592＋美股 764）：
 
 | 分项 | 块 | 权重 | 锚点(0→100) | 覆盖 | 打满 | 打零 |
 | --- | --- | --- | --- | --- | --- | --- |
-| ln(有形账面价值/市值) | A | 30 | −1.5→0.5 | 97.7% | 1.5% | 37.4% |
+| ln(有形账面价值/市值) | A | 30 | −1.5→0.5 | 99.1% | 2.2% | 36.9% |
 | 盈利收益率（锚点年报/市值） | B | 25 | 0→0.10 | 100.0% | 4.0% | 29.5% |
-| 现金股息率（近 3 年均值） | B | 10 | 0→0.05 | 85.9% | 4.5% | 25.3% |
+| 现金股息率（近 3 年均值） | B | 10 | 0→0.05 | 87.3% | 4.9% | 25.0% |
 | ROE 近 5 年中位 | C | 14 | 0→0.20 | 99.8% | 8.7% | 18.9% |
 | 资产负债率（反向） | C | 10 | 0.90→0.30 | 100.0% | 31.1% | 4.2% |
 | 净现比（近 5 年配对求和） | C | 8 | 0.8→2.5 | 76.5% | 17.7% | 22.9% |
-| 近 5 年回钱年数占比 | D | 3 | 0→1 | 86.8% | 38.6% | 17.8% |
+| 近 5 年回钱年数占比 | D | 3 | 0→1 | 86.8% | 38.2% | 18.6% |
 
-- **甲-1 结构 PASS**：ρ(便宜块, 质量块)=+0.473，ρ(V, 便宜块)=+0.938，ρ(V, 质量块)=+0.719，
-  V 跨度 p10 8.8→p90 53.2＝44.4 分。
-- **甲-2 判别效度 PASS**：C+D 块五分位 → 其后转亏率 25.4%→15.1%→10.6%→7.4%→5.8%（Q1−Q5
-  =+19.7pp，线 ≥5pp）、减值≥5%净资产率 37.3%→3.8%（+33.5pp，线 ≥2pp），两腿单调不升、
-  逐年 3/3 同向、ρ(C+D, 其后没转亏)=+0.182。
-- **甲-3（不进判决）**：便宜块 Q1 转亏 21.2% → Q5 9.7%、减值 26.7% → 10.4%，方向对（贵更坏），
+- **甲-1 结构 PASS**：ρ(便宜块, 质量块)=+0.469，ρ(V, 便宜块)=+0.939，ρ(V, 质量块)=+0.712，
+  V 跨度 p10 8.7→p90 54.2＝45.5 分。
+- **甲-2 判别效度 PASS**：C+D 块五分位 → 其后转亏率 25.5%→15.0%→10.6%→7.3%→5.8%（Q1−Q5
+  =+19.7pp，线 ≥5pp）、减值≥5%净资产率 36.7%→15.0%→8.6%→6.1%→3.8%（+32.9pp，线 ≥2pp），两腿
+  单调不升、逐年 3/3 同向、ρ(C+D, 其后没转亏)=+0.182。
+- **甲-3（不进判决）**：便宜块 Q1 转亏 21.2% → Q5 9.4%、减值 26.7% → 10.0%，方向对（贵更坏），
   中段 Q2 触底后不再降 ⇒ **合成形状取加权相加**，不用 min/相乘。
-- **乙 PASS**：max|ρ(V, 现成分)|=0.789（施洛斯），四派其余 0.412/0.556/0.595，陷阱分 −0.199、
-  造假 −0.182、周期 +0.033、成长 +0.428、管理分 +0.511（退轴条件未触发）。
-- **丙 PASS**：七项覆盖 76.5%~100%，打满/打零最高 38.6%；三市场 V 中位 A 29.4 / 港 41.0 /
-  美 27.2，跨市场中位差 13.8 分（线 ≤20）。
-- **⑥**：合并后已无 |r|>0.5 的分项对。
+- **乙 PASS**：max|ρ(V, 现成分)|=0.794（施洛斯，余量 0.056），四派其余 0.406/0.556/0.593，陷阱分
+  −0.204、造假 −0.184、周期 +0.033、成长 +0.431、管理分 +0.505（退轴条件未触发）。
+- **丙 PASS**：七项覆盖 76.5%~100%，打满/打零最高 38.2%；三市场 V 中位 A 29.4 / 港 45.3 /
+  美 27.2，跨市场中位差 18.1 分（线 ≤20）。
+- **⑥**：合并后已无 |r|>0.5 的分项对（最高 ep×cash_yld +0.45）。
 
 定稿指表里三处刻意不做的事，写在排除清单里免得下一轮又加回来：
 - ① 便宜度锚**只留一个账面锚**。先说两个不能用的：现成的 `fair_liq` 分子就是「流动资产合计−负债
@@ -96,11 +104,13 @@
 已知局限（打在输出里，不藏着）：
 - **幸存者内偏差**：样本只有当前挂牌的公司，退市/暴雷消失的不在里面，低分组的恶化率被系统性
   低估——本脚本能判「质量分高是否跟着更少变坏」，判不了「便宜会不会死」。
-- **金融股缺的不是「流动比率那一行」而是整条归母权益链**：实测 65 家 A 股金融类里只有 23.1%
-  取到 `edge_tbv` 与 `cash_yld`（其余 5488 家 99.1% / 98.3%），而 ROE、负债率、回钱年数三项
-  100% 齐全、净现比 92.3%（还高于其余的 77.3%）——缺的正是 V 的 40 分。固定分母下它们那一列
-  只剩 60 分可用，② 里金融中位（42.2）比全体（29.1）高就是这个造成的。这是取数层的缺口，
-  上线（阶段 2）前得单独查银行/券商的权益行为什么进不来，不是评分口径的问题。
+- **补上权益键名后，金融股是「排在 V 顶端」而不是「缺分」**：实测 65 家 A 股金融类 V 中位 75.2
+  （其余 5488 家 29.1）、可评估项数 6.68 vs 6.75 —— 两列齐平，说明账面锚与股息率那 40 分已经吃到
+  了，高居顶端是低 PB 的真实读数。V 与四派分不同，分母固定 100、不做同市场横截面重排（锁定决策
+  ①），所以这一列天然由重资产低估值行业领跑；阶段 3 切档位时别把它当异常去压。
+  一个没扫干净的尾巴：核心列映射 `app/fin_columns.py` 的 `equity_parent` 至今只认
+  `归属于母公司股东权益合计` 一个键名，那 98 家的权益只活在 `extras` 里，四派分/陷阱分/成长分
+  读的是核心列所以仍在丢这段——V 在读取端兜了别名，那三套要修得改映射并回灌，是一笔独立账。
 - A/B 块在面板上是**今天市值 × 历史年报**，只用于甲-3；它的覆盖率、打满/打零等分布结论一律
   以当期截面（今天市值 × 今天能看到的年报）为准。
 - FY2016 之前不可见（40 期钳制），面板只能开 3 个信号年。
@@ -132,10 +142,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "collector" / "scri
 from sqlalchemy import func, select  # noqa: E402
 
 from app.db import SessionLocal  # noqa: E402
-from app.models import (Dividend, QuoteDaily, ScoreDaily, Security,  # noqa: E402
-                        ShareAction)
+from app.models import (Dividend, QuoteDaily, ScoreDaily, Security)  # noqa: E402
 from scripts.fraud_validity import (Avail, ashare_sids, load_announce,  # noqa: E402
-                                    load_batch, _d, _num)
+                                    load_batch, _num)
 from scripts.g_validity import _mono, _pp, _rp, _spear, quintiles_of  # noqa: E402
 from scripts.trap_validity import (TABLES, _med, _pad, _pear, fy_facts,  # noqa: E402
                                    outcomes_at, quantiles)
@@ -187,6 +196,8 @@ ITEMS = (
     ("return_cash", "近 5 年回钱年数占比",           "D", 3,  0.0,  1.0),
 )
 BLOCK_NAME = {"A": "账面安全边际", "B": "收益便宜度", "C": "质量与资本结构", "D": "股东回报"}
+# 核心列没给到 eq 时兜底用的键名变体（顺序＝优先归母口径，见 v_facts）
+EQ_ALIAS = ("归属于母公司股东的权益", "股东权益合计", "归属于母公司所有者权益合计")
 WEIGHT = {k: w for k, _, _, w, _, _ in ITEMS}
 LABEL = {k: lab for k, lab, _, _, _, _ in ITEMS}
 BLOCK = {k: b for k, _, b, _, _, _ in ITEMS}
@@ -220,6 +231,16 @@ def v_facts(g, av, sid):
             v = _num(ex.get(col))
             if v is not None:
                 d[k] = v
+        # 归母权益的两个键名变体：A 股银行系写「归属于母公司股东的权益」（多一个「的」）、
+        # 港股写「股东权益合计」，而核心列映射两个都不认（app/fin_columns.py 只认
+        # 「归属于母公司股东权益合计」），于是这 98 家（A 42＋港 56，实测全是金融）的 eq 为
+        # NULL、V 的 40 分凭空判不动。值本身在 extras 里无损，故在读取端兜一层。
+        if "eq" not in d:
+            for col in EQ_ALIAS:
+                v = _num(ex.get(col))
+                if v is not None:
+                    d["eq"] = v
+                    break
     for ex, _net, rd in g["ind"].get(sid, []):
         if (rd.month, rd.day) != (12, 31):
             continue
@@ -233,12 +254,12 @@ def v_facts(g, av, sid):
 
 
 def v_events(db, sids):
-    """{sid: {归属年: 每 10 股现金红利合计}} + {sid: [注销回购年]} + 有任一行历史的 sid。
+    """{sid: {归属年: 每 10 股现金红利合计}} + 有过任一派现行的 sid。
 
-    比 trap_validity.load_events 多要「红利金额」而不是只要「有没有」；定增这里用不上，
-    只留分红与注销回购。用哪三年由 `v_raw` 决定。
+    比 trap_validity.load_events 多要「红利金额」而不是只要「有没有」。注销回购曾经也算
+    「回过钱」（定稿第三版），阶段 1 落地前摘掉了——来历与实测见文件头「定稿后改的两处」。
     """
-    div, cxl, known = defaultdict(dict), defaultdict(list), set()
+    div, known = defaultdict(dict), set()
     for sid, dy, bonus in db.execute(select(Dividend.sid, Dividend.div_year, Dividend.bonus_per_10)
                                      .where(Dividend.sid.in_(tuple(sids)))):
         m = str(dy or "")[:4]
@@ -246,16 +267,7 @@ def v_events(db, sids):
         if m.isdigit() and int(m) >= 1990 and (b or 0) > 0:
             div[sid][int(m)] = div[sid].get(int(m), 0.0) + b
             known.add(sid)
-    for sid, fin, nd, ct in db.execute(select(ShareAction.sid, ShareAction.finish_date,
-                                              ShareAction.notice_date, ShareAction.cancel_type)
-                                       .where(ShareAction.sid.in_(tuple(sids)))):
-        if ct != "注销":
-            continue
-        dt = _d(fin) or _d(nd)
-        if dt is not None:
-            cxl[sid].append(dt.year)
-            known.add(sid)
-    return div, cxl, known
+    return div, known
 
 
 def load_mcap(db, sids):
@@ -285,7 +297,7 @@ def load_mcap(db, sids):
 
 # ---------- 分项 ----------
 
-def v_raw(f, yrs, mcap, div_amt, cxl_years, known=True):
+def v_raw(f, yrs, mcap, div_amt, known=True):
     """信息集 → ({分项: 原始值|None}, 锚点年)；公开年报不足 3 期则整体 None。
 
     A/B 三项要当天市值才能算，没有市值就整体不进（None，不是 0）；C/D 六项与价格无关，
@@ -330,11 +342,13 @@ def v_raw(f, yrs, mcap, div_amt, cxl_years, known=True):
     sn, so = sum(n for n, _ in pairs), sum(o for _, o in pairs)
     if len(pairs) >= 3 and sn > 0:
         out["ocfnp"] = so / sn
-    if known or div_amt or cxl_years:
+    if known:
         # 「任一年分过」首跑有 68.8% 打满，收紧成「连续三年都给」第二次跑仍有 52.2% 打满——
         # 一项 0/1 在过半公司身上都是 1 就不叫分项了。改成数「近 5 年里有几年真给了钱」，
         # 档位从 2 个变 6 个，缺的那几年照样掉分而不是开关。
-        gave = sum(1 for y in range(ay - 5, ay) if y in div_amt or y in cxl_years)
+        # 定稿时这一句还数着「注销式回购年」（生产侧没有这条数据链，为 3 分养一条采集链不值），
+        # 摘掉的实测影响：51 家 A 股、平均 0.73 分、上限 3 分；另有 385 家分红与注销都有，不受影响。
+        gave = sum(1 for y in range(ay - 5, ay) if y in div_amt)
         out["return_cash"] = min(1.0, gave / 5.0)
     return out, ay
 
@@ -408,9 +422,9 @@ def _chunk_load(db, chunk):
     """两遍跑共用的四件切片：财务四表、公告日、股东回报事件、各家最近一笔市值。"""
     g = load_batch(db, chunk)
     ann = {tag: load_announce(db, M, chunk) for tag, M in TABLES}
-    dv, cx, known = v_events(db, chunk)
+    dv, known = v_events(db, chunk)
     mc, mday, mdates = load_mcap(db, chunk)
-    return g, ann, dv, cx, known, mc, mday, mdates
+    return g, ann, dv, known, mc, mday, mdates
 
 
 def run_panel(years, limit=0):
@@ -422,18 +436,18 @@ def run_panel(years, limit=0):
     obs, counts, mcap_day = [], Counter(), None
     for i in range(0, len(sids), BATCH):
         chunk = sids[i:i + BATCH]
-        g, ann, dv, cx, known, mc, mcap_day, mdates = _chunk_load(db, chunk)
+        g, ann, dv, known, mc, mcap_day, mdates = _chunk_load(db, chunk)
         for sid in chunk:
             if not g["ind"].get(sid):
                 counts["无指标行"] += 1
                 continue
             av = Avail((ann["ba"].get(sid, {}), ann["cf"].get(sid, {}), ann["inc"].get(sid, {})))
             f = v_facts(g, av, sid)
-            d_y, cx_y = dv.get(sid, {}), cx.get(sid, [])
+            d_y = dv.get(sid, {})
             for t in years:
                 sig = av.of(date(t, 12, 31))
                 yrs = [y for y in sorted(f) if y <= t and f[y]["avail"] <= sig]
-                raw, ay = v_raw(f, yrs, mc.get(sid), d_y, cx_y, True)
+                raw, ay = v_raw(f, yrs, mc.get(sid), d_y, True)
                 if raw is None:
                     counts["公开年报不足3期"] += 1
                     continue
@@ -469,7 +483,7 @@ def run_xsect(limit=0):
     rows, counts, mcap_day = [], Counter(), None
     for i in range(0, len(sids), BATCH):
         chunk = sids[i:i + BATCH]
-        g, ann, dv, cx, known, mc, mcap_day, mdates = _chunk_load(db, chunk)
+        g, ann, dv, known, mc, mcap_day, mdates = _chunk_load(db, chunk)
         for sid in chunk:
             if not g["ind"].get(sid):
                 counts["无指标行"] += 1
@@ -478,7 +492,7 @@ def run_xsect(limit=0):
             f = v_facts(g, av, sid)
             mkt, ind_text = universe[sid]
             yrs = [y for y in sorted(f) if f[y]["avail"] <= TODAY]
-            raw, ay = v_raw(f, yrs, mc.get(sid), dv.get(sid, {}), cx.get(sid, []),
+            raw, ay = v_raw(f, yrs, mc.get(sid), dv.get(sid, {}),
                             mkt == "A" or sid in known)
             if raw is None:
                 counts["公开年报不足3期"] += 1

@@ -1284,6 +1284,146 @@ def growth_score(d):
             'evaluated': ev, 'missing': len(G_ITEMS) - ev, 'na': 0, 'raw': raw}
 
 
+# 价值综合分：分项、权重与锚点冻结在 backend/scripts/v_validity.py 的定稿指表上（那份脚本是这条
+# 轴的出厂检验，四条验收线的实测数打在它的文件头）。三条纪律与 growth_score 同形：锚点是固定绝对
+# 阈值不按横截面重排；分母恒为 V_SUM_W、缺项不进分子也不重新归一；「算得出而为负」记 0 分档，
+# 只有「科目取不到」才判不动。便宜那 65 分吃快照市值，质量与回报那 35 分不吃。
+V_ITEMS = (
+    ('edge_tbv', 30, -1.5, 0.5),
+    ('ep', 25, 0.0, 0.10),
+    ('cash_yld', 10, 0.0, 0.05),
+    ('roe_med5', 14, 0.0, 0.20),
+    ('debt_rev', 10, 0.90, 0.30),      # 反向：负债率越低分越高
+    ('ocfnp', 8, 0.8, 2.5),
+    ('return_cash', 3, 0.0, 1.0),
+)
+V_SUM_W = 100.0      # Σ V_ITEMS 权重，固定分母
+V_EDGE_FLOOR = -9.0  # 有形账面价值 ≤0 时 ln 无定义：记成一个必然夹到 0 分档的下界
+# 归母权益的键名变体，顺序与 JS 的 V_EQ_KEYS 一字不差。核心列只映射前两个
+# （app/fin_columns.py），A 股银行系多一个「的」、港股写成「股东权益合计」，实测 98 家
+# （银行/保险/券商）因此整条权益链取不到、V 的 40 分凭空判不动。
+V_EQ_KEYS = ('归属于母公司股东权益合计', '所有者权益(或股东权益)合计',
+             '归属于母公司股东的权益', '股东权益合计', '归属于母公司所有者权益合计')
+
+
+def _v_num(v):
+    """对应 JS 的 `typeof v === 'number' && isFinite(v)`。"""
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
+
+
+def _v_equity(row):
+    for k in V_EQ_KEYS:
+        v = _v_num(row.get(k))
+        if v is not None:
+            return v
+    return None
+
+
+def _v_year(s):
+    m = str(s or '')[:4]
+    return int(m) if m.isdigit() and int(m) else None
+
+
+def value_score(d):
+    """对应 JS valueScore。返回 {total, evaluated, missing, na, raw}；分母恒为 V_SUM_W。
+
+    市值取行情快照 market_cap（与四派分、参考价同一个数），三市场都有。便宜度的分子分母同币种，
+    比值天然免汇率，所以全程只做比值、不跨币种相加。
+    """
+    d = d or {}
+    by_year = {}
+
+    def slot(y):
+        return by_year.setdefault(y, {})
+
+    def put(o, k, v):
+        n = _v_num(v)
+        if n is not None:                     # 同年后一行覆盖前一行，缺列留空
+            o[k] = n
+
+    for r in annual_rows(d.get('indicators') or []):
+        y = _v_year(r.get('报告期'))
+        if not y:
+            continue
+        s = slot(y)
+        for k, col in (('net', '净利润'), ('ded', '扣非净利润'), ('roe', '净资产收益率'),
+                       ('bps', '每股净资产'), ('debt_r', '资产负债率')):
+            put(s, k, r.get(col))
+    for r in annual_balance_rows(d.get('balance')):
+        y = _v_year(r.get('报告日'))
+        if not y:
+            continue
+        s = slot(y)
+        eq = _v_equity(r)
+        if eq is not None:
+            s['eq'] = eq
+        for k, col in (('ta', '资产总计'), ('tl', '负债合计'),
+                       ('gw', '商誉'), ('intang', '无形资产')):
+            put(s, k, r.get(col))
+    for r in annual_balance_rows(d.get('cashflow')):
+        y = _v_year(r.get('报告日'))
+        if not y:
+            continue
+        put(slot(y), 'ocf', r.get('经营活动产生的现金流量净额'))
+
+    years = sorted(by_year)
+    if len(years) < 3:
+        return {'total': None, 'evaluated': 0, 'missing': len(V_ITEMS), 'na': 0, 'raw': {}}
+    ay, win, cur = years[-1], years[-5:], by_year[years[-1]]
+    mcap = _v_num((d.get('snapshot') or {}).get('market_cap'))
+    if mcap is not None and not mcap > 0:
+        mcap = None                           # 0 与负数市值不是「便宜」，是行情行坏了
+    # 派现年表：归属年 → 每 10 股现金红利合计，只数真给了钱的行（送股不派现不算回过钱）
+    div_amt, div_seen = {}, False
+    for r in (d.get('dividends') or []):
+        y = _v_year(r.get('year'))
+        b = _v_num(r.get('bonus_per_10'))
+        if not y or y < 1990 or b is None or b <= 0:
+            continue
+        div_amt[y] = div_amt.get(y, 0.0) + b
+        div_seen = True
+    # 隐含股本 = 归母权益 ÷ 每股净资产（与陷阱分同一招，「股本」列会被送转股放大）；
+    # 美股年报没有每股净资产那一行，所以它的股息率算不出（判不动），账面折扣照算。
+    sh = cur['eq'] / cur['bps'] if (cur.get('eq') is not None and (cur.get('bps') or 0) > 0) else None
+    tbv = (None if cur.get('eq') is None
+           else cur['eq'] - (cur.get('gw') or 0) - (cur.get('intang') or 0))
+    earn = cur['ded'] if cur.get('ded') is not None else cur.get('net')
+    raw = {}
+    if mcap:
+        if tbv is not None:
+            raw['edge_tbv'] = V_EDGE_FLOOR if tbv <= 0 else math.log(tbv / mcap)
+        if earn is not None:
+            raw['ep'] = max(0.0, earn) / mcap
+        if sh is not None:
+            paid = sum(div_amt.get(y, 0.0) for y in range(ay - 3, ay))
+            raw['cash_yld'] = (paid / 10.0) * sh / 3.0 / mcap
+    raw['roe_med5'] = _trap_med([by_year[y].get('roe') for y in win])
+    dr = cur.get('debt_r')
+    if dr is None and cur.get('ta') and cur.get('tl') is not None:
+        dr = cur['tl'] / cur['ta']            # 指标行缺该行时用负债/资产合计补
+    raw['debt_rev'] = dr
+    pairs = [(by_year[y].get('net'), by_year[y].get('ocf')) for y in win]
+    pairs = [(n, o) for n, o in pairs if n is not None and o is not None]
+    sn, so = sum(n for n, _ in pairs), sum(o for _, o in pairs)
+    if len(pairs) >= 3 and sn > 0:
+        raw['ocfnp'] = so / sn
+    # A 股分红史全量可查，「近五年没派现」是公开事实（0 分档）；港美股只有查得派过才算得出，
+    # 查不到分不清「没分」与「这侧的分红源没覆盖」，判不动。
+    if d.get('market') == 'A' or div_seen:
+        gave = sum(1 for y in range(ay - 5, ay) if div_amt.get(y))
+        raw['return_cash'] = min(1.0, gave / 5.0)
+    ev, total = 0, 0.0
+    for key, w, lo, hi in V_ITEMS:
+        v = raw.get(key)
+        if v is None:
+            continue
+        ev += 1
+        total += w * max(0.0, min(1.0, (v - lo) / (hi - lo)))
+    # 与 JS Math.round(total / ΣW * 1000) / 10 一致（Python round 为银行家舍入，不能直接用）
+    return {'total': (math.floor(total / V_SUM_W * 1000 + 0.5) / 10.0) if ev else None,
+            'evaluated': ev, 'missing': len(V_ITEMS) - ev, 'na': 0, 'raw': raw}
+
+
 def management_analysis(d):
     """对应 JS managementAnalysis —— 管理层管理水平评分（0~100，越高越好）。
     融合 DEA 投入产出效率思想的 8 维透明加权：费用纪律/资产周转/资本回报/成长质量/
@@ -1651,6 +1791,10 @@ def compute_scores(company, now=None):
     gr = growth_score(company)
     scores['growth'] = gr['total']
     scores['growthEval'] = gr['evaluated']
+    # 价值综合分：同一套固定分母纪律，七项里便宜那 65 分吃快照市值，缺市值就整块判不动
+    vv = value_score(company)
+    scores['value'] = vv['total']
+    scores['valueEval'] = vv['evaluated']
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。

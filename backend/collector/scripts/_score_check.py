@@ -10,7 +10,8 @@ from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.path.insert(0, str(Path(__file__).parent))
-from scoring import compute_scores, cycle_analysis, cycle_history  # noqa: E402
+from scoring import (compute_scores, cycle_analysis, cycle_history,  # noqa: E402
+                       value_score, V_ITEMS)
 
 BASE = Path(__file__).parent.parent
 companies_dir = BASE / 'data' / 'companies'
@@ -29,6 +30,7 @@ else:
     js_scores = json.loads(js_out.stdout)
 
 diffs = []
+v_stats = {}        # 市场 -> V 的覆盖累计，跑完打印
 for f in sorted(companies_dir.glob('*.json')):
     d = json.loads(f.read_text(encoding='utf-8'))
     code = d['code']
@@ -139,6 +141,23 @@ for f in sorted(companies_dir.glob('*.json')):
             continue
         if (pv is None or jv is None or abs(pv - jv) > 1e-9):
             diffs.append((code, fld, pv, jv))
+    # 价值综合分：同一个出口比，顺带累计三市场覆盖（便宜那 65 分吃快照市值，
+    # 港美股的行情源哪天不返 market_cap，这一列会整块塌掉，必须在上线前看见）
+    for fld, jv in (('value', js.get('value')), ('valueEval', js.get('valueEval'))):
+        pv = py.get(fld)
+        if pv is None and jv is None:
+            continue
+        if (pv is None or jv is None or abs(pv - jv) > 1e-9):
+            diffs.append((code, fld, pv, jv))
+    vr = value_score(d)
+    st = v_stats.setdefault(d.get('market') or '?', {'n': 0, 'scored': 0, 'mcap': 0, 'ev': 0,
+                                                     'na': {}})
+    st['n'] += 1
+    st['scored'] += vr['total'] is not None
+    st['mcap'] += bool((d.get('snapshot') or {}).get('market_cap'))
+    st['ev'] += vr['evaluated']
+    for k, _w, _lo, _hi in V_ITEMS:      # 分项整体没进 raw 也算判不动，不能只数存在的键
+        st['na'][k] = st['na'].get(k, 0) + (vr['raw'].get(k) is None)
 
 if diffs:
     print('不一致 %d 处:' % len(diffs))
@@ -146,7 +165,18 @@ if diffs:
         print(f'  {code} {key}: Python={p} JS={j}')
     sys.exit(1)
 else:
-    print('全部一致: %d 家 × (4 项分数 + 价格参考含净现金代入明细 + 造假分 + 管理分 + 周期判定/强度/位置 + 趋势回溯 + 评分基准报告期 + 陷阱分含证据权重与覆盖项数 + 成长分含覆盖项数) 完全相同' % len(js_scores))
+    print('全部一致: %d 家 × (4 项分数 + 价格参考含净现金代入明细 + 造假分 + 管理分 + 周期判定/强度/位置 '
+          ' + 趋势回溯 + 评分基准报告期 + 陷阱分含证据权重与覆盖项数 + 成长分与价值分含覆盖项数) 完全相同' % len(js_scores))
+    # 价值综合分三市场覆盖：便宜那 65 分只吃快照市值，市值不返的家在这里现形
+    print('V 覆盖（按市场）:')
+    print('  市场   家数   算得出分   快照有市值   平均可评估项   判不动最多的分项')
+    for mkt in sorted(v_stats):
+        st = v_stats[mkt]
+        n = st['n']
+        worst = sorted(st['na'].items(), key=lambda kv: -kv[1])[:2]
+        tail = '、'.join('%s %d 家(%.1f%%)' % (k, c, c / n * 100) for k, c in worst)
+        print('  %-6s %5d  %6.1f%%  %9.1f%%  %10.2f/%d   %s'
+              % (mkt, n, st['scored'] / n * 100, st['mcap'] / n * 100, st['ev'] / n, len(V_ITEMS), tail))
     print('示例 3 家:')
     for f in sorted(companies_dir.glob('*.json'))[:3]:
         d = json.loads(f.read_text(encoding='utf-8'))

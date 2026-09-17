@@ -1952,6 +1952,171 @@
       ' 3 年期与转负率上——这条轴能拉开好坏两端，拉不动的正是中间那一大片。</p>';
   }
 
+  /* ---------------- 价值综合分 V（便宜 + 质量，先验加权） ----------------
+   * 分项、权重与锚点冻结在 backend/scripts/v_validity.py 的定稿指表上——那份脚本是这条轴的出厂
+   * 检验（四条验收线的实测数打在它的文件头），这里只是线上实现；要动任何一项先回去重跑。
+   * 三条纪律与成长分同形：
+   * 1. 锚点是固定绝对阈值，不按当日横截面分位重排，否则一家公司的分会被当天其他公司的涨跌改掉。
+   * 2. 分母恒为 ΣW=100，缺项不进分子也不重新归一（按可用项归一会让「只算得动一项且恰好拿满」的
+   *    公司顶到榜首）；覆盖度由 eff.evaluated 单独出。
+   * 3. 「算得出而为负」记 0 分档（有形账面价值为负、利润为负、五年一股没回过钱），
+   *    「科目取不到」才判不动——把前者记成判不动，等于让最没有安全边际的公司因为算不出而不被扣分。
+   * 便宜那三项（30+25+10＝65 分）吃快照市值，质量那三项与回报那一项不吃；回测只证明了不吃价格的
+   * 那半边有判别效度（C+D 块五分位对其后转亏率 25.4%→5.8%），便宜块本库量不了（没有历史市值）。
+   */
+  var V_ITEMS = [
+    { key: 'edge_tbv', label: 'ln(有形账面价值 ÷ 市值)', weight: 30, lo: -1.5, hi: 0.5 },
+    { key: 'ep', label: '盈利收益率（最新年报 ÷ 市值）', weight: 25, lo: 0, hi: 0.10 },
+    { key: 'cash_yld', label: '现金股息率（近 3 年均值）', weight: 10, lo: 0, hi: 0.05 },
+    { key: 'roe_med5', label: 'ROE 近 5 年中位', weight: 14, lo: 0, hi: 0.20 },
+    { key: 'debt_rev', label: '资产负债率', weight: 10, lo: 0.90, hi: 0.30 },
+    { key: 'ocfnp', label: '净现比（近 5 年配对求和）', weight: 8, lo: 0.8, hi: 2.5 },
+    { key: 'return_cash', label: '近 5 年派现年数占比', weight: 3, lo: 0, hi: 1 }
+  ];
+  var V_SUM_W = 100;        // Σ V_ITEMS.weight，固定分母
+  var V_EDGE_FLOOR = -9;    // 有形账面价值 ≤0 时 ln 无定义：记成一个必然夹到 0 分档的下界
+  // 归母权益的键名变体。核心列只映射了前两个（app/fin_columns.py），A 股银行系多一个「的」、
+  // 港股写成「股东权益合计」，实测 98 家（银行/保险/券商）因此整条权益链取不到、V 的 40 分凭空
+  // 判不动；值本身在原始行里无损，所以读取端按这个顺序兜一层。
+  var V_EQ_KEYS = ['归属于母公司股东权益合计', '所有者权益(或股东权益)合计',
+                   '归属于母公司股东的权益', '股东权益合计', '归属于母公司所有者权益合计'];
+
+  function vNum(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
+
+  function vEquity(baRow) {
+    for (var i = 0; i < V_EQ_KEYS.length; i++) {
+      var v = vNum(baRow[V_EQ_KEYS[i]]);
+      if (v != null) return v;
+    }
+    return null;
+  }
+
+  function valueScore(d) {
+    d = d || {};
+    var byYear = {};
+    function slot(y) { return byYear[y] || (byYear[y] = {}); }
+    function put(o, k, v) { var n = vNum(v); if (n != null) o[k] = n; }   // 同年后一行覆盖前一行，缺列留空
+    function yearOf(s) { var y = Number(String(s || '').slice(0, 4)); return y || null; }
+    annualRows(d.indicators || []).forEach(function (r) {
+      var y = yearOf(r['报告期']);
+      if (!y) return;
+      var s = slot(y);
+      put(s, 'net', r['净利润']); put(s, 'ded', r['扣非净利润']);
+      put(s, 'roe', r['净资产收益率']); put(s, 'bps', r['每股净资产']);
+      put(s, 'debt_r', r['资产负债率']);
+    });
+    annualBalanceRows(d.balance).forEach(function (r) {
+      var y = yearOf(r['报告日']);
+      if (!y) return;
+      var s = slot(y);
+      var eq = vEquity(r);
+      if (eq != null) s.eq = eq;
+      put(s, 'ta', r['资产总计']); put(s, 'tl', r['负债合计']);
+      put(s, 'gw', r['商誉']); put(s, 'intang', r['无形资产']);
+    });
+    annualBalanceRows(d.cashflow).forEach(function (r) {
+      var y = yearOf(r['报告日']);
+      if (!y) return;
+      put(slot(y), 'ocf', r['经营活动产生的现金流量净额']);
+    });
+    var years = Object.keys(byYear).map(Number).sort(function (a, b) { return a - b; });
+    if (years.length < 3) {
+      return { na: false, total: null, reason: '公开年报不足 3 期', items: [],
+        eff: { evaluated: 0, missing: V_ITEMS.length, na: 0 } };
+    }
+    var ay = years[years.length - 1], win = years.slice(-5), cur = byYear[ay];
+    var snap = d.snapshot || {};
+    var mcap = vNum(snap.market_cap);
+    if (mcap != null && !(mcap > 0)) mcap = null;      // 0 与负数市值不是「便宜」，是行情行坏了
+    // 派现年表：归属年 → 每 10 股现金红利合计，只数真给了钱的行（送股不派现不算回过钱）
+    var divAmt = {}, divSeen = false;
+    (d.dividends || []).forEach(function (r) {
+      var y = yearOf(r.year), b = vNum(r.bonus_per_10);
+      if (!y || y < 1990 || !(b > 0)) return;
+      divAmt[y] = (divAmt[y] || 0) + b;
+      divSeen = true;
+    });
+    // 隐含股本：归母权益 ÷ 每股净资产，与陷阱分同一招——「股本」列会被送转股放大。
+    // 美股年报没有每股净资产那一行，所以它的股息率算不出（判不动），账面折扣照算。
+    var sh = (cur.eq != null && cur.bps > 0) ? cur.eq / cur.bps : null;
+    var tbv = cur.eq == null ? null : cur.eq - (cur.gw || 0) - (cur.intang || 0);
+    var earn = cur.ded != null ? cur.ded : cur.net;    // 扣非优先，缺则报告净利
+    var raw = {};
+    if (mcap != null) {
+      if (tbv != null) raw.edge_tbv = tbv <= 0 ? V_EDGE_FLOOR : Math.log(tbv / mcap);
+      if (earn != null) raw.ep = Math.max(0, earn) / mcap;
+      if (sh != null) {
+        var paid = 0;
+        for (var y3 = ay - 3; y3 <= ay - 1; y3++) paid += divAmt[y3] || 0;
+        raw.cash_yld = (paid / 10) * sh / 3 / mcap;
+      }
+    }
+    var roes = [];
+    win.forEach(function (y) { if (byYear[y].roe != null) roes.push(byYear[y].roe); });
+    raw.roe_med5 = medOf(roes);
+    raw.debt_rev = cur.debt_r != null ? cur.debt_r
+      : ((cur.ta && cur.tl != null) ? cur.tl / cur.ta : null);   // 指标行缺该行时用负债/资产补
+    var sn = 0, so = 0, np = 0;
+    win.forEach(function (y) {
+      var r = byYear[y];
+      if (r.net != null && r.ocf != null) { np++; sn += r.net; so += r.ocf; }
+    });
+    if (np >= 3 && sn > 0) raw.ocfnp = so / sn;
+    // A 股分红史全量可查，「近五年没派现」是公开事实（0 分档）；港美股只有查得派过才算得出，
+    // 查不到分不清「没分」与「这侧的分红源没覆盖」，判不动。
+    if (d.market === 'A' || divSeen) {
+      var gave = 0;
+      for (var y5 = ay - 5; y5 <= ay - 1; y5++) if (divAmt[y5]) gave++;
+      raw.return_cash = Math.min(1, gave / 5);
+    }
+    var naWhy = {
+      edge_tbv: mcap == null ? '快照取不到市值'
+        : (cur.eq == null ? '最新年报缺归母权益（含键名变体）' : '有形账面价值算不出'),
+      ep: mcap == null ? '快照取不到市值' : '最新年报缺净利润与扣非净利润',
+      cash_yld: mcap == null ? '快照取不到市值'
+        : (sh == null ? '每股净资产或股本取不到，反推不出派息总额' : '派现额算不出'),
+      roe_med5: 'ROE 可算年份不足 3 期',
+      debt_rev: '指标行缺资产负债率，且负债合计/资产总计也凑不出',
+      ocfnp: np < 3 ? '净利润与经营现金流同年可算不足 3 期' : '五年净利合计非正，比值无意义',
+      return_cash: '非 A 股且查无派现记录（这一侧的分红史不全量可查，没记录不等于没分过）'
+    };
+    var items = [], sum = 0, ev = 0;
+    V_ITEMS.forEach(function (it) {
+      var v = vNum(raw[it.key]);
+      var sc = v == null ? null : Math.max(0, Math.min(1, (v - it.lo) / (it.hi - it.lo)));
+      if (v != null) { ev++; sum += it.weight * sc; }
+      items.push({ key: it.key, label: it.label, value: v, sc: sc, weight: it.weight, na: v == null });
+    });
+    items.forEach(function (x) {
+      var it = V_ITEMS.filter(function (k) { return k.key === x.key; })[0];
+      var f = V_ANCHOR_FMT[x.key] || fmtNum;
+      x.why = x.na ? naWhy[x.key]
+        : (it.hi > it.lo ? '锚点 ' + f(it.lo) + '~' + f(it.hi)
+          : '越低越好，' + f(it.lo) + '→' + f(it.hi));
+    });
+    return {
+      na: false, total: ev ? Math.round(sum / V_SUM_W * 1000) / 10 : null,
+      items: items,
+      basis: '评分基准：' + ay + ' 年报（窗口 ' + win[0] + '~' + ay + '）· 市值取行情快照',
+      eff: { evaluated: ev, missing: V_ITEMS.length - ev, na: 0 },
+      note: '把「相对账面有多便宜、相对价格赚回来多少、赚到的钱兑不兑得出经营现金流、权益结构稳不稳」'
+        + '七项量纲不同的证据各自夹到 0~1 后按先验权重折成 0~100。权重是先验声明、不对这段历史拟合，'
+        + '分母固定 100 权重所以缺项只压低分数——便宜那 65 分要吃到市值才算得出，只看总分不看'
+        + '「可判 N/7 项」会把一家只算得动三项的公司读成低估值。'
+    };
+  }
+
+  // 价值分项的「当前值」格式化：账面折扣是对数比值（无量纲），其余按各自量纲给单位
+  var V_VALUE_FMT = {
+    edge_tbv: fmtNum, ep: fmtPct, cash_yld: fmtPct, roe_med5: fmtPct,
+    debt_rev: fmtPct, ocfnp: fmtNum, return_cash: fmtPct
+  };
+  // edge_tbv 的锚点是对数不是百分数，return_cash 是年数占比；其余沿用当前值的格式化器
+  var V_ANCHOR_FMT = {
+    edge_tbv: fmtNum, ocfnp: fmtNum,
+    ep: fmtPct, cash_yld: fmtPct, roe_med5: fmtPct, debt_rev: fmtPct, return_cash: fmtPct
+  };
+
   // 造假分析评分卡（与 scoreCard 同构但等级方向相反：分低=安全=绿）；ov 为 Wind 事件覆盖层条目，有则并列基础分+事件明细+优化分
   function fraudCard(fa, ov) {
     var g = fraudGradeOf(fa.total);
@@ -3405,4 +3570,5 @@
     cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
     trapScore, trapBandOf, TRAP_W, TRAP_CUT, TRAP_BANDS,
     growthScore, G_ITEMS, G_SUM_W,
+    valueScore, V_ITEMS, V_SUM_W,
     unbindResize };
