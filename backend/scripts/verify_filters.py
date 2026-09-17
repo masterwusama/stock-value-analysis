@@ -593,7 +593,7 @@ else:
 # 曾经的 bug：列表 COLS 拿流派驼峰键（grahamAgg）当排序键，而后端白名单只有列名，
 # 点四派参考价列头直接 400、整表变“加载失败”；前后端键名漂移无人拦截。
 sort_keys = (["code", "price", "pe_ttm", "pb", "market_cap", "fair_liq", "net_cash_ratio",
-              "pb_pctile", "fraud", "mgmt", "cycle", "trap", "growth"]
+              "pb_pctile", "fraud", "mgmt", "cycle", "trap", "growth", "value"]
              + [f"score_{c}" for c in SCHOOL_COLS.values()]
              + [f"{p}_{c}" for c in SCHOOL_COLS.values()
                 for p in ("buy", "sell_cons", "sell_fair")])

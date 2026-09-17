@@ -127,6 +127,8 @@ CREATE TABLE score_daily (
 	trap_eval INTEGER, 
 	growth DOUBLE, 
 	growth_eval INTEGER, 
+	value DOUBLE, 
+	value_eval INTEGER, 
 	fair_liq DOUBLE, 
 	net_cash_ratio DOUBLE, 
 	net_cash_calc JSON, 
@@ -152,6 +154,20 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+
+CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
+
+CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
+
+CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
+
+CREATE INDEX idx_list_value ON score_daily (trade_date, value);
+
+CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
+
+CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
+
 CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 
 CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
@@ -159,18 +175,6 @@ CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
-
-CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
-
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
-
-CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
-
-CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
-
-CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
-
-CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 

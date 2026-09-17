@@ -203,6 +203,11 @@ class ScoreDaily(Base):
     # 不是一回事。各市场都能算（只读年报四列），故没有陷阱分那种整列不适用的情形。
     growth: Mapped[float | None] = mapped_column(Double)
     growth_eval: Mapped[int | None] = mapped_column(Integer)
+    # 价值综合分（0~100，分高＝便宜且有质量）与「这分建在几项上」。V 同样固定分母 ΣW=100，
+    # 缺项只压低分数不重新归一；便宜那三项要吃市值，行情没返市值时它们一起判不动，剩下的
+    # 质量分照样能算出一个看着不错的数，所以覆盖项数必须跟分数并列输出。
+    value: Mapped[float | None] = mapped_column(Double)
+    value_eval: Mapped[int | None] = mapped_column(Integer)
     fair_liq: Mapped[float | None] = mapped_column(Double)
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
@@ -237,6 +242,7 @@ class ScoreDaily(Base):
         Index("idx_list_cycle", "trade_date", "cycle"),
         Index("idx_list_trap", "trade_date", "trap"),
         Index("idx_list_growth", "trade_date", "growth"),
+        Index("idx_list_value", "trade_date", "value"),
         Index("idx_list_graham_agg", "trade_date", "score_graham_agg"),
         Index("idx_list_graham_def", "trade_date", "score_graham_def"),
         Index("idx_list_schloss", "trade_date", "score_schloss"),
