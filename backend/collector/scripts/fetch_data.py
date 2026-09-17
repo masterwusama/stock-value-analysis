@@ -82,6 +82,7 @@ _force_default_timeout()
 from config import DEFAULT_COMPANIES, REQUEST_INTERVAL
 from scoring import compute_scores  # 预计算评分（与 assets/stock.js 一致性由 _score_check.py 验证）
 from actions_lookup import seo_actions  # 定增史查表（原定义在本文件，抽出去是为了轻导入）
+from equity import hk_equity_patch
 
 # 输出目录：<仓库>/stock-data/data
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -356,7 +357,6 @@ HK_BALANCE_MAP = {
     "短期贷款": "短期借款",
     "长期贷款": "长期借款",
     "融资租赁负债(非流动)": "租赁负债",
-    "股东权益": "所有者权益(或股东权益)合计",
 }
 
 # 利润表科目映射
@@ -571,12 +571,10 @@ def fetch_company_hk(code: str, name: str):
             errors.append(f"{key}: {e}")
         sleep_between()
 
-    # 归母权益 = 股东权益 - 少数股东权益（杜邦拆解口径）
+    # 仅在原始权益科目与资产负债恒等式一致时补规范键，保留原始披露科目。
     for rec in result["balance"]:
-        eq = rec.get("所有者权益(或股东权益)合计")
-        mi = rec.get("少数股东权益")
-        if eq is not None and mi is not None:
-            rec["归属于母公司股东权益合计"] = round(eq - mi, 4)
+        patch, _ = hk_equity_patch(rec)
+        rec.update(patch)
 
     try:
         result["snapshot"] = fetch_hk_snapshot(code)

@@ -18,6 +18,21 @@
 
   /* ---------------- 工具函数 ---------------- */
 
+  // 与 collector/scripts/equity.py 一致：有限数值，归母优先、总权益兜底，保留零和负值。
+  var PARENT_EQUITY_KEYS = ['归属于母公司股东权益合计', '归属于母公司股东的权益',
+                          '归属于母公司股东权益', '归属于母公司所有者权益合计'];
+  var TOTAL_EQUITY_KEYS = ['所有者权益(或股东权益)合计', '总权益', '股东权益合计'];
+
+  function equityOf(row) {
+    if (!row) return null;
+    var keys = PARENT_EQUITY_KEYS.concat(TOTAL_EQUITY_KEYS);
+    for (var i = 0; i < keys.length; i++) {
+      var v = row[keys[i]];
+      if (typeof v === 'number' && isFinite(v)) return v;
+    }
+    return null;
+  }
+
   // 金额（元）→ "xx.x亿" / "xx万" / 原值
   function fmtMoney(v) {
     if (v == null || isNaN(v)) return '-';
@@ -125,7 +140,7 @@
       row = rows[rows.length - 1];
       capCn = row['实收资本(或股本)'];
       capHk = row['股本'];
-      eq = row['归属于母公司股东权益合计'] != null ? row['归属于母公司股东权益合计'] : row['所有者权益(或股东权益)合计'];
+      eq = equityOf(row);
     }
     if (capCn && sharesFallback && capCn / sharesFallback >= 0.95 && capCn / sharesFallback <= 1.05) return capCn;
     if (capHk && sharesFallback && capHk / sharesFallback >= 0.95 && capHk / sharesFallback <= 1.05) return capHk;
@@ -782,7 +797,7 @@
       var assets = b ? b['资产总计'] : null;
       var assetsPrev = bPrev ? bPrev['资产总计'] : null;
       var assetsAvg = (assets != null && assetsPrev != null) ? (assets + assetsPrev) / 2 : assets;
-      var equity = b ? (b['归属于母公司股东权益合计'] != null ? b['归属于母公司股东权益合计'] : b['所有者权益(或股东权益)合计']) : null;
+      var equity = equityOf(b);
       var margin = (rev != null && net2 != null && rev > 0) ? net2 / rev : null;
       var turnover = (rev != null && assetsAvg != null && assetsAvg > 0) ? rev / assetsAvg : null;
       var leverage = (assets != null && equity != null && equity > 0) ? assets / equity : null;
@@ -1185,7 +1200,7 @@
     if (pb == null) {
       var bpsFb = latestField(d.indicators, '每股净资产');
       if (bpsFb == null && lastBa != null) {
-        var eqFb = lastBa['归属于母公司股东权益合计'] != null ? lastBa['归属于母公司股东权益合计'] : lastBa['所有者权益(或股东权益)合计'];
+        var eqFb = equityOf(lastBa);
         var shFb = shareCount(d.balance, (mcap != null && s.price != null && s.price > 0) ? mcap / s.price : null, null);
         if (eqFb != null && shFb) bpsFb = eqFb / shFb;
       }
@@ -1312,20 +1327,14 @@
     var gDTotal = schoolTotal(gD);
 
     // ---- 施洛斯风险扣分（资产萎缩/减值结构/债务恶化/经营溃败的量化危险信号，仅负分）----
-    // 归母权益（优先归母，缺则全部权益）
-    function eqOf(row) {
-      if (!row) return null;
-      var v = row['归属于母公司股东权益合计'];
-      return v != null ? v : row['所有者权益(或股东权益)合计'];
-    }
     // 有息负债全口径（与上方 intDebt 一致：短借+一年内到期+长借+债券+租赁，缺键当 0）
     function intDebtOf(row) {
       if (!row) return null;
       var v = sum([row['短期借款'], row['一年内到期的非流动负债'], row['长期借款'], row['应付债券'], row['租赁负债']]);
       return v == null ? 0 : v;
     }
-    var lastEq = eqOf(lastBa);
-    var earliestEq = baAnnual.length >= 5 ? eqOf(baAnnual[0]) : null;
+    var lastEq = equityOf(lastBa);
+    var earliestEq = baAnnual.length >= 5 ? equityOf(baAnnual[0]) : null;
     var intDebtNow = lastBa ? intDebtOf(lastBa) : null;
     var intDebtEarliest = baAnnual.length >= 5 ? intDebtOf(baAnnual[0]) : null;
     // 近5年扣非亏损年数（annual 最后 5 行）
@@ -1675,8 +1684,7 @@
     // 7. 近 5 年定增摊薄 / 隐含股本。分母用 归母权益÷每股净资产 反推，不用「股本」列——
     //    送股转增会把那一列放大却不摊薄任何人的权益。只喂定增行：回购族没有一项进 T
     var acts = d.seo_actions;              // 没给这个字段 ≠ 给空数组：前者判不动，后者才是「近5年无定增」
-    var eq = curBa['归属于母公司股东权益合计'];
-    if (eq == null) eq = curBa['所有者权益(或股东权益)合计'];
+    var eq = equityOf(curBa);
     var bps = cur['每股净资产'];
     var sh = (eq != null && bps > 0) ? eq / bps : null;
     var issued = 0, seen = false;
@@ -1982,21 +1990,8 @@
   ];
   var V_SUM_W = 100;        // Σ V_ITEMS.weight，固定分母
   var V_EDGE_FLOOR = -9;    // 有形账面价值 ≤0 时 ln 无定义：记成一个必然夹到 0 分档的下界
-  // 归母权益的键名变体。核心列只映射了前两个（app/fin_columns.py），A 股银行系多一个「的」、
-  // 港股写成「股东权益合计」，实测 98 家（银行/保险/券商）因此整条权益链取不到、V 的 40 分凭空
-  // 判不动；值本身在原始行里无损，所以读取端按这个顺序兜一层。
-  var V_EQ_KEYS = ['归属于母公司股东权益合计', '所有者权益(或股东权益)合计',
-                   '归属于母公司股东的权益', '股东权益合计', '归属于母公司所有者权益合计'];
 
   function vNum(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
-
-  function vEquity(baRow) {
-    for (var i = 0; i < V_EQ_KEYS.length; i++) {
-      var v = vNum(baRow[V_EQ_KEYS[i]]);
-      if (v != null) return v;
-    }
-    return null;
-  }
 
   function valueScore(d) {
     d = d || {};
@@ -2016,7 +2011,7 @@
       var y = yearOf(r['报告日']);
       if (!y) return;
       var s = slot(y);
-      var eq = vEquity(r);
+      var eq = equityOf(r);
       if (eq != null) s.eq = eq;
       put(s, 'ta', r['资产总计']); put(s, 'tl', r['负债合计']);
       put(s, 'gw', r['商誉']); put(s, 'intang', r['无形资产']);
@@ -2993,7 +2988,7 @@
     var ca = lastBa ? lastBa['流动资产合计'] : null;
     var tl = lastBa ? lastBa['负债合计'] : null;
     var ncav = (ca != null && tl != null) ? ca - tl : null;
-    var lastEq = lastBa ? (lastBa['归属于母公司股东权益合计'] != null ? lastBa['归属于母公司股东权益合计'] : lastBa['所有者权益(或股东权益)合计']) : null;
+    var lastEq = equityOf(lastBa);
     // 每股净资产优先用指标字段（数据源按财报算好、随财报更新，与实时价无关），
     // 避免快照 pb/pe 舍入与 mcap 滞后导致参考价随行情漂移（财务无变化时参考价应不变）
     var bps = latestField(d.indicators, '每股净资产');
@@ -3637,7 +3632,7 @@
   /* ---------------- 启动(已移交 Vue 组件) ---------------- */
 
   export { renderDetail, showDetail, state, valueAnalysis, valueScores, priceReferences,
-    netCashFormula,
+    netCashFormula, equityOf,
     cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
     trapScore, trapBandOf, TRAP_W, TRAP_CUT, TRAP_BANDS,
     growthScore, G_ITEMS, G_SUM_W,

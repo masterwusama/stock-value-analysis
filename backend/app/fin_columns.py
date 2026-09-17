@@ -6,6 +6,8 @@ extras JSON 全量保留原始行(含中文原键名),实体核心列仅作 SQL 
 还原时无损且无键名歧义(如港股 balance 用"股本"而 A 股用"实收资本(或股本)")。
 """
 
+from collector.scripts.equity import PARENT_KEYS, TOTAL_KEYS
+
 # fin_indicator 核心列(同花顺摘要指标)
 INDICATOR_CORE = {
     "revenue": ["营业总收入"],
@@ -37,8 +39,8 @@ BALANCE_CORE = {
     "notes_receivable": ["应收票据"],
     "other_current_assets": ["其他流动资产"],
     "total_liabilities": ["负债合计"],
-    "equity_parent": ["归属于母公司股东权益合计"],
-    "equity_total": ["所有者权益(或股东权益)合计"],
+    "equity_parent": list(PARENT_KEYS),
+    "equity_total": list(TOTAL_KEYS),
     "paid_in_capital": ["实收资本(或股本)", "股本"],
     "short_loan": ["短期借款"],
     "long_loan": ["长期借款"],

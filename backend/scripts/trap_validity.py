@@ -59,6 +59,7 @@ from app.models import (Dividend, FinBalance, FinCashflow, FinIncome,  # noqa: E
 from scripts.fraud_validity import (WINDOW_MAX, Avail, ashare_sids, load_announce,  # noqa: E402
                                     load_audit, load_batch, score_at, ztest, _d, _num, _plus)
 from scoring import TRAP_BANDS, TRAP_CUT, TRAP_W  # noqa: E402  出厂常量：权重/阈值/切点与发生率
+from equity import equity_of  # noqa: E402
 
 BATCH = 300
 # 有息负债全口径：与 scoring.py 的 int_debt 同五个科目（缺键当 0）
@@ -137,7 +138,9 @@ def fy_facts(g, av, audit, sid):
         if (rd.month, rd.day) != (12, 31):
             continue
         d = slot(rd.year)
-        eq = float(p) if p is not None else (float(t) if t is not None else None)
+        eq = equity_of(ex)
+        if eq is None:
+            eq = float(p) if p is not None else (float(t) if t is not None else None)
         if eq is not None:
             d["eq"] = eq
         for k, col in (("ta", "资产总计"), ("gw", "商誉"), ("ar", "应收账款"), ("inv", "存货")):
@@ -504,6 +507,9 @@ def hazard(obs, cuts, lifts, top_o, cons, xs, drop=(), title="全候选"):
     print("  " + _pad("档", 6) + _pad("观测数", 9) + _pad("C 区间", 16) + _pad("名义HR", 11)
           + "".join(_pad(lb, 12) for _, lb in OUTS))
     for gi, cc in enumerate(cells):
+        if not seg[gi]:
+            print("  " + _pad(f"Q{gi+1}", 6) + _pad("0", 9) + "无观测，判不动")
+            continue
         lo, hi = min(seg[gi]), max(seg[gi])
         print("  " + _pad(f"Q{gi+1}", 6) + _pad(str(cc.obs), 9)
               + _pad(f"{lo:.2f}~{hi:.2f}", 16)
@@ -511,6 +517,9 @@ def hazard(obs, cuts, lifts, top_o, cons, xs, drop=(), title="全候选"):
               + "".join(_pad(f"{cc.rate(k2)*100:.2f}%" if cc.rate(k2) is not None else "—", 12)
                         for k2, _ in OUTS))
     top, rest = cells[4], cells[0]
+    if not seg[4] or not seg[0]:
+        print("\n  Q5 vs Q1：端点档无观测，判不动")
+        return
     nom = math.exp(statistics.mean(seg[4]) - statistics.mean(seg[0]))
     print(f"\n  Q5 vs Q1（名义危险比 {nom:.1f}x）：")
     for ok, lb in OUTS:
@@ -601,7 +610,9 @@ def report(obs, counts, cuts, detail, orthogonal=False):
         lb = dict(OUTS)[ok]
         r1, r2 = bad.rate(ok), rest.rate(ok)
         flag = "  ←方向反了" if lmax[k] < 1 else ""
-        print(f"  lift={lmax[k]:5.2f}x  坏侧 {r1*100:5.2f}% vs 其余 {r2*100:5.2f}%  "
+        rate1 = f"{r1 * 100:5.2f}%" if r1 is not None else "判不动"
+        rate2 = f"{r2 * 100:5.2f}%" if r2 is not None else "判不动"
+        print(f"  lift={lmax[k]:5.2f}x  坏侧 {rate1} vs 其余 {rate2}  "
               f"{w}/{n_yr} 年同向  最强在「{lb}」  {lab}{flag}")
 
     xi = _indicators(obs, cuts)

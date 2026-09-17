@@ -21,6 +21,7 @@
 用法（在 backend/collector 目录下）：
     python -X utf8 scripts/_score_formula_check.py
 """
+import copy
 import importlib.util
 import json
 import math
@@ -360,6 +361,99 @@ check(w_us['raw'].get('return_cash') is None and w_us['evaluated'] == 6,
 check(w_2y['total'] is None and w_2y['evaluated'] == 0,
       f"年报不足 3 期应整分判不动，实为 {w_2y['total']}/可评估 {w_2y['evaluated']}")
 
+E_EXP = {}
+if not ALT:
+    from equity import PARENT_KEYS, TOTAL_KEYS, equity_of, hk_equity_patch
+    from scoring import compute_scores
+
+    def equity_probe(name, fields, expected):
+        d = company(ba=[ba_row(eq=None, **fields)], **V_BASE)
+        d['snapshot'] = {'price': 10.0, 'market_cap': 2e10, 'pe_ttm': 8.0, 'pb': None}
+        d['seo_actions'] = [{'issue_date': LAST, 'num': 1e7}]
+        canonical = copy.deepcopy(d)
+        canonical['balance'][0] = ba_row(eq=expected)
+        check(equity_of(d['balance'][0]) == expected, name + ': 权益取值错误')
+        scores = compute_scores(d)
+        check(scores == compute_scores(canonical), name + ': 别名改变评分或参考价')
+        probe(name, d)
+        g_probe(name, d)
+        v_probe(name, d)
+        E_EXP[name] = {'equities': [expected], 'trap': scores['trap'],
+                       'trapEval': scores['trapEval'],
+                       'priceRefs': {k: scores['priceRefs'][k] for k in
+                                     ('grahamAgg', 'grahamDef', 'schloss', 'buffett')}}
+
+    for i, key in enumerate(PARENT_KEYS):
+        for amount in (0.0, -1e9, 1e10):
+            equity_probe(f'eq_parent_{i}_{amount}', {key: amount, TOTAL_KEYS[0]: 3e10}, amount)
+    for i, key in enumerate(TOTAL_KEYS):
+        equity_probe(f'eq_total_{i}', {key: 3e10}, 3e10)
+    equity_probe('eq_null_parent', {PARENT_KEYS[1]: None, TOTAL_KEYS[0]: 3e10}, 3e10)
+    equity_probe('eq_parent_priority', {PARENT_KEYS[0]: 1e10, PARENT_KEYS[1]: 2e10}, 1e10)
+
+    original = {PARENT_KEYS[0]: 70.0, TOTAL_KEYS[0]: 85.0, '少数股东权益': 15.0,
+                '总权益': 100.0, '资产总计': 180.0, '负债合计': 80.0}
+    patch, reason = hk_equity_patch(original, legacy=True)
+    check(patch == {PARENT_KEYS[0]: 85.0, TOTAL_KEYS[0]: 100.0}, '港股双扣修复值错误')
+    check(reason == 'repaired' and original[PARENT_KEYS[0]] == 70.0, '修复探针不应原地改输入')
+    repaired = {**original, **patch}
+    check(hk_equity_patch(repaired, legacy=True) == ({}, 'unchanged'), '港股修复必须幂等')
+    check(hk_equity_patch({**repaired, PARENT_KEYS[1]: 95.0}, legacy=True)
+          == ({}, 'conflict_parent'), '规范键已平衡也必须报告原披露冲突')
+    source = {k: v for k, v in original.items() if k not in (PARENT_KEYS[0], TOTAL_KEYS[0])}
+    source['股东权益'] = 85.0
+    check(hk_equity_patch(source)[0] == patch, '源规范化与历史修复必须同口径')
+    check(hk_equity_patch({**source, **patch}) == ({}, 'unchanged'), '新源规范化必须幂等')
+    for field in ('少数股东权益', '总权益', '资产总计', '负债合计'):
+        missing = {k: v for k, v in original.items() if k != field}
+        check(not hk_equity_patch(missing, legacy=True)[0], f'缺 {field} 不得猜测修复')
+    for fields in ({'总权益': 105.0}, {'资产总计': 190.0}, {PARENT_KEYS[0]: 60.0},
+                   {PARENT_KEYS[1]: 90.0}, {'非控股股东权益': 18.0},
+                   {'股东权益合计': 110.0}, {'股东权益': 90.0}):
+        check(not hk_equity_patch({**original, **fields}, legacy=True)[0],
+              f'冲突记录不得覆盖: {fields}')
+    check(not hk_equity_patch({**source, PARENT_KEYS[0]: 1.0})[0], '新源不得覆盖冲突派生值')
+    check(hk_equity_patch({**original, '资产总计': 180.5}, legacy=True)[0] == patch,
+          '元级舍入差在容差内应可勾稽')
+    check(not hk_equity_patch({**original, '资产总计': 181.1}, legacy=True)[0],
+          '超过元级容差不得修复')
+    zero_mi = {**original, PARENT_KEYS[0]: 100.0, TOTAL_KEYS[0]: 100.0, '少数股东权益': 0.0}
+    check(hk_equity_patch(zero_mi, legacy=True) == ({}, 'unchanged'), '少数为零不需要修复')
+    for amount in (None, True, float('nan'), float('inf'), '123'):
+        check(equity_of({PARENT_KEYS[0]: amount, TOTAL_KEYS[0]: 0.0}) == 0.0,
+              '无效归母数值应跳过，零总权益不可丢失')
+
+    import ast
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    # 抽取采集函数隔离网络与 PDF 依赖，仍执行实际映射和公司组装代码。
+    tree = ast.parse((HERE / 'fetch_data.py').read_text(encoding='utf-8'))
+    names = {'HK_BALANCE_MAP', 'HK_INCOME_MAP', 'HK_CASHFLOW_MAP',
+             'fetch_hk_report', 'fetch_company_hk'}
+    nodes = [n for n in tree.body if
+             (isinstance(n, ast.FunctionDef) and n.name in names) or
+             (isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in names for t in n.targets))]
+
+    class ReportRows:
+        empty = False
+
+        def iterrows(self):
+            for i, (key, value) in enumerate(source.items()):
+                yield i, {'REPORT_DATE': LAST, 'STD_ITEM_NAME': key, 'AMOUNT': value}
+
+    env = {'datetime': datetime, 'CN_TZ': timezone.utc, 'MAX_PERIODS': 40,
+           'hk_equity_patch': hk_equity_patch, 'to_iso': lambda value: value,
+           'parse_number': lambda value: value,
+           'ak': SimpleNamespace(stock_financial_hk_report_em=lambda **kw: ReportRows()),
+           'hk_industry': lambda code: None, 'sleep_between': lambda: None,
+           'fetch_hk_indicators': lambda code: [], 'fetch_hk_snapshot': lambda code: {},
+           'fetch_hk_dividends': lambda code: []}
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), 'fetch_data.py', 'exec'), env)
+    fetched = env['fetch_company_hk']('FIXTURE', '合成')['balance'][0]
+    check(all(fetched.get(k) == v for k, v in source.items()), '新采集必须保留原始权益科目')
+    check(all(fetched.get(k) == v for k, v in patch.items()), '新采集不应再次扣除少数股东权益')
+
 # ==================== JS 对端：同一批输入必须给同样的总分 ====================
 if ALT:
     print("== 评分公式边界探针（替代实现 %s，跳过 JS 对端）==" % Path(ALT).name)
@@ -390,10 +484,19 @@ else:
             j = js.get(name) or {}
             check(close(tot, j.get('value'), 1e-9) and ev == j.get('valueEval'),
                   f"{name}.value: Python={tot}/{ev} 项 JS={j.get('value')}/{j.get('valueEval')} 项")
+        for name, expected in E_EXP.items():
+            actual = js.get(name) or {}
+            for key in ('equities', 'trap', 'trapEval'):
+                check(expected[key] == actual.get(key), f'{name}.{key}: Python/JS 不一致')
+            for school, refs in expected['priceRefs'].items():
+                for field, value in refs.items():
+                    got = (actual.get('priceRefs', {}).get(school) or {}).get(field)
+                    check(close(value, got), f'{name}.{school}.{field}: Python={value} JS={got}')
 
 print(f"  输入 {len(FIX)} 组（流动比率扫点 {len(RS)} / 扣分 {len(PEN_CASES)} / "
-      f"成长分覆盖度 {len(G_EXP) - len(EXTREME)} / 价值分覆盖度 {len(V_EXP) - len(EXTREME)} / "
-      f"其余为缺失与极端）")
+      f"成长分覆盖度 {len(G_EXP) - len(EXTREME) - len(E_EXP)} / "
+      f"价值分覆盖度 {len(V_EXP) - len(EXTREME) - len(E_EXP)} / 权益别名 {len(E_EXP)} / "
+      f"其余为缺失与极端；另验港股规范化、冲突拒绝与幂等）")
 if fails:
     print(f"  不通过 {len(fails)} 项:")
     for m in fails:

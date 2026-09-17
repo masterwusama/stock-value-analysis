@@ -10,6 +10,8 @@
 from datetime import datetime, timedelta, timezone
 import math
 
+from equity import equity_of
+
 # 10年期国债收益率参考值（与 stock.js BOND_10Y 一致，仅用于股债利差展示，不影响评分）
 BOND_10Y = 0.017
 
@@ -308,9 +310,7 @@ def value_scores(d, va):
     if pb is None:
         bps_fb = _latest_field(d.get('indicators') or [], '每股净资产')
         if bps_fb is None and last_ba is not None:
-            eq_fb = last_ba.get('归属于母公司股东权益合计')
-            if eq_fb is None:
-                eq_fb = last_ba.get('所有者权益(或股东权益)合计')
+            eq_fb = equity_of(last_ba)
             sh_fb = _share_count(d.get('balance') or [],
                                  (mcap / s.get('price')) if (mcap is not None and s.get('price')) else None, None)
             if eq_fb is not None and sh_fb:
@@ -473,13 +473,6 @@ def value_scores(d, va):
          if (mcap is not None and ca is not None and ca > 0) else None),
     )
     # ---- 施洛斯风险扣分（与 JS valueScores 中 riskItems 一一对应）----
-    def eq_of(row):
-        """归母权益（优先归母，缺则全部权益）"""
-        if not row:
-            return None
-        v = row.get('归属于母公司股东权益合计')
-        return v if v is not None else row.get('所有者权益(或股东权益)合计')
-
     def int_debt_of(row):
         """有息负债全口径（与上方 int_debt 一致：短借+一年内+长借+债券+租赁，缺键当 0）"""
         if not row:
@@ -491,8 +484,8 @@ def value_scores(d, va):
     ba_annual = annual_balance_rows(d.get('balance') or [])
     in_annual = annual_balance_rows(d.get('income') or [])
     cf_annual = annual_balance_rows(d.get('cashflow') or [])
-    last_eq = eq_of(last_ba)
-    earliest_eq = eq_of(ba_annual[0]) if len(ba_annual) >= 5 else None
+    last_eq = equity_of(last_ba)
+    earliest_eq = equity_of(ba_annual[0]) if len(ba_annual) >= 5 else None
     int_debt_now = int_debt_of(last_ba) if last_ba else None
     int_debt_earliest = int_debt_of(ba_annual[0]) if len(ba_annual) >= 5 else None
     # 近5年扣非亏损年数（annual 最后 5 行）
@@ -688,9 +681,7 @@ def _share_count(balance_rows, shares_fallback, bps_field=None):
     if row:
         cap_cn = row.get('实收资本(或股本)')
         cap_hk = row.get('股本')
-        eq = row.get('归属于母公司股东权益合计')
-        if eq is None:
-            eq = row.get('所有者权益(或股东权益)合计')
+        eq = equity_of(row)
     for c in (cap_cn, cap_hk):
         if c and shares_fallback and 0.95 <= c / shares_fallback <= 1.05:
             return c
@@ -794,11 +785,7 @@ def price_references(d, va):
 
     ca, tl = g('流动资产合计'), g('负债合计')
     ncav = (ca - tl) if (ca is not None and tl is not None) else None
-    last_eq = None
-    if last_ba is not None:
-        last_eq = last_ba.get('归属于母公司股东权益合计')
-        if last_eq is None:
-            last_eq = last_ba.get('所有者权益(或股东权益)合计')
+    last_eq = equity_of(last_ba)
     # 每股净资产优先用指标字段（数据源按财报算好、随财报更新，与实时价无关），
     # 避免快照 pb/pe 舍入与 mcap 滞后导致参考价随行情漂移（财务无变化时参考价应不变）
     bps = _latest_field(d.get('indicators') or [], '每股净资产')
@@ -1162,9 +1149,7 @@ def trap_score(d):
     # 替全市场担保没摊薄过。有定增而股本算不出，同样留 None。
     # 只喂定增行（d['seo_actions']）：回购族没有一项进 T（注销式回购实测 lift 1.31、方向还存疑）。
     acts = d.get('seo_actions')
-    eq = cur_ba.get('归属于母公司股东权益合计')
-    if eq is None:
-        eq = cur_ba.get('所有者权益(或股东权益)合计')
+    eq = equity_of(cur_ba)
     bps = cur.get('每股净资产')
     sh = eq / bps if (eq is not None and bps and bps > 0) else None
     issued, seen = 0.0, False
@@ -1299,24 +1284,11 @@ V_ITEMS = (
 )
 V_SUM_W = 100.0      # Σ V_ITEMS 权重，固定分母
 V_EDGE_FLOOR = -9.0  # 有形账面价值 ≤0 时 ln 无定义：记成一个必然夹到 0 分档的下界
-# 归母权益的键名变体，顺序与 JS 的 V_EQ_KEYS 一字不差。核心列只映射前两个
-# （app/fin_columns.py），A 股银行系多一个「的」、港股写成「股东权益合计」，实测 98 家
-# （银行/保险/券商）因此整条权益链取不到、V 的 40 分凭空判不动。
-V_EQ_KEYS = ('归属于母公司股东权益合计', '所有者权益(或股东权益)合计',
-             '归属于母公司股东的权益', '股东权益合计', '归属于母公司所有者权益合计')
 
 
 def _v_num(v):
     """对应 JS 的 `typeof v === 'number' && isFinite(v)`。"""
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) else None
-
-
-def _v_equity(row):
-    for k in V_EQ_KEYS:
-        v = _v_num(row.get(k))
-        if v is not None:
-            return v
-    return None
 
 
 def _v_year(s):
@@ -1354,7 +1326,7 @@ def value_score(d):
         if not y:
             continue
         s = slot(y)
-        eq = _v_equity(r)
+        eq = equity_of(r)
         if eq is not None:
             s['eq'] = eq
         for k, col in (('ta', '资产总计'), ('tl', '负债合计'),

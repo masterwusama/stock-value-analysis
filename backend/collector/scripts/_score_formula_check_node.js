@@ -49,7 +49,18 @@ async function main() {
     const vs = m.valueScores(d, m.valueAnalysis(d));
     const gs = m.growthScore(d) || {};
     const vscore = m.valueScore(d) || {};
+    const tp = m.trapScore(d) || {};
+    const pr = m.priceReferences(d, m.valueAnalysis(d));
+    const refs = {};
+    for (const key of ['grahamAgg', 'grahamDef', 'schloss', 'buffett']) {
+      const r = pr[key] || {};
+      refs[key] = { buy: num(r.buy), sellCons: num(r.sellCons), sellFair: num(r.sellFair) };
+    }
     out[path.basename(f, '.json')] = {
+      equities: (d.balance || []).map(m.equityOf),
+      trap: num(tp.total),
+      trapEval: num(tp.na ? null : (tp.eff ? tp.eff.evaluated : null)),
+      priceRefs: refs,
       grahamAgg: num(vs.grahamAgg.total),
       grahamDef: num(vs.grahamDef.total),
       schloss: num(vs.schloss.total),
