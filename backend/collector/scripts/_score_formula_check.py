@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """评分公式的边界与缺失数据探针（合成输入，不碰数据库、不碰真实公司）。
 
-覆盖四处口径，都是「拿真实公司跑一遍全量」看不出来的那类：
+覆盖五处口径，都是「拿真实公司跑一遍全量」看不出来的那类：
 1. 流动比率打分在 1.5 这一点必须与前一段衔接（曾出现比率变好、分数反而掉 5 分）；
 2. 施洛斯的风险扣分必须真的落到总分上（曾被 ±可评估权重的夹逼整段吞掉，扣多少都是 0）；
 3. 5 年累计净现比只按「同年净利润与经营现金流都有数」的年份配对，并如实报出配对年数
    （曾把两列各自的和相除，缺失年份不重合时比值不对应任何一段真实经营期）；
-4. 覆盖度归一只补偿正分，缺项不得把负分放大（曾把格防的 −28 推成 −31.11，越过 −30 下限）。
+4. 覆盖度归一只补偿正分，缺项不得把负分放大（曾把格防的 −28 推成 −31.11，越过 −30 下限）；
+5. 成长综合分 G 的分母固定为 100 权重：缺项只压低总分，绝不按可用项重新归一。
 
 每个断言同时跑 Python（scoring.py）与 JS（stockLegacy.js，经 Node 抽取原函数）两侧：
 两边必须在同一批合成输入上给出相同总分——真实数据的逐项一致性由 _score_check.py 全量校验，
@@ -35,9 +36,9 @@ if ALT:
     _mod = importlib.util.module_from_spec(_spec)
     _spec.loader.exec_module(_mod)
     value_analysis, value_scores = _mod.value_analysis, _mod.value_scores
-    _school_total = _mod._school_total
+    growth_score, _school_total = _mod.growth_score, _mod._school_total
 else:
-    from scoring import value_analysis, value_scores, _school_total  # noqa: E402
+    from scoring import value_analysis, value_scores, growth_score, _school_total  # noqa: E402
 
 FIX_DIR = HERE.parent / "_tmp" / "formula-fixtures"
 YEARS = [2020, 2021, 2022, 2023, 2024]
@@ -84,6 +85,7 @@ def company(ba=None, ind=None, cf=None, snap=None, divs=None, notes=None, income
 
 FIX = {}          # name -> 输入
 EXP = {}          # name -> Python 侧四项总分，供 JS 对端比对
+G_EXP = {}        # name -> (成长总分, 可评估项数)，同一批 fixture 的 G 侧对端
 
 
 def probe(name, d):
@@ -91,6 +93,14 @@ def probe(name, d):
     t = value_scores(d, value_analysis(d))
     EXP[name] = t
     return t
+
+
+def g_probe(name, d):
+    """只取成长分的探针：输入仍登记进 FIX（JS 对端跑同一批文件），产出登记进 G_EXP。"""
+    FIX[name] = d
+    r = growth_score(d)
+    G_EXP[name] = (r['total'], r['evaluated'])
+    return r
 
 
 fails = []
@@ -234,6 +244,45 @@ for name, d in EXTREME.items():
         v = t[key]
         check(v is None or (isinstance(v, (int, float)) and math.isfinite(v) and lo - 1e-9 <= v <= hi + 1e-9),
               f"{name}.{key} 越界或非法：{v}（应在 {lo}~{hi}）")
+    gr = g_probe(name, d)      # 同一批极端输入喂给成长分：不炸、不出 NaN、落在 0~100 或判不动
+    check(gr['total'] is None or (math.isfinite(gr['total']) and -1e-9 <= gr['total'] <= 100 + 1e-9),
+          f"{name}.growth 越界或非法：{gr['total']}")
+
+# ==================== 5) 成长分 G：分母固定 100 权重，缺项不得把分顶上去 ====================
+# 与第 2b 条相反的方向：四派给正分做覆盖度补偿，G 刻意不补偿。按可用项归一会让「只披露得
+# 起 ROE 的公司」和「七项齐全的公司」平起平坐，披露越差反而显得更能长——当初否掉
+# weightedTotal 的正是这条，而真实数据九成公司七项齐全，全量比对看不见这个失效形状。
+# （实测对照：把分母换成可评估权重跑同一批 fixture，抽掉两项披露反而 92.9 → 95.2。）
+def g_ind(drop=()):
+    """七项全可评估的干净历史：净利/营收/每股净资产逐年递增、ROE 高位微升（5 期，跨度 4 年）。"""
+    rows = []
+    for i, y in enumerate(YEARS):
+        r = ind_row(f"{y}-12-31", net=1e9 * 1.2 ** i, **{
+            '营业总收入': 1e10 * 1.15 ** i, '净资产收益率': 0.15 + 0.01 * i,
+            '每股净资产': 3.0 * 1.18 ** i})
+        for col in drop:
+            r[col] = None
+        rows.append(r)
+    return rows
+
+
+# 三份输入只在「某几列披不披露」上不同，分项数值一模一样：分母若跟着可用权重缩水，
+# 三个总分就会相等，下面这条严格递减立刻红。
+r7 = g_probe('g_full7', company(ind=g_ind()))
+r5 = g_probe('g_no_roe', company(ind=g_ind(('净资产收益率',))))
+r4 = g_probe('g_no_roe_bps', company(ind=g_ind(('净资产收益率', '每股净资产'))))
+r3 = g_probe('g_two_years', company(ind=[ind_row(f"{y}-12-31") for y in YEARS[:2]]))
+check(r7['evaluated'] == 7 and r5['evaluated'] == 5 and r4['evaluated'] == 4,
+      f"可评估项数应随披露缺列如实掉：7 项/{r7['evaluated']}、抽掉 ROE/{r5['evaluated']}、"
+      f"再抽掉每股净资产/{r4['evaluated']}")
+check(r7['total'] is not None and 0 <= r7['total'] <= 100,
+      f"七项齐全且都在高增长位时应落在 0~100 的高段，实为 {r7['total']}")
+check(r7['total'] > r5['total'] > r4['total'],
+      f"缺项必须压低总分（分母固定为 100 权重，不得按可用项归一）："
+      f"7 项 {r7['total']} / 5 项 {r5['total']} / 4 项 {r4['total']}")
+# 年报不足 3 期是「判不动」，不是 0 分——落成 0 会跟「查过了，一点没长」混成一格
+check(r3['total'] is None and r3['evaluated'] == 0,
+      f"只有 2 期年报时应整分判不动，实为 {r3['total']}/可评估 {r3['evaluated']}")
 
 # ==================== JS 对端：同一批输入必须给同样的总分 ====================
 if ALT:
@@ -257,12 +306,16 @@ else:
             for key in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
                 p, j = t[key], (js.get(name) or {}).get(key)
                 check(close(p, j, 1e-9), f"{name}.{key}: Python={p} JS={j}")
+        for name, (tot, ev) in G_EXP.items():
+            j = js.get(name) or {}
+            check(close(tot, j.get('growth'), 1e-9) and ev == j.get('growthEval'),
+                  f"{name}.growth: Python={tot}/{ev} 项 JS={j.get('growth')}/{j.get('growthEval')} 项")
 
-print(f"  输入 {len(FIX)} 组（流动比率扫点 {len(RS)} / 扣分 {len(PEN_CASES)} / 其余为缺失与极端）")
+print(f"  输入 {len(FIX)} 组（流动比率扫点 {len(RS)} / 扣分 {len(PEN_CASES)} / 成长分覆盖度 {len(G_EXP) - len(EXTREME)} / 其余为缺失与极端）")
 if fails:
     print(f"  不通过 {len(fails)} 项:")
     for m in fails:
         print("   ", m)
     sys.exit(1)
-print("  全部通过：流动比率单调、施洛斯扣分足额落地、净现比按年配对" +
+print("  全部通过：流动比率单调、施洛斯扣分足额落地、净现比按年配对、成长分固定分母" +
       ("" if ALT else "，且 Python/JS 一致"))

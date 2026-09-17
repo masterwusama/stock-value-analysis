@@ -384,15 +384,15 @@
       '<span class="s-meta">更新于 ' + fmtDate(s.time || d.updated_at) + '</span>' +
       '</div>';
 
-    // Wind 事件覆盖层当前代码条目（⑥⑦优化说明 + ⑨事件模块共用）；无事件数据（港美股/未抓公司）为 null
+    // Wind 事件覆盖层当前代码条目（⑥⑦优化说明 + ⑪事件模块共用）；无事件数据（港美股/未抓公司）为 null
     var ovD = (state.eventOverlay && state.eventOverlay[d.code]) ? state.eventOverlay[d.code] : null;
     var hasEvents = evHasAny(d._events);
     var hasAct = hasActions(d.actions);
-    // ⑨ 恒在（陷阱分对非 A 股也占一个位子，整节显示「不适用」而不是消失）；⑩ 只在有 Wind
-    // 事件明细时出，股本事件跟着顶上空缺的那个号，免得出现 ⑨ → ⑪ 的跳号
-    var actNo = hasEvents ? '⑪' : '⑩';
+    // ⑨⑩ 两个综合分恒在（陷阱分对非 A 股也占一个位子，整节显示「不适用」而不是消失）；⑪ 只在有
+    // Wind 事件明细时出，股本事件跟着顶上空缺的那个号，免得出现 ⑩ → ⑫ 的跳号
+    var actNo = hasEvents ? '⑫' : '⑪';
 
-    // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑨ 恒在，⑩ ⑪ 按有无数据出
+    // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑩ 恒在，⑪ ⑫ 按有无数据出
     html += '<nav class="va-nav" aria-label="详情模块导航">' +
       '<a href="#sec-basic" data-scroll="sec-basic">① 基础财务信息</a>' +
       '<a href="#sec-value" data-scroll="sec-value">② 通用价值标准</a>' +
@@ -402,8 +402,9 @@
       '<a href="#sec-fraud" data-scroll="sec-fraud">⑥ 造假风险</a>' +
       '<a href="#sec-mgmt" data-scroll="sec-mgmt">⑦ 管理水平</a>' +
       '<a href="#sec-cycle" data-scroll="sec-cycle">⑧ 周期位置</a>' +
-      '<a href="#sec-trap" data-scroll="sec-trap">⑨ 价值陷阱分</a>' +
-      (hasEvents ? '<a href="#sec-events" data-scroll="sec-events">⑩ 事件与股东</a>' : '') +
+      '<a href="#sec-growth" data-scroll="sec-growth">⑨ 成长综合分</a>' +
+      '<a href="#sec-trap" data-scroll="sec-trap">⑩ 价值陷阱分</a>' +
+      (hasEvents ? '<a href="#sec-events" data-scroll="sec-events">⑪ 事件与股东</a>' : '') +
       (hasAct ? '<a href="#sec-actions" data-scroll="sec-actions">' + actNo + ' 股本事件</a>' : '') +
       '</nav>';
 
@@ -630,18 +631,22 @@
       '<div class="stock-chart" id="stock-chart-cycle"></div>' +
       '<p class="stock-chart-note">逐年回溯：以各年报年为窗口末尾取最近 8 年年报，按与当期相同的 8 维逻辑打分；单季环比逐年参与（历史年用该年自身单季营收环比，末年用最新单季环比），各年均为满 8 维、同口径可比。</p></div></section>';
 
-    // ---- 模块九：价值陷阱分 T（七项坏消息证据的加权合计，分高＝坏消息堆得多；口径只覆盖 A 股）----
-    html += '<section id="sec-trap" class="stock-section va-module"><h2 class="va-module-title"><span>⑨</span>价值陷阱分 · 坏消息证据</h2>' +
+    // ---- 模块九：成长综合分 G（七项过去五年的增长证据加权，分高＝更能长；全市场可算）----
+    html += '<section id="sec-growth" class="stock-section va-module"><h2 class="va-module-title"><span>⑨</span>成长综合分 · 过去五年的增长证据</h2>' +
+      '<div class="score-card" id="stock-score-growth"></div></section>';
+
+    // ---- 模块十：价值陷阱分 T（七项坏消息证据的加权合计，分高＝坏消息堆得多；口径只覆盖 A 股）----
+    html += '<section id="sec-trap" class="stock-section va-module"><h2 class="va-module-title"><span>⑩</span>价值陷阱分 · 坏消息证据</h2>' +
       '<div class="score-card" id="stock-score-trap"></div></section>';
 
-    // ---- 模块十：公司事件与股东结构（仅当有 Wind 事件明细时展示；港美股/未抓公司自动隐藏）----
+    // ---- 模块十一：公司事件与股东结构（仅当有 Wind 事件明细时展示；港美股/未抓公司自动隐藏）----
     if (hasEvents) {
-      html += '<section id="sec-events" class="stock-section va-module"><h2 class="va-module-title"><span>⑩</span>公司事件与股东结构</h2>' +
+      html += '<section id="sec-events" class="stock-section va-module"><h2 class="va-module-title"><span>⑪</span>公司事件与股东结构</h2>' +
         renderEvents(d._events, ovD) + '</section>';
     }
 
-    // ---- 模块⑩/⑪：股本事件（定增 / 回购，东财全市场快照；港美股不采，整节不出）----
-    // 编号跟着 ⑩ 的有无走：没有 Wind 事件明细时 ⑩ 这个位子空着，由本节顶上
+    // ---- 模块⑪/⑫：股本事件（定增 / 回购，东财全市场快照；港美股不采，整节不出）----
+    // 编号跟着 ⑪ 的有无走：没有 Wind 事件明细时 ⑪ 这个位子空着，由本节顶上
     if (hasAct) {
       html += '<section id="sec-actions" class="stock-section va-module"><h2 class="va-module-title"><span>' + actNo + '</span>股本事件 · 定增与回购</h2>' +
         renderActions(d.actions) + '</section>';
@@ -665,6 +670,8 @@
     var ca = cycleAnalysis(d);
     var cycleEl = $('stock-score-cycle');
     if (cycleEl) cycleEl.innerHTML = cycleCard(ca);
+    var growthEl = $('stock-score-growth');
+    if (growthEl) growthEl.innerHTML = growthCard(growthScore(d));
     var trapEl = $('stock-score-trap');
     if (trapEl) trapEl.innerHTML = trapCard(trapScore(d));
     renderCycleChart(d, ca);
@@ -1852,9 +1859,16 @@
       var v = raw[it.key];
       var sc = v == null ? null : Math.max(0, Math.min(1, (v - it.lo) / (it.hi - it.lo)));
       if (v != null) { ev++; sum += it.weight * sc; }
-      items.push({ key: it.key, label: it.label, value: v, sc: sc, weight: it.weight,
-        na: v == null, why: v == null ? naWhy[it.key]
-          : (it.hi > it.lo ? '锚点 ' + it.lo + '~' + it.hi : '越少越好，' + it.lo + '→' + it.hi) });
+      items.push({ key: it.key, label: it.label, value: v, sc: sc, weight: it.weight, na: v == null });
+    });
+    // 可判项的「口径」用与「当前值」同一个格式化器：锚点写成 -0.05~0.15 时，读者看着
+    // 同行的 28.83% 还得自己换算量纲。判不动那侧没值可对，保留说明缺了哪一列的文案。
+    items.forEach(function (x) {
+      var it = G_ITEMS.filter(function (k) { return k.key === x.key; })[0];
+      var f = G_ANCHOR_FMT[x.key] || fmtNum;
+      x.why = x.na ? naWhy[x.key]
+        : (it.hi > it.lo ? '锚点 ' + f(it.lo) + '~' + f(it.hi)
+          : '越少越好，' + f(it.lo) + '→' + f(it.hi));
     });
     return {
       na: false, total: ev ? Math.round(sum / G_SUM_W * 1000) / 10 : null,
@@ -1865,6 +1879,77 @@
         + '后按先验权重折成 0~100。分母固定为 100 权重，缺项只压低分数不重新归一——可评估项数并列在'
         + '抬头，7 项齐全与只剩 3 项算得出的两家同样拿 60 分时，前者才是真的高增长。'
     };
+  }
+
+  // 成长分项的「当前值」格式化：三条增速与两条 ROE 量都是 0~1 的小数，负增长年数是整数
+  var G_VALUE_FMT = {
+    np_g5: fmtPct, rev_g5: fmtPct, bps_g5: fmtPct, accel: fmtPct,
+    roe_med: fmtPct, roe_trend: fmtPct, stab: fmtNum
+  };
+  // 「口径」列的锚点用同一套单位；负增长年数是整数刻度，其余沿用上面的百分数量格式化器
+  var G_ANCHOR_FMT = { stab: fmtNum };
+  Object.keys(G_VALUE_FMT).forEach(function (k) {
+    if (!G_ANCHOR_FMT[k]) G_ANCHOR_FMT[k] = G_VALUE_FMT[k];
+  });
+  // 回测五分位切点（A 股面板 21,926 条「公司 × 信号年」观测）与该档实测的未来增速中位数、
+  // 净利转负率。档位是按**回测当时**的分位切的，当期分布若整体漂移，占比会变而切点不动——
+  // 这张表回答的是「这个分数在历史上接着长出多少」，不是「你排第几」。
+  var G_BANDS = [
+    { hi: 16.0, label: '档1 增长最弱', grade: 'bad', s2: -9.2, s3: -13.4, neg2: 45.2 },
+    { hi: 28.3, label: '档2 偏低', grade: 'low', s2: -10.6, s3: -8.9, neg2: 28.7 },
+    { hi: 47.7, label: '档3 中位', grade: 'mid', s2: -8.9, s3: -8.6, neg2: 23.6 },
+    { hi: 69.0, label: '档4 偏高', grade: 'mid', s2: -4.2, s3: -2.9, neg2: 13.1 },
+    { hi: Infinity, label: '档5 最强', grade: 'good', s2: -2.0, s3: 0.4, neg2: 8.7 }
+  ];
+
+  function gBandOf(total) {
+    for (var i = 0; i < G_BANDS.length; i++) {
+      if (total <= G_BANDS[i].hi) return G_BANDS[i];
+    }
+    return G_BANDS[G_BANDS.length - 1];
+  }
+
+  function growthCard(gs) {
+    var band = gs.total == null ? null : gBandOf(gs.total);
+    var g = band ? band.grade : 'na';
+    var head = '<div class="score-card-head"><h4>成长综合分 G</h4>' +
+      '<div class="score-circle va-grade-' + g + '"><span>成长分</span><b>' +
+      (gs.total == null ? '算不出' : fmtNum(gs.total)) + '</b><i>' +
+      (band ? band.label : '年报不足 3 期') + '</i></div></div>';
+    if (gs.reason) return head + '<p class="score-note">' + gs.reason + '，七项全部判不动。</p>';
+    var rows = gs.items.map(function (x) {
+      var cls = x.na ? 'sc-na' : x.sc >= 0.8 ? 'sc-good' : x.sc >= 0.4 ? 'sc-mid' : 'sc-low';
+      var fmt = G_VALUE_FMT[x.key] || fmtNum;
+      return '<tr><td>' + x.label + '</td>' +
+        '<td class="v">' + (x.value == null ? '-' : fmt(x.value)) + '</td>' +
+        '<td class="v ' + cls + '">' + (x.na ? '判不动' : (x.sc * 100).toFixed(0) + '%') + '</td>' +
+        '<td class="v">' + x.weight + '</td>' +
+        '<td class="v"><b>' + (x.na ? '-' : fmtNum(x.weight * x.sc)) + '</b></td>' +
+        '<td class="v" style="text-align:left">' + x.why + '</td></tr>';
+    }).join('');
+    var bands = G_BANDS.map(function (b, i) {
+      var on = b === band;
+      var lo = i === 0 ? 0 : G_BANDS[i - 1].hi;
+      return '<tr' + (on ? ' class="cmp-group"' : '') + '><td>' + b.label + '</td>' +
+        '<td class="v">' + (b.hi === Infinity ? '> ' + lo : lo + ' ~ ' + b.hi) + '</td>' +
+        '<td class="v"><b>' + b.s2 + '%</b></td><td class="v">' + b.s3 + '%</td>' +
+        '<td class="v">' + b.neg2 + '%</td></tr>';
+    }).join('');
+    return head +
+      '<p class="score-basis">' + gs.basis + '　可判 ' + gs.eff.evaluated + '/7 项' +
+      '（分母固定为 100 权重，缺项只压低分数、不重新归一）</p>' +
+      '<div class="stock-compare-wrap"><table class="stock-compare">' +
+      '<thead><tr><th>分项</th><th>当前值</th><th>符合度</th><th>权重</th><th>贡献分</th><th>口径</th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>' +
+      '<div class="stock-compare-wrap"><h4 style="margin:8px 0 4px">档位实测结局（A 股 21,926 条「公司 × 信号年」回测，' +
+      '信息集按公告日重建，结局为锚点之后公开的真实净利增速）</h4>' +
+      '<table class="stock-compare">' +
+      '<thead><tr><th>档位</th><th>G 区间</th><th>未来 2 年年化</th><th>未来 3 年年化</th>' +
+      '<th>净利转负率</th></tr></thead><tbody>' + bands + '</tbody></table></div>' +
+      '<p class="score-note">' + gs.note + ' 档位两列都是未来真实增速的中位数：观测锚点在 2021~2023，' +
+      '其后两年正逢 A 股净利普遍下修，所以各档中位数普遍为负——读的是档与档之间的落差，' +
+      '不是某一档的绝对值。档1 与档2 在 2 年期上不分上下（差 1.4pp，在分位噪声内），落差主要出现在' +
+      ' 3 年期与转负率上——这条轴能拉开好坏两端，拉不动的正是中间那一大片。</p>';
   }
 
   // 造假分析评分卡（与 scoreCard 同构但等级方向相反：分低=安全=绿）；ov 为 Wind 事件覆盖层条目，有则并列基础分+事件明细+优化分
