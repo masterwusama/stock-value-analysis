@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 """评分公式的边界与缺失数据探针（合成输入，不碰数据库、不碰真实公司）。
 
-覆盖五处口径，都是「拿真实公司跑一遍全量」看不出来的那类：
+覆盖六处口径，都是「拿真实公司跑一遍全量」看不出来的那类：
 1. 流动比率打分在 1.5 这一点必须与前一段衔接（曾出现比率变好、分数反而掉 5 分）；
 2. 施洛斯的风险扣分必须真的落到总分上（曾被 ±可评估权重的夹逼整段吞掉，扣多少都是 0）；
 3. 5 年累计净现比只按「同年净利润与经营现金流都有数」的年份配对，并如实报出配对年数
    （曾把两列各自的和相除，缺失年份不重合时比值不对应任何一段真实经营期）；
 4. 覆盖度归一只补偿正分，缺项不得把负分放大（曾把格防的 −28 推成 −31.11，越过 −30 下限）；
-5. 成长综合分 G 的分母固定为 100 权重：缺项只压低总分，绝不按可用项重新归一。
+5. 成长综合分 G 的分母固定为 100 权重：缺项只压低总分，绝不按可用项重新归一；
+6. 价值综合分 V 同一条固定分母，加上它特有的两态：快照没有市值（或市值为 0）时价格那三项
+   一起判不动而剩下那 35 分照算，有形账面价值算得出但为负时留在 0 分档而不是判不动。
 
 每个断言同时跑 Python（scoring.py）与 JS（stockLegacy.js，经 Node 抽取原函数）两侧：
 两边必须在同一批合成输入上给出相同总分——真实数据的逐项一致性由 _score_check.py 全量校验，
@@ -37,8 +39,10 @@ if ALT:
     _spec.loader.exec_module(_mod)
     value_analysis, value_scores = _mod.value_analysis, _mod.value_scores
     growth_score, _school_total = _mod.growth_score, _mod._school_total
+    value_score = _mod.value_score
 else:
-    from scoring import value_analysis, value_scores, growth_score, _school_total  # noqa: E402
+    from scoring import (value_analysis, value_scores, growth_score,  # noqa: E402
+                         value_score, _school_total)
 
 FIX_DIR = HERE.parent / "_tmp" / "formula-fixtures"
 YEARS = [2020, 2021, 2022, 2023, 2024]
@@ -86,6 +90,7 @@ def company(ba=None, ind=None, cf=None, snap=None, divs=None, notes=None, income
 FIX = {}          # name -> 输入
 EXP = {}          # name -> Python 侧四项总分，供 JS 对端比对
 G_EXP = {}        # name -> (成长总分, 可评估项数)，同一批 fixture 的 G 侧对端
+V_EXP = {}        # name -> (价值总分, 可评估项数)，同一批 fixture 的 V 侧对端
 
 
 def probe(name, d):
@@ -100,6 +105,14 @@ def g_probe(name, d):
     FIX[name] = d
     r = growth_score(d)
     G_EXP[name] = (r['total'], r['evaluated'])
+    return r
+
+
+def v_probe(name, d):
+    """只取价值分的探针，形状同 g_probe（产出登记进 V_EXP）。"""
+    FIX[name] = d
+    r = value_score(d)
+    V_EXP[name] = (r['total'], r['evaluated'])
     return r
 
 
@@ -247,6 +260,9 @@ for name, d in EXTREME.items():
     gr = g_probe(name, d)      # 同一批极端输入喂给成长分：不炸、不出 NaN、落在 0~100 或判不动
     check(gr['total'] is None or (math.isfinite(gr['total']) and -1e-9 <= gr['total'] <= 100 + 1e-9),
           f"{name}.growth 越界或非法：{gr['total']}")
+    vr = v_probe(name, d)      # 价值分同一条：极端输入只允许「算得出在区间内」或「判不动」两种出口
+    check(vr['total'] is None or (math.isfinite(vr['total']) and -1e-9 <= vr['total'] <= 100 + 1e-9),
+          f"{name}.value 越界或非法：{vr['total']}")
 
 # ==================== 5) 成长分 G：分母固定 100 权重，缺项不得把分顶上去 ====================
 # 与第 2b 条相反的方向：四派给正分做覆盖度补偿，G 刻意不补偿。按可用项归一会让「只披露得
@@ -284,6 +300,66 @@ check(r7['total'] > r5['total'] > r4['total'],
 check(r3['total'] is None and r3['evaluated'] == 0,
       f"只有 2 期年报时应整分判不动，实为 {r3['total']}/可评估 {r3['evaluated']}")
 
+# ==================== 6) 价值综合分 V：便宜那三项全吃快照市值 ====================
+# 真实数据里快照恒有市值，所以「行情源不返 market_cap」这个失效形状跑全量比对永远看不见，
+# 只能摆合成输入。另一条同理：有形账面价值为负是「确实没有安全边际」（0 分档），归母权益
+# 缺行才是「取不到」（判不动）——两者在库里都稀有，混起来的后果是资不抵债的公司不被扣分。
+def v_ind(drop=()):
+    """七项全可评估的干净历史：净利逐年增、ROE 中段、每股净资产齐。"""
+    rows = []
+    for i, y in enumerate(YEARS):
+        r = ind_row(f"{y}-12-31", net=1e9 * 1.1 ** i, **{
+            '净资产收益率': 0.10 + 0.01 * i, '每股净资产': 5.0, '资产负债率': 0.4})
+        for col in drop:
+            r[col] = None
+        rows.append(r)
+    return rows
+
+
+V_DIVS = [{'year': y, 'bonus_per_10': 2.0} for y in (2021, 2022, 2023)]
+V_BASE = dict(ind=v_ind(), divs=V_DIVS,
+              cf=[cf_row(f"{y}-12-31", ocf=1e9) for y in YEARS])
+w7 = v_probe('v_full7', company(**V_BASE))
+w_nocap = v_probe('v_no_mcap', company(
+    snap={'price': 10.0, 'pe_ttm': 8.0, 'pb': 0.5}, **V_BASE))
+w_zerocap = v_probe('v_zero_mcap', company(
+    snap={'price': 10.0, 'market_cap': 0.0, 'pe_ttm': 8.0, 'pb': 0.5}, **V_BASE))
+w_negbook = v_probe('v_neg_equity', company(ba=[ba_row(eq=-1e9)], **V_BASE))
+w_noeq = v_probe('v_no_equity', company(ba=[ba_row(eq=None)], **V_BASE))
+d_us = company(**{k: v for k, v in V_BASE.items() if k != 'divs'})
+d_us['market'] = 'US'
+d_us['dividends'] = []      # 查无派现记录：分不清「没分过」与「这一侧没覆盖」
+w_us = v_probe('v_us_nodiv', d_us)
+w_2y = v_probe('v_two_years', company(
+    ind=[ind_row(f"{y}-12-31") for y in YEARS[:2]], ba=[], cf=[]))
+
+check(w7['evaluated'] == 7 and w7['total'] is not None and 0 <= w7['total'] <= 100,
+      f"七项齐全时应落在 0~100，实为 {w7['total']}/可评估 {w7['evaluated']}")
+# 缺市值 ⇒ 账面折扣、盈利收益率、股息率三项一起判不动，质量那 35 分照算
+check(w_nocap['evaluated'] == 4 and w_nocap['total'] is not None
+      and w_nocap['total'] < w7['total'],
+      f"无市值应剩 4 项且总分更低：{w_nocap['total']}/可评估 {w_nocap['evaluated']}"
+      f"（七项那份是 {w7['total']}）")
+check(close(w_nocap['total'], w_zerocap['total'])
+      and w_zerocap['evaluated'] == 4,
+      "市值为 0 应与「没有市值」同一形状：0 不是极度便宜，是行情行坏了")
+# 算得出而为负 = 0 分档；科目取不到 = 判不动。两条必须给出不同的 evaluated
+check(w_negbook['raw'].get('edge_tbv') is not None and w_negbook['evaluated'] == 7,
+      f"资不抵债仍应算得出来（记 0 分档）：raw={w_negbook['raw'].get('edge_tbv')}"
+      f" 可评估 {w_negbook['evaluated']}")
+check(w_noeq['raw'].get('edge_tbv') is None and w_noeq['evaluated'] == 5,
+      f"缺归母权益应判不动（连带股息率也断，剩 5 项）："
+      f"可评估 {w_noeq['evaluated']}")
+check(w_negbook['total'] < w7['total'] and w_noeq['total'] < w7['total'],
+      f"两种缺法都不该把分顶上去：负账面 {w_negbook['total']} / 缺权益 {w_noeq['total']}"
+      f" vs 七项 {w7['total']}")
+# 非 A 股的分红史不是全量可查：查不到分不清「没分过」与「这一侧没覆盖」
+check(w_us['raw'].get('return_cash') is None and w_us['evaluated'] == 6,
+      f"美股无分红记录时 return_cash 应判不动（不是 0 分档）："
+      f"可评估 {w_us['evaluated']}")
+check(w_2y['total'] is None and w_2y['evaluated'] == 0,
+      f"年报不足 3 期应整分判不动，实为 {w_2y['total']}/可评估 {w_2y['evaluated']}")
+
 # ==================== JS 对端：同一批输入必须给同样的总分 ====================
 if ALT:
     print("== 评分公式边界探针（替代实现 %s，跳过 JS 对端）==" % Path(ALT).name)
@@ -310,12 +386,18 @@ else:
             j = js.get(name) or {}
             check(close(tot, j.get('growth'), 1e-9) and ev == j.get('growthEval'),
                   f"{name}.growth: Python={tot}/{ev} 项 JS={j.get('growth')}/{j.get('growthEval')} 项")
+        for name, (tot, ev) in V_EXP.items():
+            j = js.get(name) or {}
+            check(close(tot, j.get('value'), 1e-9) and ev == j.get('valueEval'),
+                  f"{name}.value: Python={tot}/{ev} 项 JS={j.get('value')}/{j.get('valueEval')} 项")
 
-print(f"  输入 {len(FIX)} 组（流动比率扫点 {len(RS)} / 扣分 {len(PEN_CASES)} / 成长分覆盖度 {len(G_EXP) - len(EXTREME)} / 其余为缺失与极端）")
+print(f"  输入 {len(FIX)} 组（流动比率扫点 {len(RS)} / 扣分 {len(PEN_CASES)} / "
+      f"成长分覆盖度 {len(G_EXP) - len(EXTREME)} / 价值分覆盖度 {len(V_EXP) - len(EXTREME)} / "
+      f"其余为缺失与极端）")
 if fails:
     print(f"  不通过 {len(fails)} 项:")
     for m in fails:
         print("   ", m)
     sys.exit(1)
-print("  全部通过：流动比率单调、施洛斯扣分足额落地、净现比按年配对、成长分固定分母" +
-      ("" if ALT else "，且 Python/JS 一致"))
+print("  全部通过：流动比率单调、施洛斯扣分足额落地、净现比按年配对、成长分与价值分固定分母"
+      "（含市值缺位与负账面那两态）" + ("" if ALT else "，且 Python/JS 一致"))

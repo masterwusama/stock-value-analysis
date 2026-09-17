@@ -1368,7 +1368,8 @@ def value_score(d):
 
     years = sorted(by_year)
     if len(years) < 3:
-        return {'total': None, 'evaluated': 0, 'missing': len(V_ITEMS), 'na': 0, 'raw': {}}
+        return {'total': None, 'evaluated': 0, 'missing': len(V_ITEMS),
+                'na': 0, 'raw': {}}
     ay, win, cur = years[-1], years[-5:], by_year[years[-1]]
     mcap = _v_num((d.get('snapshot') or {}).get('market_cap'))
     if mcap is not None and not mcap > 0:

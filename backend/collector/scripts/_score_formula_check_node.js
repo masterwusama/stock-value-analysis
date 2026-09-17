@@ -1,6 +1,6 @@
 /* _score_formula_check.py 的 Node 对端：把合成 fixture 喂给 stockLegacy.js 的原函数，
- * 打出与 Python value_scores 同构的四派总分 + 成长分（growth / growthEval），
- * 供 Python 侧比对边界形状是否两边一致。
+ * 打出与 Python value_scores 同构的四派总分 + 成长分（growth / growthEval）
+ * + 价值分（value / valueEval），供 Python 侧比对边界形状是否两边一致。
  *
  * 与 _score_check_node.js 的差别只在输入来源：那个跑全量真实公司，这个跑指定目录下的
  * 合成 fixture（几十份，秒级），所以浏览器垫片按同样的路子垫一份。
@@ -48,6 +48,7 @@ async function main() {
     const d = JSON.parse(fs.readFileSync(path.join(DIR, f), 'utf8'));
     const vs = m.valueScores(d, m.valueAnalysis(d));
     const gs = m.growthScore(d) || {};
+    const vscore = m.valueScore(d) || {};
     out[path.basename(f, '.json')] = {
       grahamAgg: num(vs.grahamAgg.total),
       grahamDef: num(vs.grahamDef.total),
@@ -55,6 +56,8 @@ async function main() {
       buffett: num(vs.buffett.total),
       growth: num(gs.total),
       growthEval: num(gs.eff ? gs.eff.evaluated : null),
+      value: num(vscore.total),
+      valueEval: num(vscore.eff ? vscore.eff.evaluated : null),
     };
   }
   process.stdout.write(JSON.stringify(out));

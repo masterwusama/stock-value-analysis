@@ -2085,7 +2085,8 @@
       var v = vNum(raw[it.key]);
       var sc = v == null ? null : Math.max(0, Math.min(1, (v - it.lo) / (it.hi - it.lo)));
       if (v != null) { ev++; sum += it.weight * sc; }
-      items.push({ key: it.key, label: it.label, value: v, sc: sc, weight: it.weight, na: v == null });
+      items.push({ key: it.key, label: it.label, value: v, sc: sc,
+        weight: it.weight, na: v == null });
     });
     items.forEach(function (x) {
       var it = V_ITEMS.filter(function (k) { return k.key === x.key; })[0];
