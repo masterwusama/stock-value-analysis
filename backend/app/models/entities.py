@@ -215,7 +215,8 @@ class ScoreDaily(Base):
     recommend: Mapped[float | None] = mapped_column(Double)
     recommend_gate: Mapped[str | None] = mapped_column(String(16))
     # 中报恶化 dip：最新 interim 扣非（缺则净利）同比。评分轴只吃年报，这是「年报正常、
-    # 之后中报变脸」盲区的探针（600866 实例）：≤ −30% 列表挂徽标，≤ −50% 拦下 R。
+    # 之后中报变脸」盲区的探针（600866 实例）：≤ −30% 列表挂徽标，≤ −70% 拦下 R
+    # （阈值来历 scripts/dip_validity.py：转亏 lift 7.8×、年报复证 lift 3.3×）。
     # NULL = 最新一期已是年报 / 双期数据缺一，不是「没恶化」。
     interim_dip: Mapped[float | None] = mapped_column(Double)
     fair_liq: Mapped[float | None] = mapped_column(Double)

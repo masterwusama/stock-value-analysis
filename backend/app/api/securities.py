@@ -155,7 +155,7 @@ class SecurityItem(BaseModel):
     recommend: float | None = None
     recommend_gate: str | None = None
     # 中报恶化 dip：最新 interim 扣非（缺则净利）同比。NULL = 最新一期已是年报或双期缺一，
-    # 不是「没恶化」；≤ −0.3 前端挂徽标，≤ −0.5 拦下 R（详见 §2.3）
+    # 不是「没恶化」；≤ −0.3 前端挂徽标，≤ −0.7 拦下 R（详见 §2.3）
     interim_dip: float | None = None
     # 硬门槛（1=触发，0=可判且未触发，null=一个信号都判不了）与命中项，口径见 import_legacy.GATE_FLAGS
     gate: bool | None = None

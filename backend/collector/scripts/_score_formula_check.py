@@ -436,15 +436,19 @@ if not ALT:
           and _cs_bq['recommendGate'] == _cs_ref['recommendGate'],
           f"R 没按 0.6 权重跟随 V：ΔR={_cs_bq['recommend'] - _cs_ref['recommend']} "
           f"ΔV={_cs_bq['value'] - _cs_ref['value']}")
-    # 门槛三态 + 舍入口径直接钉在函数上（单个陷阱旗只到 T=10，构不出过线输入，不必绕整条链）
+    # 门槛四态 + 中报恶化门槛 + 舍入口径直接钉在函数上（单个陷阱旗只到 T=10，构不出过线输入，不必绕整条链）
     from scoring import recommend_score as _rs
     check(_rs(80.0, 60.0, 45.0, 10.0) == (None, 'fraud')
           and _rs(80.0, 60.0, 10.0, 25.0) == (None, 'trap')
           and _rs(80.0, 60.0, 45.0, 25.0) == (None, 'fraud+trap')
+          and _rs(80.0, 60.0, 10.0, 10.0, -0.71) == (None, 'interim')
+          and _rs(80.0, 60.0, 45.0, 10.0, -0.90) == (None, 'fraud+interim')
+          and _rs(80.0, 60.0, 10.0, 10.0, -0.69) == (72.0, 'pass')      # 边界内侧放行
+          and _rs(80.0, 60.0, 10.0, 10.0, -0.70) == (None, 'interim')   # 边界恰好拦下
           and _rs(None, 60.0, 10.0, 10.0) == (None, 'nodata')
           and _rs(80.0, 60.0, None, None) == (72.0, 'pass')
           and _rs(85.0, 40.0, 40.0, 20.0) == (67.0, 'pass'),
-          "recommend_score 的门槛三态/边界值（40 与 20 恰好过线）或 0.6×V+0.4×G 舍入口径不对")
+          "recommend_score 的门槛四态/中报恶化边界（−0.69 放行、−0.70 拦下）或 0.6×V+0.4×G 舍入口径不对")
 
 E_EXP = {}
 if not ALT:

@@ -219,8 +219,8 @@ const G_TIP = '成长综合分 G（0-100，越高越好）：净利/营收/每�
 // 各档实测未来增速刻意不复述，只在详情页给，避免两处各写一份数字。
 const G_BAND_CUTS = [[16.0, '档1 增长最弱', 'bad'], [28.3, '档2 偏低', 'low'], [47.7, '档3 中位', 'mid'], [69.0, '档4 偏高', 'mid']]
 const R_TIP = '综合推荐分 R（0-100，越高越好）：门槛外的 0.6×价值综合分 V + 0.4×成长综合分 G。'
-  + '两道发分门槛——造假 ≤ 40 · 陷阱 ≤ 20（判不动的门槛输入按无证据放行，港美股陷阱整列不适用）。'
-  + '门槛外的公司显示 -，那是「不过资格线」不是 0 分；门槛过了但 V/G 判不动同样无分（悬停可见原因）。'
+  + '三道发分门槛——造假 ≤ 40 · 陷阱 ≤ 20 · 中报恶化 dip ≤ −70%（判不动的门槛输入按无证据放行，港美股陷阱/扣非缺失侧 dip 不适用）。'
+  + '门槛外的公司显示 -，那是「不过资格线」不是 0 分；悬停可见具体原因（fraud/trap/interim/nodata）。'
   + '回测（A 股 2021~2023 事件时面板）：门槛内按无价格版五分位，其后转亏率 16.0%→2.4% 单调、减值≥5% 26.8%→3.3% 单调、逐年 3/3。'
   + '收益侧实测为负向（高分组 2 年超额跑输 10.1pp，2022~2024 质量/成长风格杀跌）——R 是排雷与选质的入口，不是买点。'
 // 档位切点镜像 stockLegacy.js 的 R_BANDS（回测面板 R_full 五分位 24/36/46/56 取整），改那边要同步这边。
@@ -228,7 +228,7 @@ const R_BAND_CUTS = [[24, '档1 最差', 'bad'], [36, '档2 偏低', 'low'], [46
 const R_GATE_LABEL = {
   fraud: '造假红旗分 > 40，被资格线拦下',
   trap: '价值陷阱分 > 20，被资格线拦下',
-  'fraud+trap': '造假与陷阱双双过线，被资格线拦下',
+  interim: '中报恶化：最新一期季报/半年报扣非同比 ≤ −70%，被资格线拦下（回测转亏 lift 7.8×）',
   nodata: '门槛已过，但 V/G 至少一条判不动（公开年报不足 3 期）',
 }
 function windTip(s, kind, baseTip) {
@@ -496,9 +496,16 @@ function bandOfR(v) {
   return ['档5 最高', 'good']
 }
 const rGrade = (s) => s.recommend == null ? 'na' : bandOfR(s.recommend)[1]
+// 组合门槛（fraud+interim 这类）按 '+ ' 拆开拼装，单门槛直接查表
+function rGateText(g) {
+  if (!g) return '原因未知'
+  if (R_GATE_LABEL[g]) return R_GATE_LABEL[g]
+  const parts = String(g).split('+').filter((k) => R_GATE_LABEL[k])
+  return parts.length ? parts.map((k) => R_GATE_LABEL[k]).join('；') : '原因未知'
+}
 function rTitle(s) {
   if (s.recommend == null) {
-    return R_TIP + '｜本标的：无 R（' + (R_GATE_LABEL[s.recommend_gate] || '原因未知') + '）'
+    return R_TIP + '｜本标的：无 R（' + rGateText(s.recommend_gate) + '）'
   }
   const [label] = bandOfR(s.recommend)
   const ing = []

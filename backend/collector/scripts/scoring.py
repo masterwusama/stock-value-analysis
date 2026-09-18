@@ -1475,7 +1475,13 @@ R_TRAP_GATE = 20.0       # 陷阱分门槛：出厂档位「档2 单点」上沿
 # 扣非（缺则净利）同比」，两处消费：列表标注（≤ INTERIM_DIP_NOTE 挂徽标）与 R 的中报
 # 恶化门槛（≤ INTERIM_DIP_GATE 拦下，见 recommend_score）。
 INTERIM_DIP_NOTE = -0.30     # 标注线：列名后挂「中报−xx%」徽标，只标注不折分
-INTERIM_DIP_GATE = -0.50     # 门槛线：R 拦下（阈值来历见 scripts/dip_validity.py 的回测）
+# 门槛线：dip ≤ −70% 拦下 R。阈值来自 scripts/dip_validity.py 的回测（A 股 interim 观测
+# 78,277 条、可用日=法定期限）：−70% 档转亏 lift 7.83×（旗组 34.3% vs 其余 4.4%）、年报复证
+# （FY 扣非同比 ≤−30%）lift 3.27×（74.0% vs 22.6%）、旗占观测 15.8%——采用线（转亏 lift ≥2.0、
+# 复证 lift ≥1.5、旗占比 ≤25% 与既有 fraud/trap 门槛量级对齐）取最深满足者。收益侧备注：
+# 旗组前瞻 1y 超额反而 +3.4pp（超跌反弹的风格效应），R 收益侧本就判 FAIL 非卖点，门槛的
+# 存在理由是基本面排雷，此条披露不判决。
+INTERIM_DIP_GATE = -0.70
 
 
 def interim_dip_yoy(indicators):
@@ -1508,12 +1514,13 @@ def interim_dip_yoy(indicators):
     return (cur - pv) / abs(pv)
 
 
-def recommend_score(v_total, g_total, fraud, trap_total):
+def recommend_score(v_total, g_total, fraud, trap_total, dip=None):
     """→ (R 总分 or None, 门槛状态)。
 
-    门槛状态：'pass'（有分）/ 'fraud' / 'trap' / 'fraud+trap'（被资格线拦下）/
-    'nodata'（门槛过了但 V/G 任一判不动，公开年报不足 3 期）。判不动的门槛输入（fraud/trap
-    为 None）按「无证据」放行——港美股 trap 整列不适用，靠这一条才拿得到 R。
+    门槛状态：'pass'（有分）/ 'fraud' / 'trap' / 'interim'（中报恶化 dip ≤ −70%，见
+    INTERIM_DIP_GATE 注释）/ 组合（'+' 连接，如 'fraud+interim'）/ 'nodata'（门槛过了
+    但 V/G 任一判不动，公开年报不足 3 期）。判不动的门槛输入（fraud/trap/dip 为 None）
+    按「无证据」放行——港美股 trap 整列不适用、扣非缺失侧 dip 判不动，靠这条拿得到 R。
     stockLegacy.js 的 recommendScore 同一条规则。
     """
     fail = []
@@ -1521,6 +1528,8 @@ def recommend_score(v_total, g_total, fraud, trap_total):
         fail.append('fraud')
     if trap_total is not None and trap_total > R_TRAP_GATE:
         fail.append('trap')
+    if dip is not None and dip <= INTERIM_DIP_GATE:
+        fail.append('interim')
     if fail:
         return None, '+'.join(fail)
     if v_total is None or g_total is None:
@@ -1915,11 +1924,13 @@ def compute_scores(company, now=None):
     vv = value_score(company)
     scores['value'] = vv['total']
     scores['valueEval'] = vv['evaluated']
+    # 中报恶化 dip：年报盲区探针（标注 + R 门槛共用），口径见 interim_dip_yoy 文件头。
+    # 先算再喂 R：门槛是它存在的第一理由。
+    scores['interimDip'] = interim_dip_yoy(company.get('indicators'))
     # 综合推荐分 R：门槛外的 V/G 合成（见 recommend_score 文件头）
     scores['recommend'], scores['recommendGate'] = recommend_score(
-        scores['value'], scores['growth'], scores['fraud'], scores['trap'])
-    # 中报恶化 dip：年报盲区探针（标注 + R 门槛共用），口径见 interim_dip_yoy 文件头
-    scores['interimDip'] = interim_dip_yoy(company.get('indicators'))
+        scores['value'], scores['growth'], scores['fraud'], scores['trap'],
+        scores['interimDip'])
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。

@@ -704,13 +704,14 @@
     if (valueEl) valueEl.innerHTML = valueCard(vv);
     var growthEl = $('stock-score-growth');
     if (growthEl) growthEl.innerHTML = growthCard(gg);
-    // R 综合推荐分：同一份现算输入（V/G/造假/陷阱）合成，与列表页入库分同一套公式
+    // R 综合推荐分：同一份现算输入（V/G/造假/陷阱/中报恶化）合成，与列表页入库分同一套公式
     var recEl = $('stock-score-recommend');
     if (recEl) {
       var tpD = trapScore(d) || {};
+      var dip = interimDipYoy(d.indicators || []);
       recEl.innerHTML = recommendCard(recommendScore(vv.total, gg.total,
-                                                     fa ? fa.total : null, tpD.total),
-                                       vv.total, gg.total, interimDipYoy(d.indicators || []));
+                                                     fa ? fa.total : null, tpD.total, dip),
+                                       vv.total, gg.total, dip);
     }
     var trapEl = $('stock-score-trap');
     if (trapEl) trapEl.innerHTML = trapCard(trapScore(d));
@@ -2239,10 +2240,11 @@
    */
   var R_W_VALUE = 0.6, R_FRAUD_GATE = 40, R_TRAP_GATE = 20;
 
-  function recommendScore(vTotal, gTotal, fraud, trap) {
+  function recommendScore(vTotal, gTotal, fraud, trap, dip) {
     var fail = [];
     if (fraud != null && fraud > R_FRAUD_GATE) fail.push('fraud');
     if (trap != null && trap > R_TRAP_GATE) fail.push('trap');
+    if (dip != null && dip <= INTERIM_DIP_GATE) fail.push('interim');
     if (fail.length) return { total: null, gate: fail.join('+') };
     if (vTotal == null || gTotal == null) return { total: null, gate: 'nodata' };
     return { total: Math.round((R_W_VALUE * vTotal + (1 - R_W_VALUE) * gTotal) * 10) / 10, gate: 'pass' };
@@ -2252,7 +2254,7 @@
   // 这里是「年报正常、之后中报变脸」盲区的探针（600866 星湖科技 2026H1 扣非 −93% 而 R 停在
   // 82.3 的实例）。只在最新一期不是年报时才有值；同比分母用 |基期|。
   // scoring.py 的 interim_dip_yoy 同一条规则。
-  var INTERIM_DIP_NOTE = -0.30, INTERIM_DIP_GATE = -0.50;
+  var INTERIM_DIP_NOTE = -0.30, INTERIM_DIP_GATE = -0.70;   // 门槛阈值来历：scripts/dip_validity.py
 
   function interimDipYoy(indicators) {
     var byDate = {};
@@ -2295,7 +2297,7 @@
   var R_GATE_TEXT = {
     fraud: '造假红旗分 > 40（报表内部的量化背离过线）',
     trap: '价值陷阱分 > 20（坏消息证据堆过「单点」档）',
-    'fraud+trap': '造假与陷阱双双过线',
+    interim: '中报恶化：最新一期季报/半年报的扣非同比 ≤ −70%（回测转亏 lift 7.8×，见 dip_validity）',
     nodata: '门槛过了，但 V/G 至少一条判不动（公开年报不足 3 期）'
   };
 
@@ -2308,8 +2310,9 @@
       (band ? band.label : '门槛未过') + '</i></div></div>';
     var basis = '<p class="score-basis">R = 0.6 × 价值综合分 V + 0.4 × 成长综合分 G' +
       '（本标的：V ' + (vTot == null ? '-' : fmtNum(vTot)) + ' · G ' + (gTot == null ? '-' : fmtNum(gTot)) +
-      '）；发分前置两道门槛——造假 ≤ 40 · 陷阱 ≤ 20，判不动的门槛输入按「无证据」放行' +
-      '（港美股陷阱整列不适用，靠这条拿得到 R）。门槛外的公司整格 `-`，那是「不过资格线」，不是 0 分。</p>';
+      '）；发分前置三道门槛——造假 ≤ 40 · 陷阱 ≤ 20 · 中报恶化 dip ≤ −70%，判不动的门槛输入按' +
+      '「无证据」放行（港美股陷阱整列不适用、扣非缺失侧 dip 判不动，靠这条拿得到 R）。' +
+      '门槛外的公司整格 `-`，那是「不过资格线」，不是 0 分。</p>';
     // 中报恶化警示：评分轴只吃年报，这里把年报盲区亮出来（不改分，600866 式实例）
     if (dip != null && dip <= INTERIM_DIP_NOTE) {
       basis += '<p class="score-basis" style="color:#c2571a">⚠ 中报恶化：最新一期季报/半年报的扣非（缺则净利）同比 ' +
