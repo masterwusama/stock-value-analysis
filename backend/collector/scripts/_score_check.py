@@ -155,6 +155,10 @@ for f in sorted(companies_dir.glob('*.json')):
         diffs.append((code, 'recommend', pv, jv))
     if (py.get('recommendGate') or None) != (js.get('recommendGate') or None):
         diffs.append((code, 'recommendGate', py.get('recommendGate'), js.get('recommendGate')))
+    # 中报恶化 dip：数值比对（None 当相等）
+    pv, jv = py.get('interimDip'), js.get('interimDip')
+    if not (pv is None and jv is None) and (pv is None or jv is None or abs(pv - jv) > 1e-9):
+        diffs.append((code, 'interimDip', pv, jv))
     vr = value_score(d)
     st = v_stats.setdefault(d.get('market') or '?', {'n': 0, 'scored': 0, 'mcap': 0, 'ev': 0,
                                                      'na': {}})

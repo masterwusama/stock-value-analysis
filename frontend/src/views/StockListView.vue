@@ -250,6 +250,12 @@ const GATE_TEXT = {
   case_filed: 'Wind 事件里有违规/立案/处罚记录',
   neg_equity: '最新年报归母股东权益为负（资不抵债）',
 }
+// 中报恶化徽标：评分轴只吃年报，这里标注「最新中报/季报扣非同比 ≤ −30%」的标的
+// （600866 星湖科技式盲区：年报好、中报塌，分数要等下一次年报才会反映）
+const DIP_TIP = '中报恶化：最新一期季报/半年报的扣非（缺则净利）同比 ≤ −30%。' +
+  '评分轴只读年报（12-31），年报披露后的经营恶化不进任何分数——徽标只是把库里已有的' +
+  'interim 数据亮出来，不改分数；下一次年报披露后的深抓才会让分数反映它。'
+const dipOf = (s) => s.interim_dip == null ? null : (s.interim_dip <= -0.3 ? Math.round(s.interim_dip * 100) : null)
 function gateTip(s) {
   const f = (s.gate_flags || []).map((k) => GATE_TEXT[k] || k)
   return '触发硬门槛：' + (f.join('、') || '（后端未给出行因）')
@@ -698,6 +704,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
           <div class="sc-head">
             <span class="sc-name">{{ s.name }}</span>
             <span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span>
+            <span v-if="dipOf(s) != null" class="stale-flag dip-flag" :title="DIP_TIP + '｜本标的：' + dipOf(s) + '%'">中报{{ dipOf(s) }}%</span>
             <span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span>
             <span class="sc-code">{{ s.code }}</span>
             <span v-if="s.market !== 'A'" class="badge">{{ MARKET_NAME[s.market] }}</span>
@@ -783,7 +790,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         </thead>
         <tbody>
           <tr v-for="s in data?.items" :key="s.sid" @click="router.push(`/stock/${s.code}`)">
-            <td class="l stick"><b>{{ s.name }}</b><span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span><span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span> <span class="badge">{{ MARKET_NAME[s.market] }}</span> {{ s.code }}</td>
+            <td class="l stick"><b>{{ s.name }}</b><span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span><span v-if="dipOf(s) != null" class="stale-flag dip-flag" :title="DIP_TIP + '｜本标的：' + dipOf(s) + '%'">中报{{ dipOf(s) }}%</span><span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span> <span class="badge">{{ MARKET_NAME[s.market] }}</span> {{ s.code }}</td>
             <td class="l"><span class="ind" :title="s.industry">{{ s.industry || '-' }}</span></td>
             <!-- 币种角标：港股/美股的现价与市值是本币（HKD/USD），跟 A 股人民币数值直接比大小会误读 -->
             <td>{{ fmt(s.price) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
@@ -988,6 +995,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
 .gate-flag { color: #d43b3b; font-size: 12px; margin-left: 3px; cursor: help; }
 /* 财报期龄超阈标注：比门槛弱一级（多为「新一期年报还没披露」的常态），故灰字不加粗 */
 .stale-flag { color: var(--sub); font-size: 10px; margin-left: 3px; cursor: help; }
+/* 中报恶化徽标：比期龄更刺眼的一档（红棕），但仍是「标注」不改分 */
+.dip-flag { color: #c2571a; font-weight: 600; }
 table.grid th.unsort { cursor: default; }
 /* ---- 宽屏铺开 + 密集排版：23 列争取在 1440 视口下不横向滚动（装不下仍由 .tbl-wrap 滚动兜底） ---- */
 .tbl-wrap { overflow-x: auto; }

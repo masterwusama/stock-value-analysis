@@ -1460,6 +1460,47 @@ R_FRAUD_GATE = 40.0      # 造假分门槛（40=trap_validity 分项表里造假
 R_TRAP_GATE = 20.0       # 陷阱分门槛：出厂档位「档2 单点」上沿之内（C ≤ 0.98），只放过无证据与单点
 
 
+# ---- 中报恶化 dip：最新 interim 扣非同比（评分轴只吃年报，这里是年报盲区的探针） ----
+# 评分轴（四派/V/G/T/造假/管理）全部只读 12-31 年报行，年报披露后的经营恶化要等下一次
+# 年报才进分——600866 星湖科技 2026-09 的实例：FY2025 年报还是好年份（净利 9.8 亿、ROE 12%），
+# 2026H1 扣非同比 −93%，R 却停在 82.3。财报期龄保险丝（13 个月）防的是「年报缺披露」，
+# 防不了「年报正常、之后中报变脸」。dip 把这个盲区量化成「最新 interim 相对去年同期的
+# 扣非（缺则净利）同比」，两处消费：列表标注（≤ INTERIM_DIP_NOTE 挂徽标）与 R 的中报
+# 恶化门槛（≤ INTERIM_DIP_GATE 拦下，见 recommend_score）。
+INTERIM_DIP_NOTE = -0.30     # 标注线：列名后挂「中报−xx%」徽标，只标注不折分
+INTERIM_DIP_GATE = -0.50     # 门槛线：R 拦下（阈值来历见 scripts/dip_validity.py 的回测）
+
+
+def interim_dip_yoy(indicators):
+    """最新一份 interim（Q1/H1/Q3）的扣非同比，缺则净利同比；判不动返回 None。
+
+    只在最新一期**不是年报**时才有意义（年报已经是更新的一期时没有「比年报更新的消息」）；
+    同比分母用 |基期|（与 _yoy 同一语义：基期为负时亏损收窄记改善）。同一报告期多行取
+    任一行（by_date 覆盖，指标表同报告期不重复）。stockLegacy.js 的 interimDipYoy 同一条规则。
+    """
+    by_date = {}
+    for r in indicators or []:
+        p = str(r.get('报告期') or '')[:10]
+        if len(p) == 10:
+            by_date[p] = r
+    if not by_date:
+        return None
+    latest = max(by_date)
+    if latest[5:7] == '12':                    # 最新一期就是年报：无更新消息
+        return None
+    cur_row = by_date[latest]
+    prev_row = by_date.get(str(int(latest[:4]) - 1) + latest[4:])
+    if prev_row is None:
+        return None
+    cur = cur_row.get('扣非净利润')
+    pv = prev_row.get('扣非净利润')
+    if cur is None or pv is None:              # 扣非双期缺一 → 净利口径；再缺 → 判不动
+        cur, pv = cur_row.get('净利润'), prev_row.get('净利润')
+    if cur is None or pv is None or pv == 0:
+        return None
+    return (cur - pv) / abs(pv)
+
+
 def recommend_score(v_total, g_total, fraud, trap_total):
     """→ (R 总分 or None, 门槛状态)。
 
@@ -1870,6 +1911,8 @@ def compute_scores(company, now=None):
     # 综合推荐分 R：门槛外的 V/G 合成（见 recommend_score 文件头）
     scores['recommend'], scores['recommendGate'] = recommend_score(
         scores['value'], scores['growth'], scores['fraud'], scores['trap'])
+    # 中报恶化 dip：年报盲区探针（标注 + R 门槛共用），口径见 interim_dip_yoy 文件头
+    scores['interimDip'] = interim_dip_yoy(company.get('indicators'))
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。

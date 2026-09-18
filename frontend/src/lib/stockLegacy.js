@@ -710,7 +710,7 @@
       var tpD = trapScore(d) || {};
       recEl.innerHTML = recommendCard(recommendScore(vv.total, gg.total,
                                                      fa ? fa.total : null, tpD.total),
-                                       vv.total, gg.total);
+                                       vv.total, gg.total, interimDipYoy(d.indicators || []));
     }
     var trapEl = $('stock-score-trap');
     if (trapEl) trapEl.innerHTML = trapCard(trapScore(d));
@@ -2244,6 +2244,32 @@
     return { total: Math.round((R_W_VALUE * vTotal + (1 - R_W_VALUE) * gTotal) * 10) / 10, gate: 'pass' };
   }
 
+  // 中报恶化 dip：最新 interim（Q1/H1/Q3）的扣非同比（缺则净利同比）。评分轴只吃年报，
+  // 这里是「年报正常、之后中报变脸」盲区的探针（600866 星湖科技 2026H1 扣非 −93% 而 R 停在
+  // 82.3 的实例）。只在最新一期不是年报时才有值；同比分母用 |基期|。
+  // scoring.py 的 interim_dip_yoy 同一条规则。
+  var INTERIM_DIP_NOTE = -0.30, INTERIM_DIP_GATE = -0.50;
+
+  function interimDipYoy(indicators) {
+    var byDate = {};
+    (indicators || []).forEach(function (r) {
+      var p = String(r['报告期'] || '').slice(0, 10);
+      if (p.length === 10) byDate[p] = r;
+    });
+    var keys = Object.keys(byDate);
+    if (!keys.length) return null;
+    var latest = keys.sort()[keys.length - 1];
+    if (latest.slice(5, 7) === '12') return null;   // 最新一期就是年报：无更新消息
+    var prevKey = (Number(latest.slice(0, 4)) - 1) + latest.slice(4);
+    if (!byDate[prevKey]) return null;
+    var cur = byDate[latest]['扣非净利润'], pv = byDate[prevKey]['扣非净利润'];
+    if (cur == null || pv == null) {
+      cur = byDate[latest]['净利润']; pv = byDate[prevKey]['净利润'];
+    }
+    if (cur == null || pv == null || pv === 0) return null;
+    return (cur - pv) / Math.abs(pv);
+  }
+
   // 切点与两率来自 r_validity 面板 R_full（含价格、前视）五分位——与 V_BANDS 同一条纪律：
   // 判决书在无价格版 R_q（门槛内五分位 → 其后转亏率 16.0%→2.4%、减值≥5% 26.8%→3.3%，单调、
   // 逐年 3/3），这张表只看形状。改切点要与列表页 R_BAND_CUTS 同步。
@@ -2269,7 +2295,7 @@
     nodata: '门槛过了，但 V/G 至少一条判不动（公开年报不足 3 期）'
   };
 
-  function recommendCard(r, vTot, gTot) {
+  function recommendCard(r, vTot, gTot, dip) {
     var band = r.total == null ? null : rBandOf(r.total);
     var g = band ? band.grade : 'na';
     var head = '<div class="score-card-head"><h4>综合推荐分 R</h4>' +
@@ -2280,6 +2306,13 @@
       '（本标的：V ' + (vTot == null ? '-' : fmtNum(vTot)) + ' · G ' + (gTot == null ? '-' : fmtNum(gTot)) +
       '）；发分前置两道门槛——造假 ≤ 40 · 陷阱 ≤ 20，判不动的门槛输入按「无证据」放行' +
       '（港美股陷阱整列不适用，靠这条拿得到 R）。门槛外的公司整格 `-`，那是「不过资格线」，不是 0 分。</p>';
+    // 中报恶化警示：评分轴只吃年报，这里把年报盲区亮出来（不改分，600866 式实例）
+    if (dip != null && dip <= INTERIM_DIP_NOTE) {
+      basis += '<p class="score-basis" style="color:#c2571a">⚠ 中报恶化：最新一期季报/半年报的扣非（缺则净利）同比 ' +
+        (dip * 100).toFixed(0) + '%。评分只读年报（基准 ' +
+        '一期晚于上面所有分数），年报之后的经营恶化不进任何分——要等下一次年报披露后的深抓才会反映。' +
+        '读这一页时请把本行的分数视为「上一个年报年度的画像」。</p>';
+    }
     if (r.total == null) {
       return head + basis + '<p class="score-note">本标的无 R：' +
         (R_GATE_TEXT[r.gate] || r.gate) + '。</p>';
@@ -3775,4 +3808,5 @@
     growthScore, G_ITEMS, G_SUM_W,
     valueScore, V_ITEMS, V_SUM_W,
     recommendScore, R_W_VALUE, R_FRAUD_GATE, R_TRAP_GATE, R_BANDS,
+    interimDipYoy, INTERIM_DIP_NOTE, INTERIM_DIP_GATE,
     unbindResize };

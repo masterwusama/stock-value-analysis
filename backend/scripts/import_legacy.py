@@ -333,6 +333,7 @@ def build_score_rows(index, trade_date, db):
             "value_eval": sc.get("valueEval"),
             "recommend": sc.get("recommend"),
             "recommend_gate": sc.get("recommendGate"),
+            "interim_dip": sc.get("interimDip"),
             "fair_liq": refs.get("fairLiq"),
             "net_cash_ratio": refs.get("netCashRatio"),
             "net_cash_calc": calc or None,

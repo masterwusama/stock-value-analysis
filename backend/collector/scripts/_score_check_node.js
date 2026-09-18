@@ -110,6 +110,8 @@ async function main() {
                                  num((m.fraudAnalysis(d) || {}).total), num(tp.total));
     out[code].recommend = num(rec.total);
     out[code].recommendGate = rec.gate == null ? null : rec.gate;
+    // 中报恶化 dip：纯 indicators 函数，数值比对（与 Python 同一浮点运算路径）
+    out[code].interimDip = num(m.interimDipYoy(d.indicators));
   }
   process.stdout.write(JSON.stringify(out));
 }

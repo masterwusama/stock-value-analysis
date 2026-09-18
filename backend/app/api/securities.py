@@ -154,6 +154,9 @@ class SecurityItem(BaseModel):
     # 列表页的 `-` 要能区分「不过线」与「算不出」
     recommend: float | None = None
     recommend_gate: str | None = None
+    # 中报恶化 dip：最新 interim 扣非（缺则净利）同比。NULL = 最新一期已是年报或双期缺一，
+    # 不是「没恶化」；≤ −0.3 前端挂徽标，≤ −0.5 拦下 R（详见 §2.3）
+    interim_dip: float | None = None
     # 硬门槛（1=触发，0=可判且未触发，null=一个信号都判不了）与命中项，口径见 import_legacy.GATE_FLAGS
     gate: bool | None = None
     gate_flags: list | None = None
@@ -663,6 +666,7 @@ def list_securities(
             value_eval=score.value_eval if score else None,
             recommend=score.recommend if score else None,
             recommend_gate=score.recommend_gate if score else None,
+            interim_dip=score.interim_dip if score else None,
             gate=score.gate if score else None,
             gate_flags=score.gate_flags if score else None,
             report_date=score.report_date if score else None,
@@ -758,6 +762,7 @@ def _load_scores(db: Session, sid: int) -> dict | None:
         "valueEval": s.value_eval,
         "recommend": s.recommend,
         "recommendGate": s.recommend_gate,
+        "interimDip": s.interim_dip,
         "priceRefs": refs,
     }
     if s.wind_fraud_delta is not None or s.wind_mgmt_delta is not None or s.wind_flags:
