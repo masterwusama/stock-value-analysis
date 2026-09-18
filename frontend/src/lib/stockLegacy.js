@@ -247,15 +247,19 @@
     return hit ? total / 10 : null;
   }
 
-  // 连续分红年数（从最新年份倒推）
-  function consecutiveDivYears(dividends) {
+  // 连续（现金）分红年数（从最新年份倒推）。只数真派过现金的年份（bonus_per_10 > 0）：
+  // 送股不是现金回报，送股年不应顶替派现年守住「连续」。anchor（最新年报年，只在分红史
+  // 全量可查的 A 股传）给定且最后现金派现年落在 anchor-2 之前 → 按断档清零：原实现从
+  // 最后一次派现年倒推，对最近的削减分红天然失明。scoring.py 的 consecutive_div_years 同一条规则。
+  function consecutiveDivYears(dividends, anchor) {
     var years = {};
     (dividends || []).forEach(function (r) {
       var m = String(r.year || '').match(/^(\d{4})/);
-      if (m) years[Number(m[1])] = true;
+      if (m && (r.bonus_per_10 || 0) > 0) years[Number(m[1])] = true;
     });
     var ys = Object.keys(years).map(Number).sort(function (a, b) { return b - a; });
     if (!ys.length) return 0;
+    if (anchor != null && ys[0] < anchor - 1) return 0;
     var n = 1;
     for (var i = 1; i < ys.length; i++) {
       if (ys[i] === ys[i - 1] - 1) n++; else break;
@@ -744,7 +748,9 @@
     var perShareY = lastYear != null ? perShareDiv(divs, lastYear) : null;
     var epsY = last ? last['基本每股收益'] : null;
     var payout = (perShareY != null && epsY != null && epsY > 0) ? perShareY / epsY : null;
-    var divConsecutive = consecutiveDivYears(divs);
+    // 断档锚定只在 A 股传（分红史全量可查，停派是公开事实）；港美覆盖不全，见函数头
+    var divAnchor = (String(d.market || 'A') === 'A' && lastYear != null) ? lastYear : null;
+    var divConsecutive = consecutiveDivYears(divs, divAnchor);
     var cumPerShare = null, hitCum = false;
     divs.forEach(function (r) {
       if (r.bonus_per_10 != null) { cumPerShare = (cumPerShare || 0) + r.bonus_per_10; hitCum = true; }
@@ -1247,10 +1253,23 @@
     var goodwillShare = (goodwill != null && assets != null && assets > 0) ? goodwill / assets : null;
 
     // 近5年年报净利润（盈利稳定性）与近5年净利累计增长
+    // posN 只数有数的行；有效行不足 5 整项判不动（null → schoolTotal 中性）：次新公司窗口
+    // 不满或某年缺净利都不是「某年亏损」（scoring.py 同款，实测 199 家曾被压到 9/15 或 4/15）
     var net5 = annual.slice(-5).map(function (r) { return r['净利润']; });
-    var posN = net5.filter(function (v) { return v != null && v > 0; }).length;
-    var grow5 = (net5.length >= 2 && net5[0] != null && net5[net5.length - 1] != null && net5[0] > 0)
-      ? net5[net5.length - 1] / net5[0] - 1 : null;
+    var valid5 = net5.filter(function (v) { return v != null; });
+    var posN = valid5.filter(function (v) { return v > 0; }).length;
+    // 基期取「不晚于 lastYear-5 的最近年报」（与 netCagr5 同一选基纪律），累计增长对齐
+    // 0.33 阈值的 5 年标定；旧实现 annual.slice(-5) 首尾比实为 4 年增长（5 行只有 4 个间隔）
+    var grow5 = null;
+    if (annual.length >= 2 && last != null && lastYear != null && netProfit != null) {
+      var gbase = null;
+      for (var gi = annual.length - 2; gi >= 0; gi--) {
+        if (Number(String(annual[gi]['报告期']).slice(0, 4)) <= lastYear - 5) { gbase = annual[gi]; break; }
+      }
+      if (!gbase) gbase = annual[0];
+      var gbv = gbase['净利润'];
+      if (gbv != null && gbv > 0) grow5 = netProfit / gbv - 1;
+    }
 
     // ---- ROE 近 5 年年报序列：水平取中位数，持续性取「达标（≥10%）年数占比」----
     // 不用均值：披露口径的 ROE 在薄权益/负权益处会炸到 ±几千个百分点（实测 155 家有单年 >100%，
@@ -1316,7 +1335,7 @@
       it('流动比率', fmtNum(curRatio), '≥ 2', 20, curRatio == null ? null
         : (curRatio >= 2 ? 20 : curRatio >= 1.5 ? lerpScore(curRatio, 1.5, 2, 5, 20) : curRatio >= 1 ? 5 : -10), noCA || noCL),
       it('长期有息负债 / 营运资本', (ltd == null ? '-' : fmtMoney(ltd)) + ' / ' + (wc == null ? '-' : fmtMoney(wc)), '长期负债 ≤ 营运资本', 20, ltdScore, noCA || noCL),
-      it('盈利稳定（近5年净利为正）', posN + '/5 年', '5 年全部为正', 15, posN >= 5 ? 15 : posN === 4 ? 9 : posN === 3 ? 4 : -5),
+      it('盈利稳定（近5年净利为正）', valid5.length < 5 ? '-' : posN + '/5 年', '5 年全部为正', 15, valid5.length < 5 ? null : (posN >= 5 ? 15 : posN === 4 ? 9 : posN === 3 ? 4 : -5)),
       it('连续分红年数', (divConsecutive || 0) + ' 年', '≥ 10 年', 15, divScore10(divConsecutive || 0)),
       it('近5年净利累计增长', fmtPct(grow5), '≥ 33%', 10, grow5 == null ? null : (grow5 >= 0.33 ? 10 : grow5 >= 0 ? lerpScore(grow5, 0, 0.33, 0, 10) : -5)),
       it('市盈率（TTM）', pe == null ? '-' : (pe > 0 ? fmtNum(pe) : 'PE 为负（亏损）'), '≤ 15（亦是保守卖出参考倍数）', 5, lerpScoreNonneg(pe, G_D_PE_FULL, 25, 5, 0)),
@@ -1502,7 +1521,12 @@
     var inv = lastBa ? lastBa['存货'] : null;
     var invPrev = prevBa ? prevBa['存货'] : null;
     var otherAr = lastBa ? (lastBa['其他应收款'] != null ? lastBa['其他应收款'] : lastBa['其他应收款(合计)']) : null;
-    var soft = lastBa ? ((lastBa['商誉'] || 0) + (lastBa['无形资产'] || 0)) : null;
+    // 商誉/无形双缺是「科目没取到」不是「没有软资产」：按 0 计会让该项(5分)永不亮灯，
+    // 且 0 分折进归一化分母会稀释其余红旗——缺数据显得更干净（scoring.py 同款，实测
+    // 256 家双缺、其中 235 家港美股）。单缺一科按另一科计。
+    var gwV = lastBa ? lastBa['商誉'] : null;
+    var itV = lastBa ? lastBa['无形资产'] : null;
+    var soft = (gwV == null && itV == null) ? null : (gwV || 0) + (itV || 0);
     var gm = last ? last['销售毛利率'] : null;
     var gmPrev = prev ? prev['销售毛利率'] : null;
 
@@ -2230,7 +2254,18 @@
     var assets = lastBa ? lastBa['资产总计'] : null;
     var ar = arOf(lastBa);
     var inv = lastBa ? lastBa['存货'] : null;
-    var roe = last ? (last['净资产收益率'] != null ? last['净资产收益率'] : last['净资产收益率-摊薄']) : null;
+    // 资本回报改「近 5 年披露 ROE 中位，不足 3 期判不动」：单年披露值在薄/负权益处会
+    // 炸到 ±几千 pp（见 valueScores 处同款注释，巴菲特项早已改中位），旧实现 52 家单年
+    // >100% 的公司直接拿满 20/20。逐年先取「净资产收益率」、缺则「-摊薄」（scoring.py 同款）
+    var roeList = annual.slice(-5).map(function (r) {
+      return r['净资产收益率'] != null ? r['净资产收益率'] : r['净资产收益率-摊薄'];
+    }).filter(function (v) { return v != null; });
+    var roe = null;
+    if (roeList.length >= 3) {
+      var roeSv = roeList.slice().sort(function (a, b) { return a - b; });
+      var roeMid = Math.floor(roeSv.length / 2);
+      roe = roeSv.length % 2 ? roeSv[roeMid] : (roeSv[roeMid - 1] + roeSv[roeMid]) / 2;
+    }
     var eps = last ? last['基本每股收益'] : null;
 
     // 1. 三费率（销售＋管理＋财务费用）÷营收，越低越好（费用纪律/代理成本控制）；
@@ -2276,11 +2311,12 @@
     });
     var cashRatio = (hit && sumNet > 0) ? sumOcf / sumNet : null;
 
-    // 7. 现金分红率 = 最近一次每股分红 ÷ 最近年报每股收益（股东回报意愿）；异常高（>150%）视为口径不可比置空
+    // 7. 现金分红率 = 最近归属年每股派现合计 ÷ 最近年报每股收益（与 valueAnalysis 同口径）；
+    // >150% 视为口径不可比置空。旧实现取「最近一条记录」，单次中期分红会把分红率砍到几分之一
     var payout = null;
-    var divs = (d.dividends || []).filter(function (x) { return x.bonus_per_10 != null && x.bonus_per_10 > 0; });
-    if (divs.length && eps != null && eps > 0) {
-      payout = (divs[0].bonus_per_10 / 10) / eps;
+    var perShareY = lastYear != null ? perShareDiv(d.dividends || [], Number(lastYear)) : null;
+    if (perShareY != null && eps != null && eps > 0) {
+      payout = perShareY / eps;
       if (payout > 1.5) payout = null;
     }
 
@@ -2291,7 +2327,7 @@
     var items = [
       it(feeLabel, fmtPct(feeRatio), '≤ 10%', 15, lerpScore(feeRatio, 0.10, 0.30, 15, 0)),
       it('资产运营：总资产周转率（营收÷总资产）', turnover == null ? '-' : fmtNum(turnover), '≥ 1.0', 10, lerpScore(turnover, 0.2, 1.0, 0, 10)),
-      it('资本回报：净资产收益率（年报）', fmtPct(roe), '≥ 15%', 20, lerpScore(roe, 0, 0.15, 0, 20)),
+      it('资本回报：净资产收益率（近5年中位）', fmtPct(roe), '≥ 15%', 20, lerpScore(roe, 0, 0.15, 0, 20)),
       it('成长质量：营收约5年CAGR', fmtPct(revCagr), '≥ 10%', 10, lerpScore(revCagr, 0, 0.10, 0, 10)),
       it('营运资金：（应收＋存货）÷营收', fmtPct(wc), '≤ 15%', 10, lerpScore(wc, 0.15, 0.45, 10, 0)),
       it('现金流质量：近5年累计净现比（经营现金流÷净利润）', cashRatio == null ? '-' : fmtNum(cashRatio), '≥ 1.0', 15, lerpScore(cashRatio, 0, 1.0, 0, 15)),
@@ -2302,7 +2338,7 @@
     var total = weightedTotal(items.map(function (x) { return [x.score, x.max]; }));
     return {
       title: '管理层管理水平 · 投入产出效率量化',
-      basis: '评分基准：' + (lastYear || '-') + ' 年报（比率类按年报口径，成长/现金流按近5年累计，分红取最近一次）',
+      basis: '评分基准：' + (lastYear || '-') + ' 年报（比率类按年报口径，成长/现金流按近5年累计，资本回报取近5年ROE中位，分红取归属年合计）',
       total: total == null ? null : Math.round(total * 10) / 10,
       items: items,
       note: '借鉴 DEA 数据包络分析的“投入→产出”效率思想，将管理层能力拆为 8 个可量化维度加权 0~100 分：费用纪律/资产周转/资本回报/成长质量/营运资金/现金流质量/股东回报/治理诚信，分数越高管理水平越好。纯 DEA 相对效率依赖同行业大样本且为黑盒、无法逐项展示，故采用其效率内核的透明加权替代；总分按“可算出的项”归一，缺数据的项不会把公司整体压低。本分为量化参考，需结合公司治理结构、股权激励、管理层履历等定性信息综合判断。'
@@ -2628,12 +2664,14 @@
       if (denom === 0) denom = nets.reduce(function (s, x) { return s + Math.abs(x); }, 0) / nets.length;
       if (denom > 0) cvNet = sd(nets) / denom;
     }
-    // 1b 利润深度下滑频率：年度净利同比 ≤ -30% 的年数（同比自算，与报表口径一致）
+    // 1b 利润深度下滑频率：年度净利同比 ≤ -30% 的年数（同比自算，与报表口径一致）。
+    // 窗口与 1a/1c 同为近 8 年（函数头声明的口径）：旧实现数全史，上市越久攒够 2 次
+    // 深跌的机会越多——实测 145 家的「周期性」标签因此翻转（全数偏向更周期）。
     // 此处只在基期为正时计算：“下滑 30%”对盈利基数才有意义；若把亏损扩大也算进来，
     // 尚未盈利的生物医药/新经济公司会被误判为周期性行业（实测 166 家误判）。
     // 阶段二“利润动能”用 yoyOf（基期为负按 |基期|）——那里问的是“是否在离开底部”，亏损收窄正是信号。
     var drops = 0, hitDrop = false;
-    for (var ci = 1; ci < annual.length; ci++) {
+    for (var ci = Math.max(1, annual.length - 8); ci < annual.length; ci++) {
       var nCur = annual[ci]['净利润'], nPre = annual[ci - 1]['净利润'];
       var yoy = (nCur != null && nPre != null && nPre > 0) ? nCur / nPre - 1 : null;
       if (yoy != null) { hitDrop = true; if (yoy <= -0.3) drops++; }

@@ -92,16 +92,27 @@ def per_share_div(dividends, year):
     return total / 10.0 if hit else None
 
 
-def consecutive_div_years(dividends):
-    """对应 JS consecutiveDivYears：从最新年份倒推的连续分红年数"""
+def consecutive_div_years(dividends, anchor=None):
+    """对应 JS consecutiveDivYears：从最新年份倒推的连续（现金）分红年数。
+
+    只数真派过现金的年份（bonus_per_10 > 0）：送股不是现金回报，送股年不应顶替
+    派现年守住「连续」二字（实测 161 家最新归属年只有送股仍被计入）。
+    anchor（取最新年报年，只在分红史全量可查的 A 股传）：最后现金派现年落在
+    anchor-2 或更早，说明最近两个归属年都没派——按断档清零，历史连发长度不再算
+    「连续」。原实现从最后一次派现年倒推，对最近的削减分红天然失明（实测 634 家
+    A 股停派 ≥2 年仍拿着满额连续分红分，000002 停在 2022、倒推 32 年拿 15/15）。
+    港美股不传 anchor：那侧分红源覆盖不全，停在多年前更多是没抓到而非没派过。
+    """
     years = set()
     for r in (dividends or []):
         m = str(r.get('year') or '')
         y = m[:4]
-        if y.isdigit():
+        if y.isdigit() and (r.get('bonus_per_10') or 0) > 0:
             years.add(int(y))
     ys = sorted(years, reverse=True)
     if not ys:
+        return 0
+    if anchor is not None and ys[0] < anchor - 1:
         return 0
     n = 1
     for i in range(1, len(ys)):
@@ -235,7 +246,9 @@ def value_analysis(d, now=None):
     per_share_y = per_share_div(divs, last_year) if last_year is not None else None
     eps_y = last.get('基本每股收益') if last else None
     payout = per_share_y / eps_y if (per_share_y is not None and eps_y is not None and eps_y > 0) else None
-    div_consecutive = consecutive_div_years(divs)
+    # 断档锚定只在 A 股传（分红史全量可查，停派是公开事实）；港美覆盖不全，见函数头
+    div_anchor = last_year if (d.get('market') or 'A') == 'A' else None
+    div_consecutive = consecutive_div_years(divs, div_anchor)
 
     # ---- 现金流质量（近 5 年年报）----
     cf_rows = []
@@ -302,6 +315,7 @@ def value_scores(d, va):
     annual = annual_rows(d.get('indicators') or [])
     last = annual[-1] if annual else None
     last_date = str(last.get('报告期') or '')[:10] if last else None
+    last_year = int(last_date[:4]) if last_date else None
     ba_list = sorted(d.get('balance') or [], key=lambda r: str(r.get('报告日') or ''))
     last_ba = sheet_row_by_date(ba_list, last_date) if last_date else None
     s = d.get('snapshot') or {}
@@ -358,11 +372,27 @@ def value_scores(d, va):
     intang_share = intang / assets if (intang is not None and assets is not None and assets > 0) else None
 
     # 近5年年报净利润（盈利稳定性）与近5年净利累计增长
+    # pos_n 只数有数的行；有效行不足 5 时整项判不动（None → _school_total 中性）：
+    # 次新公司窗口不满、或某年净利字段缺失，都不是「某年亏损」，按非正年压分违反
+    # 全库缺项中性纪律（实测 199 家被压到 9/15 或 4/15）
     net5 = [r.get('净利润') for r in annual[-5:]]
-    pos_n = len([v for v in net5 if v is not None and v > 0])
+    valid5 = [v for v in net5 if v is not None]
+    pos_n = len([v for v in valid5 if v > 0])
+    # 基期取「不晚于 last_year-5 的最近年报」（与 value_analysis.netCagr5 同一选基纪律），
+    # 累计增长对齐 0.33 阈值的 5 年标定。旧实现用 annual[-5:] 首尾比——5 行只有 4 个
+    # 间隔，实为 4 年增长却按 5 年阈值打分，历史 ≥5 年的公司全部命中错窗
     grow5 = None
-    if len(net5) >= 2 and net5[0] is not None and net5[-1] is not None and net5[0] > 0:
-        grow5 = net5[-1] / net5[0] - 1.0
+    if len(annual) >= 2 and last is not None and last_year is not None and net_profit is not None:
+        base = None
+        for r in reversed(annual[:-1]):
+            if int(str(r.get('报告期') or '')[:4]) <= last_year - 5:
+                base = r
+                break
+        if base is None:
+            base = annual[0]
+        bv = base.get('净利润')
+        if bv is not None and bv > 0:
+            grow5 = net_profit / bv - 1.0
 
     # ---- ROE 近 5 年年报序列：水平取中位数，持续性取「达标（≥10%）年数占比」----
     # 不用均值：披露口径的 ROE 在薄权益/负权益处会炸到 ±几千个百分点（实测 155 家有单年 >100%，
@@ -442,7 +472,9 @@ def value_scores(d, va):
         (lerp_score(cur_ratio, 1.5, 2, 5, 20) if cur_ratio >= 1.5 else
          (5.0 if cur_ratio >= 1 else -10.0)))
 
-    pos_score = 15.0 if pos_n >= 5 else (9.0 if pos_n == 4 else (4.0 if pos_n == 3 else -5.0))
+    # 有效行不足 5 → 整项判不动：不满窗不是「某年亏了」（缺项中性，见 net5 处注释）
+    pos_score = None if len(valid5) < 5 else (
+        15.0 if pos_n >= 5 else (9.0 if pos_n == 4 else (4.0 if pos_n == 3 else -5.0)))
 
     grow_score = None if grow5 is None else (
         10.0 if grow5 >= 0.33 else (lerp_score(grow5, 0, 0.33, 0, 10) if grow5 >= 0 else -5.0))
@@ -968,7 +1000,13 @@ def fraud_analysis(d):
         other_ar = last_ba.get('其他应收款')
         if other_ar is None:
             other_ar = last_ba.get('其他应收款(合计)')
-    soft = ((last_ba.get('商誉') or 0) + (last_ba.get('无形资产') or 0)) if last_ba else None
+    # 商誉/无形双缺是「科目没取到」不是「没有软资产」：按 0 计会让该项(5分)永不亮灯，
+    # 且 0 分折进 _weighted_total 的归一化分母会稀释其余红旗——缺数据显得更干净，
+    # 与该函数「缺项中性」的初衷相反（实测 256 家双缺，其中 235 家港美股）。单缺一科
+    # 按另一科计：只披露其一的报表，软资产至少有披露侧的那部分。
+    gw_v = last_ba.get('商誉') if last_ba else None
+    it_v = last_ba.get('无形资产') if last_ba else None
+    soft = None if (gw_v is None and it_v is None) else ((gw_v or 0.0) + (it_v or 0.0))
     gm = last.get('销售毛利率') if last else None
     gm_prev = prev.get('销售毛利率') if prev else None
 
@@ -1424,14 +1462,25 @@ def management_analysis(d):
 
     if last:
         rev = last.get('营业总收入')
-        roe = last.get('净资产收益率')
-        if roe is None:
-            roe = last.get('净资产收益率-摊薄')
         eps = last.get('基本每股收益')
     else:
         rev = last_inc.get('营业总收入') if last_inc else None
-        roe = None
         eps = None
+    # 资本回报改「近 5 年披露 ROE 中位，不足 3 期判不动」：单年披露值在薄/负权益处会
+    # 炸到 ±几千 pp（见 value_scores 处同款注释，巴菲特项为此早已改中位），旧实现
+    # 52 家单年 >100% 的公司直接拿满 20/20。逐年先取「净资产收益率」、缺则「-摊薄」。
+    roe_vals = []
+    for r in annual[-5:]:
+        v = r.get('净资产收益率')
+        if v is None:
+            v = r.get('净资产收益率-摊薄')
+        if v is not None:
+            roe_vals.append(v)
+    roe = None
+    if len(roe_vals) >= 3:
+        sv = sorted(roe_vals)
+        mid_r = len(sv) // 2
+        roe = sv[mid_r] if len(sv) % 2 else (sv[mid_r - 1] + sv[mid_r]) / 2.0
     sell_exp = last_inc.get('销售费用') if last_inc else None
     adm_exp = last_inc.get('管理费用') if last_inc else None
     fin_exp = last_inc.get('财务费用') if last_inc else None
@@ -1479,12 +1528,13 @@ def management_analysis(d):
             sum_ocf += o
             hit = True
     cash_ratio = sum_ocf / sum_net if (hit and sum_net > 0) else None
-    # 7. 现金分红率 = 最近一次每股分红 ÷ 最近年报每股收益；>150% 视为口径不可比置空（数据按日期倒序）
+    # 7. 现金分红率 = 最近归属年每股派现合计 ÷ 最近年报每股收益；>150% 视为口径不可比置空。
+    # 与 value_analysis 的 payout 同一口径（归属年合计）：旧实现取「最近一条记录」，
+    # 单次中期分红会把分红率砍到几分之一，同名两口径在详情页对不上
     payout = None
-    divs = [r for r in (d.get('dividends') or [])
-            if r.get('bonus_per_10') is not None and r.get('bonus_per_10') > 0]
-    if divs and eps is not None and eps > 0:
-        payout = (divs[0]['bonus_per_10'] / 10.0) / eps
+    per_share_y = per_share_div(d.get('dividends') or [], last_year) if last_year is not None else None
+    if per_share_y is not None and eps is not None and eps > 0:
+        payout = per_share_y / eps
         if payout > 1.5:
             payout = None
     # 8. 治理诚信：造假风险分反向（越低越诚信）；异常只丢该维度不影响其余 7 项（与 JS try/catch 一致）
@@ -1557,11 +1607,13 @@ def cycle_analysis(d):
         if denom > 0:
             cv_net = sd(nets) / denom
     # 1b 利润深度下滑频率：年度净利同比 ≤ -30% 的年数（同比自算，与报表口径一致）。
+    # 窗口与 1a/1c 同为近 8 年（函数头声明的口径）：旧实现数全史，上市越久攒够 2 次
+    # 深跌的机会越多——实测 242 家的「周期性」标签因此翻转（全数偏向更周期）。
     # 此处只在基期为正时计算：“下滑 30%”对盈利基数才有意义；若把亏损扩大也算进来，
     # 尚未盈利的生物医药/新经济公司会被误判为周期性行业（实测 166 家误判）。
     # 阶段二“利润动能”用 _yoy（基期为负按 |基期|）——那里问的是“是否在离开底部”，亏损收窄正是信号。
     drops, hit_drop = 0, False
-    for ci in range(1, len(annual)):
+    for ci in range(max(1, len(annual) - 8), len(annual)):
         n_cur, n_pre = annual[ci].get('净利润'), annual[ci - 1].get('净利润')
         yoy = (n_cur / n_pre - 1.0) if (n_cur is not None and n_pre is not None and n_pre > 0) else None
         if yoy is not None:
