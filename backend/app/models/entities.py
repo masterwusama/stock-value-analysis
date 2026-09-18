@@ -208,6 +208,12 @@ class ScoreDaily(Base):
     # 质量分照样能算出一个看着不错的数，所以覆盖项数必须跟分数并列输出。
     value: Mapped[float | None] = mapped_column(Double)
     value_eval: Mapped[int | None] = mapped_column(Integer)
+    # 综合推荐分 R（0~100，分高＝门槛内的 V/G 合成更高）与门槛状态。recommend_gate 记
+    # 「为什么没有分」：fraud / trap / fraud+trap（被资格线拦下）或 nodata（门槛过了但
+    # V/G 至少一条判不动）——列表页的 `-` 必须能区分「不过线」与「算不出」。出厂检验
+    # backend/scripts/r_validity.py 三线全过（判别单调 / 不弱于成分 / 门槛剔得更坏）。
+    recommend: Mapped[float | None] = mapped_column(Double)
+    recommend_gate: Mapped[str | None] = mapped_column(String(16))
     fair_liq: Mapped[float | None] = mapped_column(Double)
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)

@@ -104,6 +104,12 @@ async function main() {
       value: num(vscore.total),
       valueEval: num(vscore.eff ? vscore.eff.evaluated : null),
     };
+
+    // 综合推荐分 R：门槛外的 0.6×V + 0.4×G（与 compute_scores 同一套输入：fraud 用现算的）
+    const rec = m.recommendScore(num(vscore.total), num(gs.total),
+                                 num((m.fraudAnalysis(d) || {}).total), num(tp.total));
+    out[code].recommend = num(rec.total);
+    out[code].recommendGate = rec.gate == null ? null : rec.gate;
   }
   process.stdout.write(JSON.stringify(out));
 }

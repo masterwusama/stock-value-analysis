@@ -423,10 +423,28 @@ check(price_references(_d_ref, _va_ref) == price_references(_d_bq, _va_bq),
       "批次行情动了 12 个买卖参考价")
 check(growth_score(_d_ref) == growth_score(_d_bq) and trap_score(_d_ref) == trap_score(_d_bq),
       "批次行情动了成长分或陷阱分")
-_kept = lambda s: {k: v for k, v in s.items() if k not in ('value', 'valueEval')}
+_kept = lambda s: {k: v for k, v in s.items()
+                   if k not in ('value', 'valueEval', 'recommend', 'recommendGate')}
 check(_kept(compute_scores(_d_ref)) == _kept(compute_scores(_d_bq)),
-      f"compute_scores 全字段里除 value/valueEval 外出现了差异："
+      f"compute_scores 全字段里除 value/valueEval/recommend 外出现了差异："
       f"{[k for k in _kept(compute_scores(_d_ref)) if _kept(compute_scores(_d_ref))[k] != _kept(compute_scores(_d_bq))[k]]}")
+if not ALT:
+    # R = 0.6×V + 0.4×G：批次行情动了 V，R 只许按 0.6 的权重跟着挪（门槛状态不许变——门槛输入不含 V）
+    _cs_ref, _cs_bq = compute_scores(_d_ref), compute_scores(_d_bq)
+    check(abs((_cs_bq['recommend'] - _cs_ref['recommend'])
+              - 0.6 * (_cs_bq['value'] - _cs_ref['value'])) < 1e-9
+          and _cs_bq['recommendGate'] == _cs_ref['recommendGate'],
+          f"R 没按 0.6 权重跟随 V：ΔR={_cs_bq['recommend'] - _cs_ref['recommend']} "
+          f"ΔV={_cs_bq['value'] - _cs_ref['value']}")
+    # 门槛三态 + 舍入口径直接钉在函数上（单个陷阱旗只到 T=10，构不出过线输入，不必绕整条链）
+    from scoring import recommend_score as _rs
+    check(_rs(80.0, 60.0, 45.0, 10.0) == (None, 'fraud')
+          and _rs(80.0, 60.0, 10.0, 25.0) == (None, 'trap')
+          and _rs(80.0, 60.0, 45.0, 25.0) == (None, 'fraud+trap')
+          and _rs(None, 60.0, 10.0, 10.0) == (None, 'nodata')
+          and _rs(80.0, 60.0, None, None) == (72.0, 'pass')
+          and _rs(85.0, 40.0, 40.0, 20.0) == (67.0, 'pass'),
+          "recommend_score 的门槛三态/边界值（40 与 20 恰好过线）或 0.6×V+0.4×G 舍入口径不对")
 
 E_EXP = {}
 if not ALT:

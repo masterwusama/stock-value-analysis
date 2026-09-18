@@ -149,6 +149,12 @@ for f in sorted(companies_dir.glob('*.json')):
             continue
         if (pv is None or jv is None or abs(pv - jv) > 1e-9):
             diffs.append((code, fld, pv, jv))
+    # 综合推荐分 R：分数按数值比，门槛状态按字符串比（两侧必须给出同一个无分原因）
+    pv, jv = py.get('recommend'), js.get('recommend')
+    if not (pv is None and jv is None) and (pv is None or jv is None or abs(pv - jv) > 1e-9):
+        diffs.append((code, 'recommend', pv, jv))
+    if (py.get('recommendGate') or None) != (js.get('recommendGate') or None):
+        diffs.append((code, 'recommendGate', py.get('recommendGate'), js.get('recommendGate')))
     vr = value_score(d)
     st = v_stats.setdefault(d.get('market') or '?', {'n': 0, 'scored': 0, 'mcap': 0, 'ev': 0,
                                                      'na': {}})

@@ -149,6 +149,11 @@ class SecurityItem(BaseModel):
     # 一起判不动，所以这一列的分数必须和可评估项数并排读
     value: float | None = None
     value_eval: int | None = None
+    # 综合推荐分 R（0~100，门槛外的 0.6×V + 0.4×G）。recommend_gate 记无分原因：
+    # fraud / trap / fraud+trap（被资格线拦下）或 nodata（门槛过了但 V/G 判不动）——
+    # 列表页的 `-` 要能区分「不过线」与「算不出」
+    recommend: float | None = None
+    recommend_gate: str | None = None
     # 硬门槛（1=触发，0=可判且未触发，null=一个信号都判不了）与命中项，口径见 import_legacy.GATE_FLAGS
     gate: bool | None = None
     gate_flags: list | None = None
@@ -218,6 +223,7 @@ SORT_COLS = {
     "trap": ScoreDaily.trap,
     "growth": ScoreDaily.growth,
     "value": ScoreDaily.value,
+    "recommend": ScoreDaily.recommend,
     # 现价、净现金/市值(后者本身已是比率，跨标的可比，直接按值排)
     "price": QuoteDaily.price,
     "net_cash_ratio": ScoreDaily.net_cash_ratio,
@@ -655,6 +661,8 @@ def list_securities(
             growth_eval=score.growth_eval if score else None,
             value=score.value if score else None,
             value_eval=score.value_eval if score else None,
+            recommend=score.recommend if score else None,
+            recommend_gate=score.recommend_gate if score else None,
             gate=score.gate if score else None,
             gate_flags=score.gate_flags if score else None,
             report_date=score.report_date if score else None,
@@ -748,6 +756,8 @@ def _load_scores(db: Session, sid: int) -> dict | None:
         "growthEval": s.growth_eval,
         "value": s.value,
         "valueEval": s.value_eval,
+        "recommend": s.recommend,
+        "recommendGate": s.recommend_gate,
         "priceRefs": refs,
     }
     if s.wind_fraud_delta is not None or s.wind_mgmt_delta is not None or s.wind_flags:

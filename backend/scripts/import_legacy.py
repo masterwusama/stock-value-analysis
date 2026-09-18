@@ -331,6 +331,8 @@ def build_score_rows(index, trade_date, db):
             "growth_eval": sc.get("growthEval"),
             "value": sc.get("value"),
             "value_eval": sc.get("valueEval"),
+            "recommend": sc.get("recommend"),
+            "recommend_gate": sc.get("recommendGate"),
             "fair_liq": refs.get("fairLiq"),
             "net_cash_ratio": refs.get("netCashRatio"),
             "net_cash_calc": calc or None,
@@ -377,15 +379,17 @@ def build_score_rows(index, trade_date, db):
 # 取行情与评分两张表最新日的交集），行情照写——宁可用昨天的分，也不用一片假的 0 分。
 # 受盯列都是「零值或 NULL 家数最容易被上游事故洗出来」的那一列：fraud/trap 越低越干净，明细被
 # 覆写成空时集体掉到 0；growth 与 value 方向相反，同一起事故让它们分项全算不出而整列变 NULL
-# （年报不足 3 期、行情不返市值）。两端的家数都盯，故一把尺共用。新增列的首批无基线，guard 里会跳过。
-SCORE_HOLD_COLS = ("fraud", "trap", "growth", "value")
+# （年报不足 3 期、行情不返市值）。两端的家数都盯，故一把尺共用。新增列的首批无基线，guard 里会跳过
+# （recommend 的 NULL 还有一层「门槛拦截」的合法来源——所以它的基线要等第一批入库之后才成立）。
+SCORE_HOLD_COLS = ("fraud", "trap", "growth", "value", "recommend")
 SCORE_HOLD_RATIO = 2.0
 SCORE_HOLD_FLOOR = 500
 SCORE_HOLD_ROW_DROP = 0.9
 SCORE_PREV_SQL = """
 SELECT t.trade_date, COUNT(*) n,
        SUM(fraud = 0), SUM(fraud IS NULL), SUM(trap = 0), SUM(trap IS NULL),
-       SUM(growth = 0), SUM(growth IS NULL), SUM(value = 0), SUM(value IS NULL)
+       SUM(growth = 0), SUM(growth IS NULL), SUM(value = 0), SUM(value IS NULL),
+       SUM(recommend = 0), SUM(recommend IS NULL)
 FROM score_daily t
 WHERE t.trade_date = (SELECT MAX(trade_date) FROM score_daily WHERE trade_date < :d)
 GROUP BY t.trade_date

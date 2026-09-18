@@ -1446,6 +1446,42 @@ def value_score(d):
             'evaluated': ev, 'missing': len(V_ITEMS) - ev, 'na': 0, 'raw': raw}
 
 
+# ---- 综合推荐分 R（0~100，门槛外的 0.6×V + 0.4×G）：对应 JS recommendScore ----
+# 出厂检验在 backend/scripts/r_validity.py（A 股面板 2021~2023、事件时信息集、预登记三线全过）：
+#   甲：门槛内 R_q（无价格验收版 = 0.6×V质量块 + 0.4×G）五分位 → 其后转亏率 16.0%→2.4%
+#       单调（Q1−Q5 +13.6pp ≥5pp 线）、减值≥5% 26.8%→3.3% 单调（+23.5pp ≥2pp 线）、逐年 3/3 同向；
+#   乙：两条腿首末差均 ≥ max(V质量块, G 单轴) − 2pp（转亏腿 13.6pp 还强于两个成分）；
+#   丙：门槛剔除人群转亏率 19.3% vs 过门 5.8%（z=+24.4）、减值 19.4% vs 9.2%——剔的确实是更坏的人。
+# 两条读法警戒与 V 同源：① 便宜那 65 分在面板上只能配今天市值（前视），判决书用的是无价格版，
+# R 的高分是「质量+便宜的证据合计」不是收益预测（本库无历史行情，收益侧验证做不了）；
+# ② 门槛外的公司没有 R（列表 `-`），那是「不过资格线」不是「得 0 分」。
+R_W_VALUE = 0.6          # V 权重（G 取 1−0.6）：先验声明不拟合——价值取向给量便宜+质量的 V 六成
+R_FRAUD_GATE = 40.0      # 造假分门槛（40=trap_validity 分项表里造假红旗的中带下沿，与刷池线同源量级）
+R_TRAP_GATE = 20.0       # 陷阱分门槛：出厂档位「档2 单点」上沿之内（C ≤ 0.98），只放过无证据与单点
+
+
+def recommend_score(v_total, g_total, fraud, trap_total):
+    """→ (R 总分 or None, 门槛状态)。
+
+    门槛状态：'pass'（有分）/ 'fraud' / 'trap' / 'fraud+trap'（被资格线拦下）/
+    'nodata'（门槛过了但 V/G 任一判不动，公开年报不足 3 期）。判不动的门槛输入（fraud/trap
+    为 None）按「无证据」放行——港美股 trap 整列不适用，靠这一条才拿得到 R。
+    stockLegacy.js 的 recommendScore 同一条规则。
+    """
+    fail = []
+    if fraud is not None and fraud > R_FRAUD_GATE:
+        fail.append('fraud')
+    if trap_total is not None and trap_total > R_TRAP_GATE:
+        fail.append('trap')
+    if fail:
+        return None, '+'.join(fail)
+    if v_total is None or g_total is None:
+        return None, 'nodata'
+    r = R_W_VALUE * v_total + (1.0 - R_W_VALUE) * g_total
+    # 与 JS Math.round(r*10)/10 一致（Python round 为银行家舍入，不能直接用）
+    return math.floor(r * 10 + 0.5) / 10.0, 'pass'
+
+
 def management_analysis(d):
     """对应 JS managementAnalysis —— 管理层管理水平评分（0~100，越高越好）。
     融合 DEA 投入产出效率思想的 8 维透明加权：费用纪律/资产周转/资本回报/成长质量/
@@ -1831,6 +1867,9 @@ def compute_scores(company, now=None):
     vv = value_score(company)
     scores['value'] = vv['total']
     scores['valueEval'] = vv['evaluated']
+    # 综合推荐分 R：门槛外的 V/G 合成（见 recommend_score 文件头）
+    scores['recommend'], scores['recommendGate'] = recommend_score(
+        scores['value'], scores['growth'], scores['fraud'], scores['trap'])
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。

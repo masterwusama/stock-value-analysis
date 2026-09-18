@@ -422,6 +422,7 @@
       '<a href="#sec-mgmt" data-scroll="sec-mgmt">⑦ 管理水平</a>' +
       '<a href="#sec-cycle" data-scroll="sec-cycle">⑧ 周期位置</a>' +
       '<a href="#sec-value-score" data-scroll="sec-value-score">⑨ 价值综合分</a>' +
+      '<a href="#sec-recommend" data-scroll="sec-recommend">R 综合推荐</a>' +
       '<a href="#sec-growth" data-scroll="sec-growth">⑩ 成长综合分</a>' +
       '<a href="#sec-trap" data-scroll="sec-trap">⑪ 价值陷阱分</a>' +
       (hasEvents ? '<a href="#sec-events" data-scroll="sec-events">⑫ 事件与股东</a>' : '') +
@@ -655,6 +656,10 @@
     html += '<section id="sec-value-score" class="stock-section va-module"><h2 class="va-module-title"><span>⑨</span>价值综合分 · 便宜与质量的证据</h2>' +
       '<div class="score-card" id="stock-score-value"></div></section>';
 
+    // ---- R 综合推荐分（不带编号：它是 ⑨⑩ 与门槛的合成入口，不与 ⑨~⑪ 抢轴位）----
+    html += '<section id="sec-recommend" class="stock-section va-module"><h2 class="va-module-title"><span>R</span>综合推荐分 · 门槛内的价值×成长合成</h2>' +
+      '<div class="score-card" id="stock-score-recommend"></div></section>';
+
     // ---- 模块十：成长综合分 G（七项过去五年的增长证据加权，分高＝更能长；全市场可算）----
     html += '<section id="sec-growth" class="stock-section va-module"><h2 class="va-module-title"><span>⑩</span>成长综合分 · 过去五年的增长证据</h2>' +
       '<div class="score-card" id="stock-score-growth"></div></section>';
@@ -694,10 +699,19 @@
     var ca = cycleAnalysis(d);
     var cycleEl = $('stock-score-cycle');
     if (cycleEl) cycleEl.innerHTML = cycleCard(ca);
+    var vv = valueScore(d), gg = growthScore(d);
     var valueEl = $('stock-score-value');
-    if (valueEl) valueEl.innerHTML = valueCard(valueScore(d));
+    if (valueEl) valueEl.innerHTML = valueCard(vv);
     var growthEl = $('stock-score-growth');
-    if (growthEl) growthEl.innerHTML = growthCard(growthScore(d));
+    if (growthEl) growthEl.innerHTML = growthCard(gg);
+    // R 综合推荐分：同一份现算输入（V/G/造假/陷阱）合成，与列表页入库分同一套公式
+    var recEl = $('stock-score-recommend');
+    if (recEl) {
+      var tpD = trapScore(d) || {};
+      recEl.innerHTML = recommendCard(recommendScore(vv.total, gg.total,
+                                                     fa ? fa.total : null, tpD.total),
+                                       vv.total, gg.total);
+    }
     var trapEl = $('stock-score-trap');
     if (trapEl) trapEl.innerHTML = trapCard(trapScore(d));
     renderCycleChart(d, ca);
@@ -2214,9 +2228,84 @@
       '这一列擅长挑出「既不便宜又赚不到钱」的那一批，拉不动中间那一大片。</p>';
   }
 
+  /* ---------------- 综合推荐分 R（门槛外的 0.6×V + 0.4×G） ----------------
+   * 对应 scoring.py 的 recommend_score，出厂检验 backend/scripts/r_validity.py 三线全过
+   * （甲 单调判别 / 乙 不弱于成分 / 丙 门槛剔得更坏，数字见 scoring.py 文件头）。
+   * 门槛外的公司没有 R：列表 `-` 是「不过资格线」，不是 0 分。
+   */
+  var R_W_VALUE = 0.6, R_FRAUD_GATE = 40, R_TRAP_GATE = 20;
+
+  function recommendScore(vTotal, gTotal, fraud, trap) {
+    var fail = [];
+    if (fraud != null && fraud > R_FRAUD_GATE) fail.push('fraud');
+    if (trap != null && trap > R_TRAP_GATE) fail.push('trap');
+    if (fail.length) return { total: null, gate: fail.join('+') };
+    if (vTotal == null || gTotal == null) return { total: null, gate: 'nodata' };
+    return { total: Math.round((R_W_VALUE * vTotal + (1 - R_W_VALUE) * gTotal) * 10) / 10, gate: 'pass' };
+  }
+
+  // 切点与两率来自 r_validity 面板 R_full（含价格、前视）五分位——与 V_BANDS 同一条纪律：
+  // 判决书在无价格版 R_q（门槛内五分位 → 其后转亏率 16.0%→2.4%、减值≥5% 26.8%→3.3%，单调、
+  // 逐年 3/3），这张表只看形状。改切点要与列表页 R_BAND_CUTS 同步。
+  var R_BANDS = [
+    { hi: 24, label: '档1 最差', grade: 'bad', loss: 11.9, imp5: 24.4 },
+    { hi: 36, label: '档2 偏低', grade: 'low', loss: 8.2, imp5: 6.7 },
+    { hi: 46, label: '档3 中位', grade: 'mid', loss: 5.5, imp5: 5.4 },
+    { hi: 56, label: '档4 偏高', grade: 'mid', loss: 3.3, imp5: 3.8 },
+    { hi: Infinity, label: '档5 最高', grade: 'good', loss: 3.4, imp5: 6.0 }
+  ];
+
+  function rBandOf(total) {
+    for (var i = 0; i < R_BANDS.length; i++) {
+      if (total <= R_BANDS[i].hi) return R_BANDS[i];
+    }
+    return R_BANDS[R_BANDS.length - 1];
+  }
+
+  var R_GATE_TEXT = {
+    fraud: '造假红旗分 > 40（报表内部的量化背离过线）',
+    trap: '价值陷阱分 > 20（坏消息证据堆过「单点」档）',
+    'fraud+trap': '造假与陷阱双双过线',
+    nodata: '门槛过了，但 V/G 至少一条判不动（公开年报不足 3 期）'
+  };
+
+  function recommendCard(r, vTot, gTot) {
+    var band = r.total == null ? null : rBandOf(r.total);
+    var g = band ? band.grade : 'na';
+    var head = '<div class="score-card-head"><h4>综合推荐分 R</h4>' +
+      '<div class="score-circle va-grade-' + g + '"><span>综合</span><b>' +
+      (r.total == null ? '无分' : fmtNum(r.total)) + '</b><i>' +
+      (band ? band.label : '门槛未过') + '</i></div></div>';
+    var basis = '<p class="score-basis">R = 0.6 × 价值综合分 V + 0.4 × 成长综合分 G' +
+      '（本标的：V ' + (vTot == null ? '-' : fmtNum(vTot)) + ' · G ' + (gTot == null ? '-' : fmtNum(gTot)) +
+      '）；发分前置两道门槛——造假 ≤ 40 · 陷阱 ≤ 20，判不动的门槛输入按「无证据」放行' +
+      '（港美股陷阱整列不适用，靠这条拿得到 R）。门槛外的公司整格 `-`，那是「不过资格线」，不是 0 分。</p>';
+    if (r.total == null) {
+      return head + basis + '<p class="score-note">本标的无 R：' +
+        (R_GATE_TEXT[r.gate] || r.gate) + '。</p>';
+    }
+    var bands = R_BANDS.map(function (b, i) {
+      var on = b === band;
+      var lo = i === 0 ? 0 : R_BANDS[i - 1].hi;
+      return '<tr' + (on ? ' class="cmp-group"' : '') + '><td>' + b.label + '</td>' +
+        '<td class="v">' + (b.hi === Infinity ? '> ' + lo : lo + ' ~ ' + b.hi) + '</td>' +
+        '<td class="v"><b>' + b.loss + '%</b></td><td class="v">' + b.imp5 + '%</td></tr>';
+    }).join('');
+    return head + basis +
+      '<div class="stock-compare-wrap"><h4 style="margin:8px 0 4px">档位结局对照（A 股 8,955 条门槛内「公司 × 信号年」，' +
+      '信号年 2021~2023，结局为该期之后公开的真实年报）</h4>' +
+      '<table class="stock-compare">' +
+      '<thead><tr><th>档位</th><th>R 区间</th><th>其后转亏率</th><th>其后减值≥5%净资产率</th></tr></thead>' +
+      '<tbody>' + bands + '</tbody></table></div>' +
+      '<p class="score-note">权重 0.6/0.4 是先验声明不拟合（价值取向给量便宜+质量的 V 六成）。这张对照表' +
+      '不是预测：面板上 R 的便宜那部分配的是今天的市值，装着信号日之后的一切消息——它只证明档位形状没反。' +
+      '真正的判决书在无价格版上：同一批门槛内观测按「0.6×V质量块+0.4×G」五分位，其后转亏率' +
+      '16.0% → 8.2% → 4.9% → 2.9% → 2.4%、减值≥5%率 26.8% → 6.6% → 5.9% → 4.0% → 3.3%，' +
+      '逐年 3/3 同向；门槛剔除的人群转亏率 19.3%（过门 5.8%）。高分是「质量+便宜证据的合计」，不是收益预测。</p>';
+  }
+
   // 造假分析评分卡（与 scoreCard 同构但等级方向相反：分低=安全=绿）；ov 为 Wind 事件覆盖层条目，有则并列基础分+事件明细+优化分
-  function fraudCard(fa, ov) {
-    var g = fraudGradeOf(fa.total);
+  function fraudCard(fa, ov) {    var g = fraudGradeOf(fa.total);
     var rows = fa.items.map(function (x) {
       var mCls = x.match == null ? 'sc-na' : x.match <= 0.01 ? 'sc-good' : x.match < 0.5 ? 'sc-mid' : x.match < 0.99 ? 'sc-low' : 'sc-bad';
       var mTxt = x.match == null ? '-' : (x.match * 100).toFixed(0) + '%';
@@ -3682,4 +3771,5 @@
     trapScore, trapBandOf, TRAP_W, TRAP_CUT, TRAP_BANDS,
     growthScore, G_ITEMS, G_SUM_W,
     valueScore, V_ITEMS, V_SUM_W,
+    recommendScore, R_W_VALUE, R_FRAUD_GATE, R_TRAP_GATE, R_BANDS,
     unbindResize };

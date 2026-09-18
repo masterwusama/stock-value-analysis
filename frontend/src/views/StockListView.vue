@@ -36,6 +36,8 @@ const COLS = [
   { key: 'value', label: '价值', value: true },
   // 成长列：格内是 G（0-100，越高越好，与陷阱分方向相反），右上角是「七项里查得动几项」
   { key: 'growth', label: '成长', growth: true },
+  // 推荐列：门槛外的 0.6×V + 0.4×G（资格线：造假≤40·陷阱≤20），门槛外整格 `-`
+  { key: 'recommend', label: '推荐' },
   // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
   { key: 'fair_liq', label: '清算', ratio: true },
   { key: 'net_cash_ratio', label: '净现金/市值' },
@@ -216,6 +218,19 @@ const G_TIP = '成长综合分 G（0-100，越高越好）：净利/营收/每�
 // 与陷阱分不同：这里查的就是那个舍入到一位小数的显示分本身，详情页 gBandOf 用的是同一个值，所以两页不会各说一套。
 // 各档实测未来增速刻意不复述，只在详情页给，避免两处各写一份数字。
 const G_BAND_CUTS = [[16.0, '档1 增长最弱', 'bad'], [28.3, '档2 偏低', 'low'], [47.7, '档3 中位', 'mid'], [69.0, '档4 偏高', 'mid']]
+const R_TIP = '综合推荐分 R（0-100，越高越好）：门槛外的 0.6×价值综合分 V + 0.4×成长综合分 G。'
+  + '两道发分门槛——造假 ≤ 40 · 陷阱 ≤ 20（判不动的门槛输入按无证据放行，港美股陷阱整列不适用）。'
+  + '门槛外的公司显示 -，那是「不过资格线」不是 0 分；门槛过了但 V/G 判不动同样无分（悬停可见原因）。'
+  + '回测（A 股 2021~2023 事件时面板）：门槛内按无价格版五分位，其后转亏率 16.0%→2.4% 单调、减值≥5% 26.8%→3.3% 单调、逐年 3/3；'
+  + '高分是「质量+便宜证据的合计」，不是收益预测。'
+// 档位切点镜像 stockLegacy.js 的 R_BANDS（回测面板 R_full 五分位 24/36/46/56 取整），改那边要同步这边。
+const R_BAND_CUTS = [[24, '档1 最差', 'bad'], [36, '档2 偏低', 'low'], [46, '档3 中位', 'mid'], [56, '档4 偏高', 'mid']]
+const R_GATE_LABEL = {
+  fraud: '造假红旗分 > 40，被资格线拦下',
+  trap: '价值陷阱分 > 20，被资格线拦下',
+  'fraud+trap': '造假与陷阱双双过线，被资格线拦下',
+  nodata: '门槛已过，但 V/G 至少一条判不动（公开年报不足 3 期）',
+}
 function windTip(s, kind, baseTip) {
   if (!windMode.value) return baseTip
   if (!s.wind_hit) {
@@ -469,6 +484,22 @@ function gTitle(s) {
   const [label] = bandOfG(s.growth)
   return `${G_TIP}｜本标的：${label}${s.growth_eval == null ? '' : ' · 七项里查得动 ' + s.growth_eval + ' 项'}`
 }
+// 推荐分格子：无分时按门槛原因给提示（`-` 要能区分「不过线」与「算不出」）
+function bandOfR(v) {
+  for (const [hi, label, grade] of R_BAND_CUTS) if (v <= hi) return [label, grade]
+  return ['档5 最高', 'good']
+}
+const rGrade = (s) => s.recommend == null ? 'na' : bandOfR(s.recommend)[1]
+function rTitle(s) {
+  if (s.recommend == null) {
+    return R_TIP + '｜本标的：无 R（' + (R_GATE_LABEL[s.recommend_gate] || '原因未知') + '）'
+  }
+  const [label] = bandOfR(s.recommend)
+  const ing = []
+  if (s.value != null) ing.push('V ' + s.value.toFixed(1))
+  if (s.growth != null) ing.push('G ' + s.growth.toFixed(1))
+  return `${R_TIP}｜本标的：${label}${ing.length ? ' · ' + ing.join(' · ') : ''}`
+}
 const cls = (n) => n > 0 ? 'up' : n < 0 ? 'down' : 'flat'
 const MARKET_NAME = { A: 'A股', HK: '港股', US: '美股' }
 const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / pageSize.value)) : 1
@@ -696,6 +727,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
               <em>价值</em><b>{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></b></span>
             <span class="sc-bd" :class="'sc-' + gGrade(s)" :title="gTitle(s)">
               <em>成长</em><b>{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></b></span>
+            <span class="sc-bd" :class="'sc-' + rGrade(s)" :title="rTitle(s)">
+              <em>推荐</em><b>{{ score(s.recommend) }}</b></span>
             <span class="sc-bd" :class="{ 'sc-good': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                   :title="NCR_CELL_TIP">
               <em>净现金/市值</em><b>{{ score2(s.net_cash_ratio) }}</b></span>
@@ -768,6 +801,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></td>
             <td :class="'sc-' + vGrade(s)" :title="vTitle(s)">{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></td>
             <td :class="'sc-' + gGrade(s)" :title="gTitle(s)">{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></td>
+            <td :class="'sc-' + rGrade(s)" :title="rTitle(s)">{{ score(s.recommend) }}</td>
             <td class="c-liq" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
                 :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"

@@ -129,6 +129,8 @@ CREATE TABLE score_daily (
 	growth_eval INTEGER, 
 	value DOUBLE, 
 	value_eval INTEGER, 
+	recommend DOUBLE, 
+	recommend_gate VARCHAR(16), 
 	fair_liq DOUBLE, 
 	net_cash_ratio DOUBLE, 
 	net_cash_calc JSON, 
@@ -154,12 +156,6 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
-
-CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
-
-CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
-
 CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
 
 CREATE INDEX idx_list_value ON score_daily (trade_date, value);
@@ -175,6 +171,12 @@ CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
+
+CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
+
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+
+CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -288,9 +290,9 @@ CREATE TABLE share_action (
 	PRIMARY KEY (sid, kind, src_id)
 );
 
-CREATE INDEX idx_action_sid_kind ON share_action (sid, kind, notice_date);
-
 CREATE INDEX idx_action_date ON share_action (kind, issue_date);
+
+CREATE INDEX idx_action_sid_kind ON share_action (sid, kind, notice_date);
 
 CREATE TABLE agro_product (
 	product_id VARCHAR(64) NOT NULL, 
