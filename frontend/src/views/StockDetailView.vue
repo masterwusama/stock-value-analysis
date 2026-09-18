@@ -105,3 +105,35 @@ onBeforeUnmount(() => {
   .back-btn { padding: 8px 16px; font-size: 15px; min-height: 36px; }
 }
 </style>
+
+<!-- 详情页版式整理（2026-09）。legacy 注入的 DOM 不带 scoped 属性，故用非 scoped 块、
+     选择器全部挂在 .detail-root 下防泄漏；样式本体在 assets/stock.css，这里只做覆盖。 -->
+<style>
+/* 限宽居中：宽屏下 26 列快照、7 列评分表、通栏注释墙全部被拉散是「乱」的主源 */
+.detail-root { max-width: 1180px; margin: 0 auto; }
+
+/* 注释/读法段落面板化：通栏灰字墙 → 带左边线的脚注块，与数据表视觉分层 */
+.detail-root .score-note {
+  background: #f7f9fc;
+  border-left: 3px solid #c9d6ea;
+  border-radius: 0 8px 8px 0;
+  padding: 10px 12px;
+  color: #6b7686;
+}
+.detail-root .score-basis { color: #7c8698; }
+
+/* 评分卡：轻投影提层级，卡与灰底分离开 */
+.detail-root .score-card { box-shadow: 0 1px 3px rgba(16, 24, 40, 0.05); }
+
+/* 评分表：斑马纹读行不串位（cmp-group 高亮行与 sticky 首列同步换底） */
+.detail-root .stock-compare th,
+.detail-root .stock-compare td { padding: 7px 12px; }
+.detail-root .stock-compare tbody tr:nth-child(even) td { background: #fafbfd; }
+.detail-root .stock-compare tbody tr:nth-child(even) td:first-child { background: #fafbfd; }
+.detail-root .stock-compare tbody tr:hover td { background: #f0f5ff; }
+.detail-root .stock-compare tbody tr:hover td:first-child { background: #f0f5ff; }
+
+/* 顶部锚点导航芯片收紧：13 枚芯片少占一行 */
+.detail-root .va-nav a { font-size: 12px; padding: 3px 10px; }
+.detail-root .va-nav { gap: 5px; }
+</style>
