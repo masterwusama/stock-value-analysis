@@ -149,7 +149,12 @@ def _pid_alive(pid: int) -> bool:
 
 
 def fetch_locked() -> bool:
-    """data/.fetch.lock 是否被一个还活着的抓取进程持有。"""
+    """data/.fetch.lock 是否被一个还活着的抓取进程持有。
+
+    锁 mtime 由 fetch_data 的看门线程每 5 分钟刷新（与 index flush 解耦），所以
+    「PID 报活 + 心跳超时」只剩 PID 被无关进程复用一种解释，按无锁放行；
+    fetch_data.acquire_lock 同一口径，且用 O_EXCL 原子建锁消掉 check-then-write 竞态。
+    """
     try:
         pid = int(FETCH_LOCK.read_text(encoding="utf-8").strip() or 0)
         age = time.time() - FETCH_LOCK.stat().st_mtime

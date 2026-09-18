@@ -32,6 +32,7 @@ import os
 import re
 import socket
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -1781,7 +1782,8 @@ def keep_last_good(path: Path, data):
 
 INDEX_PATH = OUTPUT_DIR / "index.json"
 LOCK_PATH = OUTPUT_DIR / ".fetch.lock"
-LOCK_STALE_SECS = 45 * 60      # 持锁进程死掉后超过此时长才可接手
+LOCK_STALE_SECS = 45 * 60      # 心跳超时且 PID 仍报活才允许接手——防 PID 复用假活死锁
+LOCK_HEARTBEAT_SECS = 5 * 60   # 看门线程刷锁间隔：远小于 STALE，慢速段也不会被误判残留
 QUOTE_FIELDS = ("price", "change_pct", "pe_ttm", "pb", "market_cap",
                 "float_market_cap", "turnover_rate", "time")
 
@@ -1822,24 +1824,63 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
-def acquire_lock():
-    """单一抓取入口互斥：index.json 是全量重写,两个进程并行会互相覆盖条目。"""
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    if LOCK_PATH.exists():
-        pid, age = 0, 0.0
+_lock_hb_stop = threading.Event()
+
+
+def _lock_heartbeat():
+    """持锁期间定时 touch 锁，把「活着」的证据与 index flush 解耦。
+
+    此前锁 mtime 只在 save_index 刷新，而深抓串行兜底段两次 flush 可间隔数小时，
+    陈旧判定会把还在跑的进程当残留锁抢走——正是锁要防的两进互写 index.json。
+    """
+    while not _lock_hb_stop.wait(LOCK_HEARTBEAT_SECS):
         try:
-            pid = int(LOCK_PATH.read_text(encoding="utf-8").strip() or 0)
-            age = time.time() - LOCK_PATH.stat().st_mtime
-        except (ValueError, OSError):
+            LOCK_PATH.touch()
+        except OSError:
             pass
-        if _pid_alive(pid) and age < LOCK_STALE_SECS:
-            print(f"[lock] 已有抓取在跑（PID {pid}，持锁 {age / 60:.0f} 分钟），本次退出；"
-                  f"确认无进程可删 data/.fetch.lock", flush=True)
-            sys.exit(2)
-    LOCK_PATH.write_text(str(os.getpid()), encoding="utf-8")
+
+
+def acquire_lock():
+    """单一抓取入口互斥：index.json 是全量重写,两个进程并行会互相覆盖条目。
+
+    O_CREAT|O_EXCL 原子建锁（exists()+write 之间有 TOCTOU 窗口，调度与手动同启
+    会双双得手）。撞上已有锁时：PID 活着且心跳未超时 → 退出；PID 已死或心跳超时
+    （看门线程都停了，或 PID 被无关进程复用）→ unlink 后回原子建锁重试。
+    """
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        try:
+            fd = os.open(LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            pid, age = 0, 0.0
+            try:
+                pid = int(LOCK_PATH.read_text(encoding="utf-8").strip() or 0)
+                age = time.time() - LOCK_PATH.stat().st_mtime
+            except (ValueError, OSError):
+                pass
+            alive = _pid_alive(pid)
+            if alive and age < LOCK_STALE_SECS:
+                print(f"[lock] 已有抓取在跑（PID {pid}，持锁 {age / 60:.0f} 分钟），本次退出；"
+                      f"确认无进程可删 data/.fetch.lock", flush=True)
+                sys.exit(2)
+            print(f"[lock] 接手残留锁：PID {pid} "
+                  f"{'已死' if not alive else '心跳超时（PID 报活但看门停摆）'}"
+                  f"，age {age / 60:.0f} 分钟", flush=True)
+            try:
+                LOCK_PATH.unlink()
+            except OSError:
+                pass
+            continue
+        os.write(fd, str(os.getpid()).encode())
+        os.close(fd)
+        break
+    _lock_hb_stop.clear()
+    threading.Thread(target=_lock_heartbeat, daemon=True,
+                     name="fetch-lock-heartbeat").start()
 
 
 def release_lock():
+    _lock_hb_stop.set()
     try:
         if LOCK_PATH.exists() and LOCK_PATH.read_text(encoding="utf-8").strip() == str(os.getpid()):
             LOCK_PATH.unlink()
@@ -1866,7 +1907,7 @@ def save_index(by_code):
     now = datetime.now(CN_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
     save_json(INDEX_PATH, {"updated_at": now, "count": len(items), "companies": items})
     try:
-        LOCK_PATH.touch()        # 顺带刷锁,供并发入口区分“活锁”与残留锁
+        LOCK_PATH.touch()        # 看门线程之外的顺带刷新（每次 flush 也标一次活）
     except OSError:
         pass
     return items
