@@ -246,12 +246,14 @@
 
   var resizeBound = false;
   var wasNarrow = null;
+  // 组件卸载标志：teardown 置位后，init 里在途的 fetch 回调不再碰已移除的 DOM
+  var dead = false;
 
   function onResize() {
     // AgroView 的图表高度是 Vue :style 绑定，走微任务队列刷新；
     // 同步 resize 读到的是旧高度，推一个宏任务再量才拿得到跨断点后的真实尺寸
     setTimeout(function () {
-      if (!state.chart) return;
+      if (dead || !state.chart) return;
       var n = narrow();
       // 跨断点时 grid 左右留白是另一套值，只 resize 不重设 option 会留着旧边距
       if (wasNarrow !== n) { wasNarrow = n; renderChart(); }
@@ -261,10 +263,12 @@
 
   // 组件卸载时摘掉监听：光 dispose 图表不够，监听器还挂在 window 上
   function teardown() {
+    dead = true;
     if (resizeBound) { resizeBound = false; window.removeEventListener('resize', onResize); }
   }
 
   function init() {
+    dead = false;
     // 事件绑定
     document.querySelectorAll('.agro-tab').forEach(function (t) {
       t.addEventListener('click', function () { setCat(t.getAttribute('data-cat')); });
@@ -287,9 +291,12 @@
         return r.json();
       })
       .then(function (data) {
+        if (dead) return;
         if (!data || !data.products || !data.products.length) throw new Error('数据为空');
         state.data = data;
-        // 默认选中每个分类下最新价最高的产品
+        // 默认选中每个分类下最新价最高的产品。state 是模块级单例、跨路由存活，
+        // 进页面必须先清空——否则第二次进来默认项被重复 push，手动取消的也会被悄悄勾回
+        state.selected = [];
         var byCat = {};
         data.products.forEach(function (p) {
           if (!byCat[p.category]) byCat[p.category] = [];
@@ -320,6 +327,7 @@
           ' · 价格为市场报价，仅供个人学习研究';
       })
       .catch(function (e) {
+        if (dead) return;
         fail('数据加载失败：' + e.message + '（请确认 data/products.json 已生成）');
       });
   }

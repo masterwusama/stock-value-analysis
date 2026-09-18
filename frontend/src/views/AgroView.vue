@@ -10,17 +10,24 @@ import '../assets/agro.css'
 window.echarts = echarts
 const isMobile = useMediaQuery(MOBILE_QUERY)
 let mods = null
+// 卸载竞态：onMounted 里两个 await import 期间切走路由时，onBeforeUnmount 见到的
+// mods 还是 null 会直接 return，随后迟到的 init() 却照常执行——resize 监听挂上后
+// 无人摘除，每次进出 /agro 累积一对。alive 挡住迟到 init，teardown 里的 dead 标志
+// 再挡住 init 内部在途的 fetch 回调。
+let alive = true
 
 onMounted(async () => {
   await nextTick()
   const agro = await import('../lib/agroLegacy.js')
   const edb = await import('../lib/edbLegacy.js')
+  if (!alive) return
   mods = { agro, edb }
   agro.init() // 拉 /api/agro/products 渲染农化视图
   edb.init()  // 绑定行业切换栏(EDB 数据懒加载)
 })
 
 onBeforeUnmount(() => {
+  alive = false
   if (!mods) return
   const c = mods.agro.agroState.chart
   if (c) { try { c.dispose() } catch (e) { /* 已释放 */ } mods.agro.agroState.chart = null }

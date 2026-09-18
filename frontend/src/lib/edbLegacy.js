@@ -524,6 +524,7 @@
         return r.json();
       })
       .then(function (data) {
+        if (dead) return;
         if (!data || !data.categories || !data.categories.length) throw new Error('EDB 数据为空');
         state.data = data;
         data.categories.forEach(function (c) { state.byId[c.id] = c; });
@@ -532,6 +533,7 @@
         cb();
       })
       .catch(function (e) {
+        if (dead) return;
         $('edb-loading').style.display = 'none';
         $('edb-error').textContent = 'EDB 数据加载失败：' + e.message + '（请确认 data/edb.json 已生成）';
         $('edb-error').style.display = '';
@@ -542,6 +544,7 @@
 
   var resizeBound = false;
   var wasNarrow = null;
+  var dead = false;
 
   function showEdbBody(on) {
     $('edb-body').style.display = on ? '' : 'none';
@@ -577,6 +580,7 @@
     // 分维图表高度是拼进 HTML 的内联样式、总览图高度是 Vue :style 绑定，
     // 都要等这一轮 DOM 更新落地后再量，故推进宏任务
     setTimeout(function () {
+      if (dead) return;
       var n = narrow();
       if (wasNarrow !== n) {
         wasNarrow = n;
@@ -588,12 +592,14 @@
     }, 0);
   }
 
-  // 组件卸载时摘掉监听：光 dispose 图表不够，监听器还挂在 window 上
+  // 组件卸载标志：teardown 置位后，loadEdb 在途的 fetch 回调不再碰已移除的 DOM
   function teardown() {
+    dead = true;
     if (resizeBound) { resizeBound = false; window.removeEventListener('resize', onResize); }
   }
 
   function init() {
+    dead = false;
     $('edb-switch').querySelectorAll('.edb-seg').forEach(function (b) {
       b.addEventListener('click', function () {
         switchView(b.getAttribute('data-view'));
