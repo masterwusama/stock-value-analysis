@@ -17,43 +17,51 @@ const BUY_TIP = '新=最新公告记录，完=最近已完成回购；同一笔�
 
 const COLS = [
   // stick：横向滚动时固定在左侧，滚到右边仍知道当前是哪只（同原站 .stick）
-  { key: 'code', label: '代码/名称', l: true, stick: true },
-  { key: null, label: '行业', l: true, noSort: true },
-  { key: 'price', label: '现价', noSort: true },
-  { key: null, label: '涨跌', noSort: true },
-  { key: 'pe_ttm', label: 'PE(TTM)' },
-  { key: 'pb', label: 'PB' },
-  { key: 'market_cap', label: '市值(亿)' },
-  { key: 'score_graham_agg', label: '格进取' },
-  { key: 'score_graham_def', label: '格防御' },
-  { key: 'score_schloss', label: '施洛斯' },
-  { key: 'score_buffett', label: '巴菲特' },
-  { key: 'fraud', label: '造假' },
-  { key: 'mgmt', label: '管理' },
-  { key: 'cycle', label: '周期' },
-  { key: 'trap', label: '陷阱', trap: true },
+  // group/edge：两级表头的分组归属与「组首列」标记（组首列左侧画分隔线），行业并入名称格后不再单列
+  { key: 'code', label: '代码/名称', l: true, stick: true, group: 'id', edge: true },
+  { key: 'price', label: '现价', noSort: true, group: 'quote', edge: true },
+  { key: null, label: '涨跌', noSort: true, group: 'quote' },
+  { key: 'pe_ttm', label: 'PE(TTM)', group: 'quote' },
+  { key: 'pb', label: 'PB', group: 'quote' },
+  { key: 'market_cap', label: '市值(亿)', group: 'quote' },
+  { key: 'score_graham_agg', label: '格进取', group: 'school', edge: true },
+  { key: 'score_graham_def', label: '格防御', group: 'school' },
+  { key: 'score_schloss', label: '施洛斯', group: 'school' },
+  { key: 'score_buffett', label: '巴菲特', group: 'school' },
+  { key: 'fraud', label: '造假', group: 'score', edge: true },
+  { key: 'mgmt', label: '管理', group: 'score' },
+  { key: 'cycle', label: '周期', group: 'score' },
+  { key: 'trap', label: '陷阱', trap: true, group: 'score' },
   // 价值列：格内是 V（0-100，越高越便宜且有质量），右上角是「七项里查得动几项」
-  { key: 'value', label: '价值', value: true },
+  { key: 'value', label: '价值', value: true, group: 'score' },
   // 成长列：格内是 G（0-100，越高越好，与陷阱分方向相反），右上角是「七项里查得动几项」
-  { key: 'growth', label: '成长', growth: true },
-  // 推荐列：门槛外的 0.6×V + 0.4×G（资格线：造假≤40·陷阱≤20），门槛外整格 `-`
-  { key: 'recommend', label: '推荐' },
+  { key: 'growth', label: '成长', growth: true, group: 'score' },
+  // 推荐列：门槛外的 0.6×V + 0.4×G（资格线：造假≤40·陷阱≤20·中报≤−70%），门槛外整格 `-`
+  { key: 'recommend', label: '推荐', group: 'score' },
   // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
-  { key: 'fair_liq', label: '清算', ratio: true },
-  { key: 'net_cash_ratio', label: '净现金/市值' },
+  { key: 'fair_liq', label: '清算', ratio: true, group: 'asset', edge: true },
+  { key: 'net_cash_ratio', label: '净现金/市值', group: 'asset' },
   // PB 十年分位（外源 Wind 口径）：只放这一列，PE/PS 分位在详情页——
   // PE 分位对亏损股无意义（一片 “-”）、PS 分位又宽又少人看，摆进这张表只会稀释信号。
-  { key: 'pb_pctile', label: 'PB十年分位' },
-  { key: null, label: '定增', noSort: true, tip: SEO_TIP },
-  { key: null, label: '回购', noSort: true, tip: BUY_TIP },
+  { key: 'pb_pctile', label: 'PB十年分位', group: 'asset' },
+  { key: null, label: '定增', noSort: true, tip: SEO_TIP, group: 'event', edge: true },
+  { key: null, label: '回购', noSort: true, tip: BUY_TIP, group: 'event' },
   // 价格参考合并列:每流派一列,竖排 买→保守/公允(同原站 listCells)
   // 列头排序键 buy_* 走的是"买入性价比"（现价相对买价的折价深度，后端算），不是买价绝对值；
   // 格内保守/公允两档小字仍按各自卖价排。键名与 score_daily 列/SecurityItem 字段保持一致。
-  { key: 'buy_graham_agg', label: '格进取 买/保/公', ref: true, school: 'grahamAgg' },
-  { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef' },
-  { key: 'buy_schloss', label: '施洛斯 买/保/公', ref: true, school: 'schloss' },
-  { key: 'buy_buffett', label: '巴菲特 买/保/公', ref: true, school: 'buffett' },
+  { key: 'buy_graham_agg', label: '格进取 买/保/公', ref: true, school: 'grahamAgg', group: 'ref', edge: true },
+  { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef', group: 'ref' },
+  { key: 'buy_schloss', label: '施洛斯 买/保/公', ref: true, school: 'schloss', group: 'ref' },
+  { key: 'buy_buffett', label: '巴菲特 买/保/公', ref: true, school: 'buffett', group: 'ref' },
 ]
+// 两级表头：组标签行由 COLS 归并派生（span = 组内列数），列名行沿用原 v-for
+const GROUP_LABEL = { id: '标的', quote: '行情', school: '四派评分', score: '量化评分', asset: '资产 · 分位', event: '股本事件', ref: '买卖参考价' }
+const COL_GROUPS = COLS.reduce((acc, c) => {
+  const last = acc[acc.length - 1]
+  if (last && last.key === c.group) last.span++
+  else acc.push({ key: c.group, label: GROUP_LABEL[c.group], span: 1 })
+  return acc
+}, [])
 
 const market = ref('')
 // 全市场 5500 只规模下“翻页”不实用:板块/行业/ST 作为基本维度先缩小范围
@@ -787,8 +795,12 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <div v-else class="tbl-wrap">
       <table class="grid grid-list">
         <thead>
+          <tr class="grp-row">
+            <th v-for="g in COL_GROUPS" :key="g.key" :colspan="g.span"
+                :class="['grp-' + g.key, { stick: g.key === 'id' }]">{{ g.label }}</th>
+          </tr>
           <tr>
-            <th v-for="c in COLS" :key="c.label" :class="{ l: c.l, unsort: !c.key, stick: c.stick }"
+            <th v-for="c in COLS" :key="c.label" :class="{ l: c.l, unsort: !c.key, stick: c.stick, gedge: c.edge }"
                 :title="thTip(c)"
                 @click="c.key && setSort(c.key)">
               {{ c.label }}<template v-if="sortActive(c)">{{ order === 'desc' ? ' ▼' : ' ▲' }}</template>
@@ -797,31 +809,38 @@ const REF_COLS = COLS.filter((c) => c.ref)
         </thead>
         <tbody>
           <tr v-for="s in data?.items" :key="s.sid" @click="router.push(`/stock/${s.code}`)">
-            <td class="l stick"><b>{{ s.name }}</b><span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span><span v-if="dipOf(s) != null" class="stale-flag dip-flag" :title="DIP_TIP + '｜本标的：' + dipOf(s) + '%'">中报{{ dipOf(s) }}%</span><span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span> <span class="badge">{{ MARKET_NAME[s.market] }}</span> {{ s.code }}</td>
-            <td class="l"><span class="ind" :title="s.industry">{{ s.industry || '-' }}</span></td>
+            <td class="l stick name-cell">
+              <div class="nm-row"><b>{{ s.name }}</b><span class="badge">{{ MARKET_NAME[s.market] }}</span><span class="cd">{{ s.code }}</span></div>
+              <div class="nm-sub">
+                <span class="ind" :title="s.industry">{{ s.industry || '-' }}</span>
+                <span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span>
+                <span v-if="dipOf(s) != null" class="stale-flag dip-flag" :title="DIP_TIP + '｜本标的：' + dipOf(s) + '%'">中报{{ dipOf(s) }}%</span>
+                <span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span>
+              </div>
+            </td>
             <!-- 币种角标：港股/美股的现价与市值是本币（HKD/USD），跟 A 股人民币数值直接比大小会误读 -->
-            <td>{{ fmt(s.price) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
+            <td class="gedge">{{ fmt(s.price) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :class="cls(s.change_pct)">{{ pct(s.change_pct) }}</td>
             <td>{{ fmt(s.pe_ttm) }}</td>
             <td>{{ fmt(s.pb) }}</td>
             <td>{{ yi(s.market_cap) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
-            <td>{{ score(s.score_graham_agg) }}</td>
+            <td class="gedge">{{ score(s.score_graham_agg) }}</td>
             <td>{{ score(s.score_graham_def) }}</td>
             <td>{{ score(s.score_schloss) }}</td>
             <td>{{ score(s.score_buffett) }}</td>
-            <td :title="windTip(s, 'fraud', FRAUD_TIP)">{{ score(dispScore(s, 'fraud')) }}</td>
+            <td class="gedge" :title="windTip(s, 'fraud', FRAUD_TIP)">{{ score(dispScore(s, 'fraud')) }}</td>
             <td :title="windTip(s, 'mgmt', MGMT_TIP)">{{ score(dispScore(s, 'mgmt')) }}</td>
             <td>{{ score(s.cycle) }}</td>
             <td :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></td>
             <td :class="'sc-' + vGrade(s)" :title="vTitle(s)">{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></td>
             <td :class="'sc-' + gGrade(s)" :title="gTitle(s)">{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></td>
             <td :class="'sc-' + rGrade(s)" :title="rTitle(s)">{{ score(s.recommend) }}</td>
-            <td class="c-liq" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
+            <td class="c-liq gedge" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
                 :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                 :title="NCR_CELL_TIP">{{ score2(s.net_cash_ratio) }}</td>
             <td :class="{ 'r-hit': s.pb_pctile != null && s.pb_pctile <= 20 }" :title="pbCellTip(s)">{{ pbCell(s) }}</td>
-            <td class="c-act" :title="seoTip(s)">
+            <td class="c-act gedge" :title="seoTip(s)">
               <div class="ac-l" v-if="s.actions?.seo">
                 <span class="ac-p">{{ fmt(s.actions.seo.price) }}</span><span class="ac-s">{{ ym(s.actions.seo.date) }} {{ qty(s.actions.seo.num) }}</span>
               </div>
@@ -833,7 +852,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
               </div>
               <div v-if="!buyRows(s).length" class="ac-l">-</div>
             </td>
-            <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :title="refTitle(s, c.school)">
+            <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :class="{ gedge: c.edge }" :title="refTitle(s, c.school)">
               <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>
               <span class="rf-sell">
                 <span class="sl-sort" :class="{ 'r-hit-s': refCons(s, c.school) != null && s.price != null && s.price >= refCons(s, c.school) }"
@@ -1010,6 +1029,40 @@ table.grid th.unsort { cursor: default; }
 /* 表头允许折行：列宽改由数值决定（“格进取 买/保/公”不再硬撑一行的宽度），CJK 可任意断字 */
 table.grid-list th { white-space: normal; line-height: 1.25; }
 table.grid-list th, table.grid-list td { padding: 6px 6px; }
+/* ---- 分组表头（2026-09 视觉整理）：组标签行 + 组间分隔线 + 斑马纹 ----
+   26 列等权平铺是「乱」的根源：两级表头把列归成 7 组，组首列画竖分隔，
+   行间加斑马纹让横向读行不串位；信息一列不删。 */
+.grid-list thead tr.grp-row th {
+  padding: 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  color: var(--sub);
+  text-align: center;
+  cursor: default;
+}
+.grid-list thead tr.grp-row th + th { border-left: 1px solid var(--line); }
+/* 列名行：不折行（「格进取」折成两行是原先最刺眼的乱源），字号微降，长标签如 PB十年分位也就 ~80px */
+.grid-list thead tr:not(.grp-row) th { font-size: 12px; white-space: nowrap; }
+/* 组底色：极浅的功能色给每组一个「地盘」，只上组标签行不上数据行 */
+.grid-list thead tr.grp-row th.grp-id { letter-spacing: 0; }
+.grid-list thead tr.grp-row th.grp-school { background: #eef3fb; }
+.grid-list thead tr.grp-row th.grp-score { background: #f9f4e8; }
+.grid-list thead tr.grp-row th.grp-asset { background: #edf5ef; }
+.grid-list thead tr.grp-row th.grp-event { background: #f3f1f8; }
+.grid-list thead tr.grp-row th.grp-ref { background: #eaf4f6; }
+/* 组首列分隔线：表头与数据行都画，滚动到右侧时组边界仍在 */
+.grid-list .gedge { border-left: 1px solid var(--line); }
+/* 斑马纹：td 级上色（tr 级会被 th/td 自身背景盖住），stick 列与 hover 同步 */
+.grid-list tbody tr:nth-child(even) td { background: #f7f9fc; }
+.grid-list tbody tr:nth-child(even) td.stick { background: #f7f9fc; box-shadow: 6px 0 6px -6px rgba(0, 0, 0, .18); }
+.grid-list tbody tr:hover td { background: #eef4ff; }
+.grid-list tbody tr:hover td.stick { background: #eef4ff; }
+/* 名称格两行化：第一行 名称+市场+代码，第二行 行业+标注旗；行业单列就此省下 */
+.grid-list .name-cell .nm-row { display: flex; align-items: baseline; gap: 5px; min-width: 148px; }
+.grid-list .name-cell .nm-row b { font-size: 13px; }
+.grid-list .name-cell .cd { font-size: 11px; color: var(--sub); font-variant-numeric: tabular-nums; }
+.grid-list .name-cell .nm-sub { display: flex; align-items: center; gap: 6px; margin-top: 1px; font-size: 11px; color: var(--sub); }
 /* 清算列按性价比排序时数字后面还跟着折价小标签，不约束会折成两行把整行撑高 */
 table.grid-list .c-liq { white-space: nowrap; }
 /* 行业名最长 20 字（“铁路、船舶、航空航天和其他运输设备制造业”），不约束会单列吃掉 260px；截断后完整名走 title */
