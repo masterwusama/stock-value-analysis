@@ -347,23 +347,31 @@ def value_scores(d, va):
             v = last_ba.get(key)
         return v
 
-    def g(ba, key):
-        return ba.get(key) if ba else None
+    def bal_debt(canon):
+        """有息负债桶的行回退读取：最新一行优先（桶内含市场别名），缺则年报行。"""
+        v = _debt_key(latest_ba, canon) if latest_ba else None
+        if v is None and last_ba is not None:
+            v = _debt_key(last_ba, canon)
+        return v
 
     ca = bal('流动资产合计')
     cl = bal('流动负债合计')
     tl = bal('负债合计')
     assets = bal('资产总计')
     cash = bal('货币资金')
-    st_debt = bal('短期借款')
-    lt_debt = bal('长期借款')
-    bond = bal('应付债券')
-    due1y = bal('一年内到期的非流动负债')
-    lease = bal('租赁负债')
+    st_debt = bal_debt('短期借款')
+    lt_debt = bal_debt('长期借款')
+    bond = bal_debt('应付债券')
+    due1y = bal_debt('一年内到期的非流动负债')
+    lease = bal_debt('租赁负债')
     intang = bal('无形资产')
     goodwill = bal('商誉')
     net_profit = last.get('净利润') if last else None
-    debtr = last.get('资产负债率') if last else None
+    # 负债率（批次 1 补）：改最新期 负债合计÷资产总计 现算，与同卡的流动比率同一张表——
+    # 旧读年报披露值与最新期混窗，实测 202 家跨格攻 60% 线、299 家跨巴菲特 50% 线。
+    # 现算不出（缺任一科目）回退年报披露值
+    debtr = (tl / assets) if (tl is not None and assets is not None and assets > 0) else \
+        (last.get('资产负债率') if last else None)
     g_margin = last.get('销售毛利率') if last else None
     n_margin = last.get('销售净利率') if last else None
     # 盈利状态（批次 2）：滚动 TTM 净利润，缺则回退年报净利——「还赚不赚钱」回答到最新季
@@ -814,12 +822,41 @@ def _note_latest(notes, day):
     return max(got, key=lambda x: x[0]) if got else None
 
 
-def _int_debt(row):
-    """有息负债全口径（短借+一年内到期+长借+应付债券+租赁，缺键当 0）：行缺 → None。"""
+# 有息负债五桶的市场别名（2026-09 实测键名全集）：美股「长期负债(本期部分)」＝一年内到期
+# 长债、「资本租赁债务(流动)/(非流动)」＝融资租赁；港股「已发行债券」＝应付债券。缺这些
+# 别名时港美股净现金(扣有息)系统性偏高（MSFT 漏算 260 亿美元级）。桶内语义：canonical
+# 在则用之（434 家租赁负债与融资/资本租赁拆分键并存的行一律按 canonical 全额，避免双计），
+# 不在才取别名之和（拆分键互斥，求和即全额）。
+DEBT_BUCKETS = {
+    '短期借款': ('短期借款',),
+    '一年内到期的非流动负债': ('一年内到期的非流动负债', '长期负债(本期部分)'),
+    '长期借款': ('长期借款', '长期债务'),
+    '应付债券': ('应付债券', '已发行债券'),
+    '租赁负债': ('租赁负债', '融资租赁负债(流动)', '融资租赁负债(非流动)',
+                 '资本租赁债务(流动)', '资本租赁债务(非流动)'),
+}
+
+
+def _debt_key(row, canon):
+    """单桶读取：canonical 优先，缺位取别名之和。行缺/全缺 → None。"""
     if not row:
         return None
-    v = ssum([row.get('短期借款'), row.get('一年内到期的非流动负债'),
-              row.get('长期借款'), row.get('应付债券'), row.get('租赁负债')])
+    if row.get(canon) is not None:
+        return row.get(canon)
+    total, hit = 0.0, False
+    for k in DEBT_BUCKETS[canon][1:]:
+        v = row.get(k)
+        if v is not None:
+            total += v
+            hit = True
+    return total if hit else None
+
+
+def _int_debt(row):
+    """有息负债全口径：五桶别名读取后合计，缺桶当 0；行缺 → None。"""
+    if not row:
+        return None
+    v = ssum([_debt_key(row, canon) for canon in DEBT_BUCKETS])
     return 0.0 if v is None else v
 
 

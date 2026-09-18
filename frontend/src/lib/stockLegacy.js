@@ -1240,20 +1240,27 @@
       var v = (latestBaVS && latestBaVS[key] != null) ? latestBaVS[key] : (lastBa ? lastBa[key] : null);
       return v == null ? null : v;
     }
+    function balDebtVS(bucket) {
+      var v = latestBaVS ? debtKey(latestBaVS, bucket) : null;
+      if (v == null && lastBa) v = debtKey(lastBa, bucket);
+      return v == null ? null : v;
+    }
     var ca = balVS('流动资产合计');      // 流动资产合计
     var cl = balVS('流动负债合计');      // 流动负债合计
     var tl = balVS('负债合计');          // 负债合计
     var assets = balVS('资产总计');      // 资产总计
     var cash = balVS('货币资金');        // 货币资金
-    var stDebt = balVS('短期借款');      // 短期借款
-    var ltDebt = balVS('长期借款');      // 长期借款
-    var bond = balVS('应付债券');        // 应付债券
-    var due1y = balVS('一年内到期的非流动负债'); // 一年内到期的长贷/债券/租赁重分类
-    var lease = balVS('租赁负债');       // 租赁负债（新租赁准则表内化的分期付款）
+    var stDebt = balDebtVS(DEBT_BUCKETS[0]);      // 短期借款
+    var ltDebt = balDebtVS(DEBT_BUCKETS[2]);      // 长期借款
+    var bond = balDebtVS(DEBT_BUCKETS[3]);        // 应付债券
+    var due1y = balDebtVS(DEBT_BUCKETS[1]); // 一年内到期的长贷/债券/租赁重分类
+    var lease = balDebtVS(DEBT_BUCKETS[4]);       // 租赁负债（新租赁准则表内化的分期付款）
     var intang = balVS('无形资产');      // 无形资产
     var goodwill = balVS('商誉');        // 商誉
     var netProfit = last ? last['净利润'] : null;
-    var debtr = last ? last['资产负债率'] : null;
+    // 负债率（批次 1 补）：改最新期 负债合计÷资产总计 现算，与同卡的流动比率同一张表；
+    // 现算不出回退年报披露值。scoring.py 同一条规则
+    var debtr = (tl != null && assets != null && assets > 0) ? tl / assets : (last ? last['资产负债率'] : null);
     var gMargin = last ? last['销售毛利率'] : null;
     var nMargin = last ? last['销售净利率'] : null;
     // 有息负债全口径：短借 + 一年内到期 + 长借 + 应付债券 + 租赁负债（字段缺失视为 0）
@@ -1388,11 +1395,6 @@
 
     // ---- 施洛斯风险扣分（资产萎缩/减值结构/债务恶化/经营溃败的量化危险信号，仅负分）----
     // 有息负债全口径（与上方 intDebt 一致：短借+一年内到期+长借+债券+租赁，缺键当 0）
-    function intDebtOf(row) {
-      if (!row) return null;
-      var v = sum([row['短期借款'], row['一年内到期的非流动负债'], row['长期借款'], row['应付债券'], row['租赁负债']]);
-      return v == null ? 0 : v;
-    }
     // 时点类端点（批次 1）：最新一期行优先，权益/有息负债在季报缺时回退年报行
     var lastEq = equityOf(latestBaVS);
     if (lastEq == null) lastEq = equityOf(lastBa);
@@ -3139,6 +3141,36 @@
     return best;
   }
 
+  // 有息负债五桶的市场别名（2026-09 实测键名全集）：美股「长期负债(本期部分)」＝一年内到期
+  // 长债、「资本租赁债务(流动)/(非流动)」＝融资租赁；港股「已发行债券」＝应付债券。缺这些
+  // 别名时港美股净现金(扣有息)系统性偏高（MSFT 漏算 260 亿美元级）。桶内语义：canonical
+  // 在则用之（434 家租赁负债与融资/资本租赁拆分键并存的行一律按 canonical 全额，避免双计），
+  // 不在才取别名之和。scoring.py 的 DEBT_BUCKETS/_debt_key 同一条规则。
+  var DEBT_BUCKETS = [
+    ['短期借款', ['短期借款']],
+    ['一年内到期的非流动负债', ['一年内到期的非流动负债', '长期负债(本期部分)']],
+    ['长期借款', ['长期借款', '长期债务']],
+    ['应付债券', ['应付债券', '已发行债券']],
+    ['租赁负债', ['租赁负债', '融资租赁负债(流动)', '融资租赁负债(非流动)', '资本租赁债务(流动)', '资本租赁债务(非流动)']]
+  ];
+
+  function debtKey(row, bucket) {
+    if (!row) return null;
+    if (row[bucket[0]] != null) return row[bucket[0]];
+    var total = 0, hit = false;
+    bucket[1].forEach(function (k) {
+      if (row[k] != null) { total += row[k]; hit = true; }
+    });
+    return hit ? total : null;
+  }
+
+  // 有息负债全口径：五桶别名读取后合计，缺桶当 0；行缺 → null。scoring.py 的 _int_debt 同一条规则
+  function intDebtOf(row) {
+    if (!row) return null;
+    var v = sum(DEBT_BUCKETS.map(function (b) { return debtKey(row, b); }));
+    return v == null ? 0 : v;
+  }
+
   // 加权类现金：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
   // ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0（附注闭合才采信、存款夹在科目内、
   // 受限按 0 折）。行缺或货币资金缺 → null；其余科目缺按 0 折入。
@@ -3293,12 +3325,7 @@
       : wgt(ncParts.avail, 1) + wgt(ncParts.fin, 0.7) + wgt(ncParts.notes, 0.4) + wgt(ncParts.otherNonDep, 0.3) + wgt(ncParts.termDeposit, 1);
     // 净现金三件套（列表三列用，本币）：加权类现金、有息负债、净现金=加权−有息。
     // 与 netCashRatio（减全部负债的宽口径比值）并存，口径差见说明书 §2.1。
-    var intDebtLatest = lastBaAll
-      ? (function () {
-          var s = sum([gv('短期借款'), gv('一年内到期的非流动负债'), gv('长期借款'), gv('应付债券'), gv('租赁负债')]);
-          return s == null ? 0 : s;
-        })()
-      : null;
+    var intDebtLatest = lastBaAll ? intDebtOf(lastBaAll) : null;
     var hasCore = cashV != null && tlLatest != null && mcap0;
     var netCashRatio = hasCore ? (weightedCash - tlLatest) / mcap0 : null;
     var netCashCalc = hasCore ? {

@@ -467,6 +467,25 @@ g_ttm_flip = probe('ttm_flip', company(
     **{k: v for k, v in V_BASE.items() if k != 'ind'}, ind=ind_ttm))['grahamAgg']
 check(abs(g_ttm_flip - g_ttm_base + 15) < 1e-9,
       f"TTM 净利转负（年报为正）应让格攻盈利项恰降 15 分：{g_ttm_base} → {g_ttm_flip}")
+
+# ==================== 6e) 有息负债市场别名 + 负债率现算 ====================
+# A) 美股拆分键别名：叠一张只有「长期负债(本期部分) 9e9 ＋ 资本租赁债务(非流动) 5e9」的
+#    季报行——别名不生效则 int_debt=0、净现金 1e9 拿满 20 分；生效则净现金 −13e9 归零。
+g_alias_off = probe('debt_alias_off', company(ba=[ba_row()], **V_BASE))['grahamAgg']
+g_alias_on = probe('debt_alias_on', company(
+    ba=[ba_row(), ba_row(day='2025-06-30',
+                         **{'长期负债(本期部分)': 9e9, '资本租赁债务(非流动)': 5e9})],
+    **V_BASE))['grahamAgg']
+check(abs(g_alias_on - g_alias_off + 20) < 1e-9,
+      f"美股拆分键别名（本期长债+资本租赁 14e9）应让净现金项从满 20 归 0：{g_alias_off} → {g_alias_on}")
+
+# B) 负债率现算：季报行 tl 2e10→3.5e10（ca 同步 7e10 保持 liq_ratio=2 不动、NCAV 仍为正）
+#    → 现算负债率 0.875 越过 0.8 满严重线，格攻负债率项 10 → 0，总差恰为 −10。
+g_dr_base = probe('dr_base', company(ba=[ba_row()], **V_BASE))['grahamAgg']
+g_dr_flip = probe('dr_flip', company(
+    ba=[ba_row(), ba_row(day='2025-06-30', ca=7e10, tl=3.5e10)], **V_BASE))['grahamAgg']
+check(abs(g_dr_flip - g_dr_base + 10) < 1e-9,
+      f"季报负债率现算 0.875（年报 0.4）应让格攻负债率项恰降 10 分：{g_dr_base} → {g_dr_flip}")
 if not ALT:
     # R = 0.6×V + 0.4×G：批次行情动了 V，R 只许按 0.6 的权重跟着挪（门槛状态不许变——门槛输入不含 V）
     _cs_ref, _cs_bq = compute_scores(_d_ref), compute_scores(_d_bq)
