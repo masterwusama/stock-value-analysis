@@ -30,6 +30,7 @@ python fetch_edb.py --dry-run(不碰 Wind)。
     schtasks /Create /TN va-stock /SC WEEKLY /D MON,TUE,WED,THU,FRI,SAT /ST 16:05 ^
       /TR "cmd /c cd /d <项目目录>\\backend && python -m collector.run stock >> collector.log 2>&1"
 """
+import logging
 import subprocess
 import sys
 from datetime import datetime
@@ -38,6 +39,14 @@ from pathlib import Path
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 BACKEND = Path(__file__).resolve().parents[1]
+
+# APScheduler 的丢触发/吞异常只走 logging:不配 handler 时 WARNING 以下全被吞,
+# 错过触发只剩一条内部日志。落到 stdout → start.ps1 已重定向到 run/scheduler.out.log。
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+)
 
 
 def run_job(name: str):
@@ -50,7 +59,12 @@ def run_job(name: str):
 
 
 def main():
-    s = BlockingScheduler(timezone="Asia/Shanghai")
+    # misfire_grace_time 默认只有 1 秒:机器休眠/进程被卡超 1 秒,本轮触发就被静默丢弃。
+    # 对本链「晚跑」永远优于「不跑」——宽限 1 小时,同一 job 错过多次只补跑一次(coalesce)。
+    s = BlockingScheduler(
+        timezone="Asia/Shanghai",
+        job_defaults={"misfire_grace_time": 3600, "coalesce": True},
+    )
     # 原 cron "0 8,14 * * 1-6" = 北京 16:00/22:00,顺延 5 分钟等数据源落库
     s.add_job(run_job, "cron", args=["stock"], day_of_week="mon-sat",
               hour="16,22", minute=5, id="stock")

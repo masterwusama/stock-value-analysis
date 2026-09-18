@@ -2178,6 +2178,13 @@ def run_snapshot_only(args):
         hit += 1
     items = save_index(by_code)
     print(f"[snapshot-only] 行情更新 {hit}/{len(codes)} 只，index 共 {len(items)} 条")
+    if hit * 2 < len(codes):
+        # 命中率 < 50% 仍 exit 0 的话，腾讯侧断更会被记成 success——日更断了没人知道
+        # （index 里留着旧价，与 fetch_prices 的断档告警形成反差）。部分成功的条目
+        # 已随上面的 save_index 落盘，不回滚。退出码 6 → run.py 记 failed。
+        print(f"[snapshot-only] 行情命中率过低（{hit}/{len(codes)}），本轮记失败，"
+              f"检查腾讯行情源可用性", flush=True)
+        return 6
     return 0
 
 

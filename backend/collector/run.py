@@ -121,6 +121,19 @@ IMPORT_DEFAULTS = {
 FETCH_LOCK = COLLECTOR / "data" / ".fetch.lock"
 FETCH_LOCK_STALE = 45 * 60
 
+# 挂死护栏:单脚本墙钟上限(秒)。采集脚本卡死(网络栈/CLI 挂住)会永久占住 job,
+# etl_job_log 停在 running 无从分辨死活。上限取历史最长一轮(deep 4.2h、stock 10min、
+# import 4min、valuation 3min)再放宽约一倍;events 手动跑全市场,量级同 deep。
+SCRIPT_TIMEOUT = {
+    "stock": 2 * 3600,
+    "deep": 8 * 3600,
+    "events": 8 * 3600,
+    "valuation": 2 * 3600,
+    "import": 2 * 3600,
+    "edb": 3600,
+    "agro": 30 * 60,
+}
+
 
 def _pid_alive(pid: int) -> bool:
     """判活（与 fetch_data._pid_alive 同口径）：Windows 下 os.kill 会把 OpenProcess
@@ -173,10 +186,11 @@ def _env():
     return env
 
 
-def _run_script(cwd, script, extra):
+def _run_script(cwd, script, extra, timeout=None):
     print(f"[collector] >>> {script} {' '.join(extra)} (cwd={cwd})", flush=True)
+    # timeout 到点杀掉直接子进程:fetch_data 的进程池 worker 读到管道 EOF 会自行退出
     subprocess.check_call(
-        [sys.executable, script, *extra], cwd=str(cwd), env=_env()
+        [sys.executable, script, *extra], cwd=str(cwd), env=_env(), timeout=timeout
     )
 
 
@@ -188,7 +202,7 @@ def _import_db(job=""):
     print("[collector] >>> 回灌 MySQL(import_legacy --no-clean %s)" % " ".join(extra), flush=True)
     subprocess.check_call(
         [sys.executable, "-X", "utf8", "-m", "scripts.import_legacy", "--no-clean", *extra],
-        cwd=str(BACKEND), env=env,
+        cwd=str(BACKEND), env=env, timeout=SCRIPT_TIMEOUT["import"],
     )
 
 
@@ -226,7 +240,15 @@ def main():
             # 仅首个脚本吃参数：尾部透传参数优先，其次该 job 的默认参数；后续脚本一律空参
             # （fetch_data 的 --all-market/--snapshot-only 传给 fetch_actions 会被 argparse 拒掉）
             argv = (extra or JOB_DEFAULTS.get(args.job, [])) if i == 0 else []
-            _run_script(cwd, script, argv)
+            _run_script(cwd, script, argv, timeout=SCRIPT_TIMEOUT.get(args.job))
+        except subprocess.TimeoutExpired:
+            # 挂死被护栏击杀:记 failed 但不 traceback(栈在子进程日志里),后续脚本不跑,
+            # 已落盘数据照旧回灌——与 CalledProcessError 同一条 always() 语义
+            status = "failed"
+            limit = SCRIPT_TIMEOUT.get(args.job)
+            messages.append(f"{script} 挂死护栏:超时被杀(>{limit}s)")
+            print(f"[collector] {script} 超过 {limit}s 被杀(挂死护栏)", flush=True)
+            break
         except subprocess.CalledProcessError as e:
             status = "failed"
             messages.append(f"{script} exit={e.returncode}")
