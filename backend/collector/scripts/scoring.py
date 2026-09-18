@@ -1409,7 +1409,14 @@ def value_score(d):
     sh = cur['eq'] / cur['bps'] if (cur.get('eq') is not None and (cur.get('bps') or 0) > 0) else None
     tbv = (None if cur.get('eq') is None
            else cur['eq'] - (cur.get('gw') or 0) - (cur.get('intang') or 0))
-    earn = cur['ded'] if cur.get('ded') is not None else cur.get('net')
+    # ep 的分子改滚动 TTM（扣非优先，缺则净利）：年报口径的盈利收益率要等下一次年报才
+    # 反映「年报之后中报塌方」（600866 实例：年报口径 13.7% vs TTM 口径约 3%）。关键性质：
+    # 最新指标行是年报时 TTM==年报值，分数分毫不动——只有存在晚于最新年报的 interim 才分化。
+    # 回测面板重构不了 TTM（40 期钳制 + 可用日，v_validity 的验收仍用年报口径），这是
+    # 「判据不动、只升级输入端」的先例（见 v_validity 文件头「定稿后改的两处输入端」）。
+    earn = _ttm_net_profit(d.get('indicators') or [], '扣非净利润')
+    if earn is None:
+        earn = _ttm_net_profit(d.get('indicators') or [], '净利润')
     raw = {}
     if mcap:
         if tbv is not None:

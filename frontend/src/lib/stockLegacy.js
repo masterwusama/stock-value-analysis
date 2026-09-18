@@ -2020,7 +2020,7 @@
    */
   var V_ITEMS = [
     { key: 'edge_tbv', label: 'ln(有形账面价值 ÷ 市值)', weight: 30, lo: -1.5, hi: 0.5 },
-    { key: 'ep', label: '盈利收益率（最新年报 ÷ 市值）', weight: 25, lo: 0, hi: 0.10 },
+    { key: 'ep', label: '盈利收益率（TTM 扣非 ÷ 市值）', weight: 25, lo: 0, hi: 0.10 },
     { key: 'cash_yld', label: '现金股息率（近 3 年均值）', weight: 10, lo: 0, hi: 0.05 },
     { key: 'roe_med5', label: 'ROE 近 5 年中位', weight: 14, lo: 0, hi: 0.20 },
     { key: 'debt_rev', label: '资产负债率', weight: 10, lo: 0.90, hi: 0.30 },
@@ -2087,7 +2087,11 @@
     // 美股年报没有每股净资产那一行，所以它的股息率算不出（判不动），账面折扣照算。
     var sh = (cur.eq != null && cur.bps > 0) ? cur.eq / cur.bps : null;
     var tbv = cur.eq == null ? null : cur.eq - (cur.gw || 0) - (cur.intang || 0);
-    var earn = cur.ded != null ? cur.ded : cur.net;    // 扣非优先，缺则报告净利
+    // ep 的分子改滚动 TTM（扣非优先，缺则净利）：年报口径要等下一次年报才反映「年报之后
+    // 中报塌方」（600866 实例）。最新指标行是年报时 TTM==年报值、分数不动，只有存在晚于
+    // 最新年报的 interim 才分化。scoring.py 的 value_score 同一条规则（判据不动、只升级输入端）。
+    var earn = ttmNetProfit(d.indicators || [], '扣非净利润');
+    if (earn == null) earn = ttmNetProfit(d.indicators || [], '净利润');
     var raw = {};
     if (mcap != null) {
       if (tbv != null) raw.edge_tbv = tbv <= 0 ? V_EDGE_FLOOR : Math.log(tbv / mcap);
