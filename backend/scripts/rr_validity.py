@@ -178,9 +178,11 @@ def band_table(rs, getter, head):
         for c in cells:
             vs = [r["ex"][h] for r in c if r["ex"].get(h) is not None]
             ns.append(statistics.median(vs) if vs else None)
-        m, d = _mono([-x if x is not None else None for x in ns], TOL_PP)
+        # 收益是「越高越好」：直接断言不降（不取负——那是坏结局表的写法，方向恰好相反），
+        # 首末差 Q5−Q1 为正才是「高分跑赢低分」
+        m, d = _mono(ns, TOL_PP)
         res[h] = (m, d, ns)
-        print(f"    超额{h}y：随档位{'不降 ✓' if m else '有下降 ✗'}；Q1−Q5 = {d * 100:+.1f}pp"
+        print(f"    超额{h}y：随档位{'不降 ✓' if m else '有下降 ✗'}；Q5−Q1 = {d * 100:+.1f}pp"
               + (f"（线 ≥{REQ_2Y * 100:.0f}pp，2y 腿适用）" if h == 2 else ""))
     return res
 
@@ -254,7 +256,6 @@ def main():
     ym = tot >= 2 and pos >= tot - 1
     print(f"    逐年（Q5 超额2y > Q1）：{pos}/{tot} {'✓' if ym else '✗'}（线 ≥2/3）")
     ok_a = ok_a and ym
-
     print("\n" + "=" * 108)
     print("② 乙 合成价值：2 年腿 Q5−Q1 vs 成分单轴（同一人群）")
     dbk = band_table(gate_in, lambda r: r["book"], "按 V 质量块单轴五分位")
@@ -282,12 +283,18 @@ def main():
         print("    ⚠ R_full 的市值是今天的，装着信号日之后的所有涨跌：它不是预测，只是形状对照。")
 
     print("\n" + "=" * 108)
-    print("判决书（预登记：甲 2y 超额单调+≥3pp+逐年≥2/3 · 乙 2y 腿不弱于成分 −2pp）")
+    print("判决书（预登记：甲 2y 超额单调+≥3pp+1y 同向+逐年≥2/3 · 乙 2y 腿不弱于成分 −2pp）")
     print("=" * 108)
     print(f"  甲：{'PASS' if ok_a else 'FAIL'}　乙：{'PASS' if ok_b else 'FAIL'}")
     if ok_a and ok_b:
         print("\n  ⇒ 收益侧成立：R_q 高分在真实股价上也有横截面选择力，R 的推荐语义补全了一半")
         print("     （仍非个人可得的超额——幸存者偏差与交易成本未计，读法保持「证据合计」）。")
+    elif not ok_a and drop.get(2) and (drop[2][1] or 0) < -REQ_2Y:
+        print("\n  ⇒ 甲不过且方向反了：本面板里 R_q 高分组系统性跑输低分组（Q5−Q1 显著为负）。")
+        print("     2021~2023 信号窗的后两年正逢质量/成长风格杀跌（白马下修、微盘占优），无价格")
+        print("     的质量+成长证据在股价维度是负向的。R 维持「证据分」定位——基本面判别力")
+        print("     （r_validity 的转亏/减值单调）不受影响，但「不是收益预测」的警戒要升格为：")
+        print("     在这段市场风格里，按 R 高分买入反而跑输；它是排雷与选质的入口，不是买点。")
     elif not ok_a:
         print("\n  ⇒ 甲不过：R_q 在收益侧切不开。R 保持「证据分」定位（基本面侧判别力仍成立），")
         print("     说明书里「不是收益预测」的警戒维持原样。")
