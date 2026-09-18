@@ -1250,7 +1250,14 @@
     // 有息负债全口径：短借 + 一年内到期 + 长借 + 应付债券 + 租赁负债（字段缺失视为 0）
     var intDebt = sum([stDebt, due1y, ltDebt, bond, lease]);
     if (intDebt == null) intDebt = 0;
-    var netCash = (cash != null && intDebt != null) ? cash - intDebt : null; // 净现金
+    // 格攻净现金（2026-09 口径升级）：分子改加权类现金（交易性×0.7/应收票据×0.4/其他流动
+    // 非存款×0.3、附注闭合才采信的定期存款×1.0、受限剔除），分母仍是有息负债——格雷厄姆
+    // net-cash 原文的「现金＋有价证券−有息债」。旧口径只认货币资金一行，把存款/理财重的
+    // 公司判成负净现金（603599 实例）。无交易性/票据/其他流动且无附注时与旧口径逐位相同。
+    // 报表行仍取评分基准年报。scoring.py 的 value_scores 同一条规则。
+    var noteVS = lastBa ? noteLatest(d.notes, String(lastDate || '')) : null;
+    var wCashVS = weightedCashOf(lastBa, noteVS ? noteVS[1] : null);
+    var netCash = (wCashVS != null) ? wCashVS - intDebt : null; // 净现金（加权类现金−有息负债）
     var ncav = (ca != null && tl != null) ? ca - tl : null;   // 净流动资产 NCAV
     var wc = (ca != null && cl != null) ? ca - cl : null;     // 营运资本
     // 长期有息负债全口径：一年内到期部分为重分类的长贷/债券，租赁负债计入（字段缺失视为 0）
@@ -1314,7 +1321,7 @@
     // ---- 格雷厄姆 · 进取型烟蒂（net-net 净流动资产折价）----
     var gA = [
       it('价格/净流动资产（市值/NCAV）', pncavVal, '≤ 0.67×（2/3 净流动资产，亦是买入参考倍数）', 30, ncav == null ? null : (ncav > 0 ? lerpScore(pncav, G_A_PNCAV_FULL, 1.5, 30, 0) : 0), noCA),
-      it('价格/净现金（市值/现金-有息负债）', pnetcashVal, '≤ 1×', 20, netCash == null ? null : (netCash > 0 ? lerpScore(pnetcash, 1, 2, 20, 0) : 0), noCash),
+      it('价格/净现金（市值/加权类现金−有息负债）', pnetcashVal, '≤ 1×', 20, netCash == null ? null : (netCash > 0 ? lerpScore(pnetcash, 1, 2, 20, 0) : 0), noCash),
       it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2（资产覆盖债务）', 20, lerpScore(liqRatio, 1, 2, 0, 20), noCA),
       it('最新年报净利润', fmtMoney(netProfit), '> 0（清算缓冲）', 15, netProfit != null && netProfit > 0 ? 15 : 0),
       it('资产负债率', fmtPct(debtr), '≤ 60%', 10, lerpScore(debtr, 0.6, 0.8, 10, 0)),
@@ -3110,6 +3117,22 @@
     return best;
   }
 
+  // 加权类现金：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
+  // ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0（附注闭合才采信、存款夹在科目内、
+  // 受限按 0 折）。行缺或货币资金缺 → null；其余科目缺按 0 折入。
+  // priceReferences（最新一期）与 valueScores 格攻净现金（年报行）共用这一条折算。
+  // scoring.py 的 _weighted_cash 同一条规则。
+  function weightedCashOf(baRow, note) {
+    if (!baRow || baRow['货币资金'] == null) return null;
+    var p = netCashParts({
+      cash: baRow['货币资金'], fin: baRow['交易性金融资产'],
+      notes: baRow['应收票据'], other: baRow['其他流动资产'],
+      dep: note ? note.termDeposit : null, rst: note ? note.restrictedCash : null
+    });
+    function wgt(v, k) { return v != null ? v * k : 0; }
+    return wgt(p.avail, 1) + wgt(p.fin, 0.7) + wgt(p.notes, 0.4) + wgt(p.otherNonDep, 0.3) + wgt(p.termDeposit, 1);
+  }
+
   // 净现金/市值 代入计算式（多行文本，桌面 title 与移动端点击浮层共用）；无明细返回空串
   function netCashFormula(refs) {
     var c = refs && refs.netCashCalc;
@@ -3154,7 +3177,7 @@
     var price0 = s.price, mcap0 = s.market_cap, pe0 = s.pe_ttm, pb0 = s.pb;
     var none = { fairLiq: null, buy: null, sellCons: null, sellFair: null };
     if (price0 == null || price0 <= 0) {
-      return { fairLiq: null, netCashRatio: null, netCashCalc: null, grahamAgg: none, grahamDef: none, schloss: none, buffett: none };
+      return { fairLiq: null, netCashRatio: null, wCash: null, intDebt: null, netCashW: null, netCashCalc: null, grahamAgg: none, grahamDef: none, schloss: none, buffett: none };
     }
     // ---- 基础量（最新年报资产负债表）----
     var annual = annualRows(d.indicators || []);
@@ -3235,7 +3258,17 @@
     var rstV = (typeof noteVal.restrictedCash === 'number') ? noteVal.restrictedCash : null;
     var ncParts = netCashParts({ cash: cashV, fin: finV, notes: notesV, other: otherV, dep: depV, rst: rstV });
     function wgt(v, k) { return v != null ? v * k : 0; }
-    var weightedCash = wgt(ncParts.avail, 1) + wgt(ncParts.fin, 0.7) + wgt(ncParts.notes, 0.4) + wgt(ncParts.otherNonDep, 0.3) + wgt(ncParts.termDeposit, 1);
+    // 货币资金缺失（银行/外资口径行）→ null，与 scoring.py _weighted_cash 的锚点一致
+    var weightedCash = (cashV == null) ? null
+      : wgt(ncParts.avail, 1) + wgt(ncParts.fin, 0.7) + wgt(ncParts.notes, 0.4) + wgt(ncParts.otherNonDep, 0.3) + wgt(ncParts.termDeposit, 1);
+    // 净现金三件套（列表三列用，本币）：加权类现金、有息负债、净现金=加权−有息。
+    // 与 netCashRatio（减全部负债的宽口径比值）并存，口径差见说明书 §2.1。
+    var intDebtLatest = lastBaAll
+      ? (function () {
+          var s = sum([gv('短期借款'), gv('一年内到期的非流动负债'), gv('长期借款'), gv('应付债券'), gv('租赁负债')]);
+          return s == null ? 0 : s;
+        })()
+      : null;
     var hasCore = cashV != null && tlLatest != null && mcap0;
     var netCashRatio = hasCore ? (weightedCash - tlLatest) / mcap0 : null;
     var netCashCalc = hasCore ? {
@@ -3267,6 +3300,9 @@
     return {
       fairLiq: ncavRef,
       netCashRatio: netCashRatio,
+      wCash: weightedCash,
+      intDebt: intDebtLatest,
+      netCashW: (weightedCash != null) ? weightedCash - intDebtLatest : null,
       netCashCalc: netCashCalc,
       grahamAgg: {
         buy: (ncavRef != null) ? ref(G_A_PNCAV_FULL * ncavRef) : null,

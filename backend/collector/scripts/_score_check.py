@@ -65,6 +65,13 @@ for f in sorted(companies_dir.glob('*.json')):
         pass
     elif p is None or j is None or abs(p - j) > max(1e-9, abs(p or 0) * 1e-9):
         diffs.append((code, 'netCashRatio', p, j))
+    # 净现金三件套（加权类现金/有息负债/净现金，入库成 score_daily 三列）：金额大，用相对容差
+    for fld in ('wCash', 'intDebt', 'netCashW'):
+        p, j = py_refs.get(fld), js_refs.get(fld)
+        if p is None and j is None:
+            continue
+        elif p is None or j is None or abs(p - j) > max(1e-6, abs(p or 0) * 1e-9):
+            diffs.append((code, fld, p, j))
     # 净现金/市值 代入明细（字典）逐字段对比
     pc, jc = py_refs.get('netCashCalc'), js_refs.get('netCashCalc')
     if pc is None and jc is None:

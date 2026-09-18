@@ -220,6 +220,12 @@ class ScoreDaily(Base):
     # NULL = 最新一期已是年报 / 双期数据缺一，不是「没恶化」。
     interim_dip: Mapped[float | None] = mapped_column(Double)
     fair_liq: Mapped[float | None] = mapped_column(Double)
+    # 净现金三件套（本币，最新一期财报）：加权类现金、有息负债、净现金=加权−有息。
+    # 与 net_cash_ratio（减全部负债的宽口径比值）并存：本组回答「活钱够不够还有息债」，
+    # 那一列回答「净资产缓冲」。列表三列与排序用；口径差见说明书 §2.1。
+    w_cash: Mapped[float | None] = mapped_column(Double)
+    int_debt: Mapped[float | None] = mapped_column(Double)
+    net_cash_w: Mapped[float | None] = mapped_column(Double)
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
     buy_graham_agg: Mapped[float | None] = mapped_column(Double)

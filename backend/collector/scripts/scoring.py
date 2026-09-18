@@ -358,7 +358,14 @@ def value_scores(d, va):
     int_debt = ssum([st_debt, due1y, lt_debt, bond, lease])
     if int_debt is None:
         int_debt = 0.0
-    net_cash = cash - int_debt if cash is not None else None
+    # 格攻净现金（2026-09 口径升级）：分子改加权类现金——交易性金融资产×0.7、应收票据×0.4、
+    # 其他流动资产非存款×0.3、附注闭合才采信的定期存款×1.0、受限货币资金剔除——分母仍是
+    # 有息负债，即格雷厄姆 net-cash 原文的「现金＋有价证券−有息债」。旧口径分子只认货币资金
+    # 一行，把存款/理财重的公司判成负净现金（603599 广信股份：账上近 80 亿类现金、窄口径
+    # −1.5 亿）。无交易性/票据/其他流动且无附注时与旧口径逐位相同；报表行仍取评分基准年报。
+    _nf = _note_latest(d.get('notes'), last_date)
+    w_cash_a = _weighted_cash(last_ba, _nf[1] if _nf else None)
+    net_cash = (w_cash_a - int_debt) if w_cash_a is not None else None
     ncav = ca - tl if (ca is not None and tl is not None) else None
     wc = ca - cl if (ca is not None and cl is not None) else None
     ltd = ssum([due1y, lt_debt, bond, lease])
@@ -505,21 +512,13 @@ def value_scores(d, va):
          if (mcap is not None and ca is not None and ca > 0) else None),
     )
     # ---- 施洛斯风险扣分（与 JS valueScores 中 riskItems 一一对应）----
-    def int_debt_of(row):
-        """有息负债全口径（与上方 int_debt 一致：短借+一年内+长借+债券+租赁，缺键当 0）"""
-        if not row:
-            return None
-        v = ssum([row.get('短期借款'), row.get('一年内到期的非流动负债'),
-                  row.get('长期借款'), row.get('应付债券'), row.get('租赁负债')])
-        return 0.0 if v is None else v
-
     ba_annual = annual_balance_rows(d.get('balance') or [])
     in_annual = annual_balance_rows(d.get('income') or [])
     cf_annual = annual_balance_rows(d.get('cashflow') or [])
     last_eq = equity_of(last_ba)
     earliest_eq = equity_of(ba_annual[0]) if len(ba_annual) >= 5 else None
-    int_debt_now = int_debt_of(last_ba) if last_ba else None
-    int_debt_earliest = int_debt_of(ba_annual[0]) if len(ba_annual) >= 5 else None
+    int_debt_now = _int_debt(last_ba)
+    int_debt_earliest = _int_debt(ba_annual[0]) if len(ba_annual) >= 5 else None
     # 近5年扣非亏损年数（annual 最后 5 行）
     adj_net = [r.get('扣非净利润') for r in annual[-5:]]
     adj_loss_n = len([v for v in adj_net if v is not None and v < 0])
@@ -790,6 +789,45 @@ def _note_latest(notes, day):
     return max(got, key=lambda x: x[0]) if got else None
 
 
+def _int_debt(row):
+    """有息负债全口径（短借+一年内到期+长借+应付债券+租赁，缺键当 0）：行缺 → None。"""
+    if not row:
+        return None
+    v = ssum([row.get('短期借款'), row.get('一年内到期的非流动负债'),
+              row.get('长期借款'), row.get('应付债券'), row.get('租赁负债')])
+    return 0.0 if v is None else v
+
+
+def _weighted_cash(ba_row, note=None):
+    """加权类现金：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
+    ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0。
+
+    定期存款/受限货币资金来自财报附注（note 字典），闭合才采信；存款不超过「其他流动资产」
+    科目值，受限的按 0 折。行缺或货币资金缺（银行/外资口径行）→ None；其余科目缺按 0 折入。
+    price_references（最新一期）与 value_scores 格攻净现金（年报行）共用这一条折算。
+    """
+    if not ba_row or ba_row.get('货币资金') is None:
+        return None
+    cash_v = ba_row.get('货币资金')
+    fin_v = ba_row.get('交易性金融资产')
+    notes_v = ba_row.get('应收票据')
+    other_v = ba_row.get('其他流动资产')
+    rst_v = note.get('restrictedCash') if isinstance(note, dict) else None
+    dep_v = note.get('termDeposit') if isinstance(note, dict) else None
+    dep_v = dep_v if isinstance(dep_v, (int, float)) else None
+    rst_v = rst_v if isinstance(rst_v, (int, float)) else None
+    avail_v = max(0.0, cash_v - rst_v) if (cash_v is not None and rst_v is not None) else cash_v
+    if dep_v is not None:
+        dep_v = None if other_v is None else min(dep_v, other_v)
+    other_nd = max(0.0, other_v - dep_v) if (other_v is not None and dep_v is not None) else other_v
+
+    def gw(v, k):
+        return (v * k) if v is not None else 0.0
+
+    return (gw(avail_v, 1.0) + gw(fin_v, 0.7) + gw(notes_v, 0.4)
+            + gw(other_nd, 0.3) + gw(dep_v, 1.0))
+
+
 def price_references(d, va):
     """对应 JS priceReferences：公允清算价值 + 四大流派买入/保守卖出/公允卖出价格参考
     fairLiq = 每股公允清算价值（流动资产合计-负债合计）/财报股本，格雷厄姆清算口径"""
@@ -799,6 +837,9 @@ def price_references(d, va):
     if price0 is None or price0 <= 0:
         return {'fairLiq': None,
                 'netCashRatio': None,
+                'wCash': None,
+                'intDebt': None,
+                'netCashW': None,
                 'netCashCalc': None,
                 'grahamAgg': {'buy': None, 'sellCons': None, 'sellFair': None},
                 'grahamDef': {'buy': None, 'sellCons': None, 'sellFair': None},
@@ -901,11 +942,7 @@ def price_references(d, va):
         dep_v = None if other_v is None else min(dep_v, other_v)
     other_nd = max(0.0, other_v - dep_v) if (other_v is not None and dep_v is not None) else other_v
 
-    def gw(v, k):
-        return (v * k) if v is not None else 0.0
-
-    weighted_cash = (gw(avail_v, 1.0) + gw(fin_v, 0.7) + gw(notes_v, 0.4)
-                     + gw(other_nd, 0.3) + gw(dep_v, 1.0))
+    weighted_cash = _weighted_cash(latest_ba, note)
     has_core = (cash_v is not None and tl_latest is not None and mcap0)
     net_cash_ratio = ((weighted_cash - tl_latest) / mcap0) if has_core else None
     net_cash_calc = ({'cash': cash_v,
@@ -944,9 +981,15 @@ def price_references(d, va):
     # 公允必然也过；但若各自独立套下限，会在保守差一点、公允刚过点时只留半档，
     # 而卖点筛选要求「同时 ≥ 保守与公允」，半档等于把这家公司永久排除。
     # 买点不挂卖点：锚为空才没有买点；资产派「出射程」只抹掉两档卖价，买点作为目标价照旧给出。
+    # 净现金三件套（列表三列用，本币）：加权类现金、有息负债、净现金=加权−有息。
+    # 与 net_cash_ratio（减全部负债的宽口径比值）并存，口径差见说明书 §2.1。
+    int_debt_latest = _int_debt(latest_ba)
     return {
         'fairLiq': ncav_ref,
         'netCashRatio': net_cash_ratio,
+        'wCash': weighted_cash,
+        'intDebt': int_debt_latest,
+        'netCashW': (weighted_cash - int_debt_latest) if weighted_cash is not None else None,
         'netCashCalc': net_cash_calc,
         'grahamAgg': {
             'buy': ref(G_A_PNCAV_FULL * ncav_ref) if ncav_ref is not None else None,

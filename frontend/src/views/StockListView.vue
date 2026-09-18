@@ -40,6 +40,11 @@ const COLS = [
   { key: 'recommend', label: '推荐', group: 'score' },
   // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
   { key: 'fair_liq', label: '清算', ratio: true, group: 'asset', edge: true },
+  // 净现金三件套（等式顺序：加权现金−有息负债=净现金），紧贴净现金/市值比值列。
+  // 两个「净现金」口径不同：本组是亿（减有息负债），比值列是 %（减负债合计）——悬停各有代入式
+  { key: 'w_cash', label: '加权现金(亿)', group: 'asset' },
+  { key: 'int_debt', label: '有息负债(亿)', group: 'asset' },
+  { key: 'net_cash_w', label: '净现金(亿)', group: 'asset' },
   { key: 'net_cash_ratio', label: '净现金/市值', group: 'asset' },
   // PB 十年分位（外源 Wind 口径）：只放这一列，PE/PS 分位在详情页——
   // PE 分位对亏损股无意义（一片 “-”）、PS 分位又宽又少人看，摆进这张表只会稀释信号。
@@ -265,6 +270,10 @@ const DIP_TIP = '中报恶化：最新一期季报/半年报的扣非（缺则�
   '评分轴只读年报（12-31），年报披露后的经营恶化不进任何分数——徽标只是把库里已有的' +
   'interim 数据亮出来，不改分数；下一次年报披露后的深抓才会让分数反映它。'
 const dipOf = (s) => s.interim_dip == null ? null : (s.interim_dip <= -0.3 ? Math.round(s.interim_dip * 100) : null)
+// 净现金三件套的悬停口径（列在资产组，单位本币亿；与「净现金/市值」比值列的口径差是重点）
+const WCASH_TIP = '加权类现金（最新一期财报，本币亿）：货币资金(扣受限)×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0（定期存款/受限来自财报附注，闭合才采信）。'
+const IDEBT_TIP = '有息负债（最新一期财报，本币亿）：短期借款 ＋ 一年内到期的非流动负债 ＋ 长期借款 ＋ 应付债券 ＋ 租赁负债。'
+const NCW_TIP = '净现金 ＝ 加权类现金 − 有息负债（本币亿），回答「活钱够不够还有息债」。注意与右侧「净现金/市值」不是同一个数：那一列减的是负债合计（含应付款/预收），回答「净资产缓冲」——两列都对，别拿一处的数核对另一处。'
 function gateTip(s) {
   const f = (s.gate_flags || []).map((k) => GATE_TEXT[k] || k)
   return '触发硬门槛：' + (f.join('、') || '（后端未给出行因）')
@@ -838,6 +847,9 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :class="'sc-' + rGrade(s)" :title="rTitle(s)">{{ score(s.recommend) }}</td>
             <td class="c-liq gedge" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
                 :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
+            <td :title="WCASH_TIP">{{ yi(s.w_cash) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
+            <td :title="IDEBT_TIP">{{ yi(s.int_debt) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
+            <td :title="NCW_TIP" :class="{ 'r-hit': s.net_cash_w != null && s.net_cash_w > 0 }">{{ yi(s.net_cash_w) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                 :title="NCR_CELL_TIP">{{ score2(s.net_cash_ratio) }}</td>
             <td :class="{ 'r-hit': s.pb_pctile != null && s.pb_pctile <= 20 }" :title="pbCellTip(s)">{{ pbCell(s) }}</td>

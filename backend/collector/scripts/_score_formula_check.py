@@ -428,6 +428,24 @@ _kept = lambda s: {k: v for k, v in s.items()
 check(_kept(compute_scores(_d_ref)) == _kept(compute_scores(_d_bq)),
       f"compute_scores 全字段里除 value/valueEval/recommend 外出现了差异："
       f"{[k for k in _kept(compute_scores(_d_ref)) if _kept(compute_scores(_d_ref))[k] != _kept(compute_scores(_d_bq))[k]]}")
+
+# ==================== 6c) 格攻净现金：分子=加权类现金−有息负债（2026-09 口径升级） ====================
+# 旧分子只认货币资金一行，把存款/理财重的公司判成负净现金（603599 实例）。探针只认
+# 「加一项类现金资产恰好把该项从 0 翻到满 20」这一件事——默认 fixture mcap=1e9，
+# 翻正后 pnetcash≪1，故差值必须恰为 20。
+_nc_base = {'货币资金': 100e8, '短期借款': 120e8}
+g_nc0 = probe('nc_old0', company(ba=[ba_row(**_nc_base)], **V_BASE))['grahamAgg']
+g_nc_fin = probe('nc_fin', company(
+    ba=[ba_row(交易性金融资产=60e8, 其他流动资产=30e8, **_nc_base)], **V_BASE))['grahamAgg']
+check(abs(g_nc_fin - g_nc0 - 20) < 1e-9,
+      f"交易性金融资产 60 亿＋其他流动 30 亿应把格攻净现金项从 0 翻到满 20：{g_nc0} → {g_nc_fin}")
+g_nc_nonote = probe('nc_nonote', company(
+    ba=[ba_row(货币资金=40e8, 短期借款=120e8, 其他流动资产=100e8)], **V_BASE))['grahamAgg']
+g_nc_dep = probe('nc_dep', company(
+    ba=[ba_row(货币资金=40e8, 短期借款=120e8, 其他流动资产=100e8)],
+    notes={LAST: {'termDeposit': 90e8}}, **V_BASE))['grahamAgg']
+check(abs(g_nc_dep - g_nc_nonote - 20) < 1e-9,
+      f"附注定期存款 90 亿（自其他流动拆出）应把该项再从 0 翻到满 20：{g_nc_nonote} → {g_nc_dep}")
 if not ALT:
     # R = 0.6×V + 0.4×G：批次行情动了 V，R 只许按 0.6 的权重跟着挪（门槛状态不许变——门槛输入不含 V）
     _cs_ref, _cs_bq = compute_scores(_d_ref), compute_scores(_d_bq)
