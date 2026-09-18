@@ -165,6 +165,8 @@ class SecurityItem(BaseModel):
     weighted_cash: float | None = None
     int_debt: float | None = None
     net_cash_w: float | None = None
+    # 宽口径金额 = 加权类现金 − 负债合计（本币元）；占市值百分比走 net_cash_ratio
+    net_cash_b: float | None = None
     # 评分基准报告期与报告龄（月）：四派分永远建在最新年报上，那一期距今越久分越旧。
     # score_date 是这一行评分快照自己的交易日：逐证券各取最近收盘，美股会比顶部那个
     # 全局快照日旧一天，而 report_age_months 就是相对它算的——不给出它，这个月数无法自证。
@@ -238,6 +240,7 @@ SORT_COLS = {
     "w_cash": ScoreDaily.w_cash,
     "int_debt": ScoreDaily.int_debt,
     "net_cash_w": ScoreDaily.net_cash_w,
+    "net_cash_b": ScoreDaily.net_cash_b,
     # PB 十年分位：升序 = 处在自身十年最低那一头（分位本身已是跨市场可比的 0~100）
     "pb_pctile": ValuationPctile.pb_pctile,
 }
@@ -678,6 +681,7 @@ def list_securities(
             weighted_cash=_f(score.w_cash) if score else None,
             int_debt=_f(score.int_debt) if score else None,
             net_cash_w=_f(score.net_cash_w) if score else None,
+            net_cash_b=_f(score.net_cash_b) if score else None,
             gate=score.gate if score else None,
             gate_flags=score.gate_flags if score else None,
             report_date=score.report_date if score else None,
@@ -744,7 +748,8 @@ def _load_scores(db: Session, sid: int) -> dict | None:
     if not s:
         return None
     refs = {"fairLiq": s.fair_liq, "netCashRatio": s.net_cash_ratio,
-            "wCash": s.w_cash, "intDebt": s.int_debt, "netCashW": s.net_cash_w}
+            "wCash": s.w_cash, "intDebt": s.int_debt, "netCashW": s.net_cash_w,
+            "netCashB": s.net_cash_b}
     if s.net_cash_calc:
         refs["netCashCalc"] = s.net_cash_calc
     for col_prefix, json_key in SCHOOL_KEYS.items():

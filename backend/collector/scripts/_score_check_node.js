@@ -71,6 +71,7 @@ async function main() {
         wCash: num(pr.wCash),
         intDebt: num(pr.intDebt),
         netCashW: num(pr.netCashW),
+        netCashB: num(pr.netCashB),
         netCashCalc: pr.netCashCalc == null ? null : {
           cash: num(pr.netCashCalc.cash), fin: num(pr.netCashCalc.fin),
           notes: num(pr.netCashCalc.notes), otherCA: num(pr.netCashCalc.otherCA),

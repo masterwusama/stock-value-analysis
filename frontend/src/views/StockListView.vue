@@ -46,7 +46,8 @@ const COLS = [
   { key: 'w_cash', label: '加权现金(亿)', group: 'asset' },
   { key: 'int_debt', label: '有息负债(亿)', group: 'asset' },
   { key: 'net_cash_w', label: '净现金(扣有息)', group: 'asset' },
-  { key: 'net_cash_ratio', label: '净现金', sub: '减全部负债', group: 'asset' },
+  // 金额口径（本币亿）；占市值的百分比保留在筛选「净现金/市值」与详情页 ①
+  { key: 'net_cash_b', label: '净现金', sub: '减全部负债', group: 'asset' },
   // PB 十年分位（外源 Wind 口径）：只放这一列，PE/PS 分位在详情页——
   // PE 分位对亏损股无意义（一片 “-”）、PS 分位又宽又少人看，摆进这张表只会稀释信号。
   { key: 'pb_pctile', label: 'PB十年分位', group: 'asset' },
@@ -274,7 +275,8 @@ const dipOf = (s) => s.interim_dip == null ? null : (s.interim_dip <= -0.3 ? Mat
 // 净现金三件套的悬停口径（列在资产组，单位本币亿；与「净现金/市值」比值列的口径差是重点）
 const WCASH_TIP = '加权类现金（最新一期财报，本币亿）：货币资金(扣受限)×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0（定期存款/受限来自财报附注，闭合才采信）。'
 const IDEBT_TIP = '有息负债（最新一期财报，本币亿）：短期借款 ＋ 一年内到期的非流动负债 ＋ 长期借款 ＋ 应付债券 ＋ 租赁负债。'
-const NCW_TIP = '净现金(扣有息) ＝ 加权类现金 − 有息负债（本币亿），回答「活钱够不够还有息债」。注意与右侧「净现金(减全部负债)」不是同一个数：那一列减的是负债合计（含应付款/预收）再除以市值，回答「净资产缓冲」——两列都对，别拿一处的数核对另一处。'
+const NCW_TIP = '净现金(扣有息) ＝ 加权类现金 − 有息负债（本币亿），回答「活钱够不够还有息债」。注意与右侧「净现金(减全部负债)」不是同一个数：那一列减的是负债合计（含应付款/预收），回答「净资产缓冲」——两列都对，别拿一处的数核对另一处。'
+const NCB_TIP = '净现金(减全部负债) ＝ 加权类现金 − 负债合计（本币亿，最新一期财报），回答「净资产缓冲」。负债合计含应付款/预收等无息经营负债——制造业/链主企业此列深负是营运模式（华域汽车 −882.8 亿里 1,084 亿是经营负债），不是偿债问题。占市值百分比与 net-net（≥100%，全市场仅个位数）看筛选「净现金/市值」或详情页 ①。'
 function gateTip(s) {
   const f = (s.gate_flags || []).map((k) => GATE_TEXT[k] || k)
   return '触发硬门槛：' + (f.join('、') || '（后端未给出行因）')
@@ -851,8 +853,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :title="WCASH_TIP">{{ yi(s.weighted_cash) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :title="IDEBT_TIP">{{ yi(s.int_debt) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :title="NCW_TIP">{{ yi(s.net_cash_w) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
-            <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
-                :title="NCR_CELL_TIP">{{ score2(s.net_cash_ratio) }}</td>
+            <td :title="NCB_TIP" :class="{ 'r-hit': s.net_cash_b != null && s.net_cash_b > 0 }">{{ yi(s.net_cash_b) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :class="{ 'r-hit': s.pb_pctile != null && s.pb_pctile <= 20 }" :title="pbCellTip(s)">{{ pbCell(s) }}</td>
             <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :class="{ gedge: c.edge }" :title="refTitle(s, c.school)">
               <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>

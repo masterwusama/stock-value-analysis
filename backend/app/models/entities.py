@@ -226,6 +226,9 @@ class ScoreDaily(Base):
     w_cash: Mapped[float | None] = mapped_column(Double)
     int_debt: Mapped[float | None] = mapped_column(Double)
     net_cash_w: Mapped[float | None] = mapped_column(Double)
+    # 宽口径金额 = 加权类现金 − 负债合计（本币）。列表「净现金(减全部负债)」列显示金额；
+    # 占市值百分比保留在 net_cash_ratio（筛选/详情 ①），两处口径同源、算法差一步除法
+    net_cash_b: Mapped[float | None] = mapped_column(Double)
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
     buy_graham_agg: Mapped[float | None] = mapped_column(Double)

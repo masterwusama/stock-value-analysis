@@ -338,6 +338,7 @@ def build_score_rows(index, trade_date, db):
             "w_cash": refs.get("wCash"),
             "int_debt": refs.get("intDebt"),
             "net_cash_w": refs.get("netCashW"),
+            "net_cash_b": refs.get("netCashB"),
             "net_cash_ratio": refs.get("netCashRatio"),
             "net_cash_calc": calc or None,
             "updated_at": parse_dt(index["updated_at"]),

@@ -902,6 +902,7 @@ def price_references(d, va):
                 'wCash': None,
                 'intDebt': None,
                 'netCashW': None,
+                'netCashB': None,
                 'netCashCalc': None,
                 'grahamAgg': {'buy': None, 'sellCons': None, 'sellFair': None},
                 'grahamDef': {'buy': None, 'sellCons': None, 'sellFair': None},
@@ -1053,6 +1054,8 @@ def price_references(d, va):
     # 买点不挂卖点：锚为空才没有买点；资产派「出射程」只抹掉两档卖价，买点作为目标价照旧给出。
     # 净现金三件套（列表三列用，本币）：加权类现金、有息负债、净现金=加权−有息。
     # 与 net_cash_ratio（减全部负债的宽口径比值）并存，口径差见说明书 §2.1。
+    # netCashB：宽口径金额 = 加权类现金 − 负债合计（列表「净现金(减全部负债)」列用，
+    # 本币亿；比值口径保留在筛选 net_cash_ratio 与详情页 ①）
     int_debt_latest = _int_debt(latest_ba)
     return {
         'fairLiq': ncav_ref,
@@ -1060,6 +1063,7 @@ def price_references(d, va):
         'wCash': weighted_cash,
         'intDebt': int_debt_latest,
         'netCashW': (weighted_cash - int_debt_latest) if weighted_cash is not None else None,
+        'netCashB': (weighted_cash - tl_latest) if (weighted_cash is not None and tl_latest is not None) else None,
         'netCashCalc': net_cash_calc,
         'grahamAgg': {
             'buy': ref(G_A_PNCAV_FULL * ncav_ref) if ncav_ref is not None else None,

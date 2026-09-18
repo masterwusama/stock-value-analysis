@@ -3231,7 +3231,7 @@
     var price0 = s.price, mcap0 = s.market_cap, pe0 = s.pe_ttm, pb0 = s.pb;
     var none = { fairLiq: null, buy: null, sellCons: null, sellFair: null };
     if (price0 == null || price0 <= 0) {
-      return { fairLiq: null, netCashRatio: null, wCash: null, intDebt: null, netCashW: null, netCashCalc: null, grahamAgg: none, grahamDef: none, schloss: none, buffett: none };
+      return { fairLiq: null, netCashRatio: null, wCash: null, intDebt: null, netCashW: null, netCashB: null, netCashCalc: null, grahamAgg: none, grahamDef: none, schloss: none, buffett: none };
     }
     // ---- 基础量（最新年报资产负债表）----
     var annual = annualRows(d.indicators || []);
@@ -3360,6 +3360,8 @@
       wCash: weightedCash,
       intDebt: intDebtLatest,
       netCashW: (weightedCash != null) ? weightedCash - intDebtLatest : null,
+      // 宽口径金额 = 加权类现金 − 负债合计（列表「净现金(减全部负债)」列用，本币亿）
+      netCashB: (weightedCash != null && tlLatest != null) ? weightedCash - tlLatest : null,
       netCashCalc: netCashCalc,
       grahamAgg: {
         buy: (ncavRef != null) ? ref(G_A_PNCAV_FULL * ncavRef) : null,
