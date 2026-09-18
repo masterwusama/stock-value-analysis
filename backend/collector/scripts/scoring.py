@@ -334,26 +334,42 @@ def value_scores(d, va):
     div_consecutive = va['divConsecutive'] or 0
     div_yield = va['divYield']
 
-    # ---- 基础量（最新年报）----
+    # ---- 基础量 ----
+    # 资产负债表科目取**最新一期**（含季报，2026-09 起），某科目季报缺则回退年报行——
+    # 时点数越新越真，季报行覆盖率与年报持平（实测 98%+）；银行/外资口径结构性缺失
+    # 两侧同缺，回退也不虚增。利润与披露比率（净利/负债率/毛利率）仍取年报，盈利状态
+    # 单独走 TTM（见下）。诟病过的「评分用年报、列表净现金用最新期」割裂就此消除。
+    latest_ba = ba_list[-1] if ba_list else None
+
+    def bal(key):
+        v = latest_ba.get(key) if latest_ba else None
+        if v is None and last_ba is not None:
+            v = last_ba.get(key)
+        return v
+
     def g(ba, key):
         return ba.get(key) if ba else None
 
-    ca = g(last_ba, '流动资产合计')
-    cl = g(last_ba, '流动负债合计')
-    tl = g(last_ba, '负债合计')
-    assets = g(last_ba, '资产总计')
-    cash = g(last_ba, '货币资金')
-    st_debt = g(last_ba, '短期借款')
-    lt_debt = g(last_ba, '长期借款')
-    bond = g(last_ba, '应付债券')
-    due1y = g(last_ba, '一年内到期的非流动负债')
-    lease = g(last_ba, '租赁负债')
-    intang = g(last_ba, '无形资产')
-    goodwill = g(last_ba, '商誉')
+    ca = bal('流动资产合计')
+    cl = bal('流动负债合计')
+    tl = bal('负债合计')
+    assets = bal('资产总计')
+    cash = bal('货币资金')
+    st_debt = bal('短期借款')
+    lt_debt = bal('长期借款')
+    bond = bal('应付债券')
+    due1y = bal('一年内到期的非流动负债')
+    lease = bal('租赁负债')
+    intang = bal('无形资产')
+    goodwill = bal('商誉')
     net_profit = last.get('净利润') if last else None
     debtr = last.get('资产负债率') if last else None
     g_margin = last.get('销售毛利率') if last else None
     n_margin = last.get('销售净利率') if last else None
+    # 盈利状态（批次 2）：滚动 TTM 净利润，缺则回退年报净利——「还赚不赚钱」回答到最新季
+    ttm_np = _ttm_net_profit(d.get('indicators') or [], '净利润')
+    if ttm_np is None:
+        ttm_np = net_profit
 
     int_debt = ssum([st_debt, due1y, lt_debt, bond, lease])
     if int_debt is None:
@@ -362,9 +378,13 @@ def value_scores(d, va):
     # 其他流动资产非存款×0.3、附注闭合才采信的定期存款×1.0、受限货币资金剔除——分母仍是
     # 有息负债，即格雷厄姆 net-cash 原文的「现金＋有价证券−有息债」。旧口径分子只认货币资金
     # 一行，把存款/理财重的公司判成负净现金（603599 广信股份：账上近 80 亿类现金、窄口径
-    # −1.5 亿）。无交易性/票据/其他流动且无附注时与旧口径逐位相同；报表行仍取评分基准年报。
-    _nf = _note_latest(d.get('notes'), last_date)
-    w_cash_a = _weighted_cash(last_ba, _nf[1] if _nf else None)
+    # −1.5 亿）。报表行随批次 1 取最新一期，季报行整行缺/货币资金缺回退年报行。
+    _ba_day = str((latest_ba or {}).get('报告日') or '')[:10] or last_date
+    _nf = _note_latest(d.get('notes'), _ba_day)
+    w_cash_a = _weighted_cash(latest_ba, _nf[1] if _nf else None)
+    if w_cash_a is None:
+        _nf_a = _note_latest(d.get('notes'), last_date)
+        w_cash_a = _weighted_cash(last_ba, _nf_a[1] if _nf_a else None)
     net_cash = (w_cash_a - int_debt) if w_cash_a is not None else None
     ncav = ca - tl if (ca is not None and tl is not None) else None
     wc = ca - cl if (ca is not None and cl is not None) else None
@@ -429,7 +449,7 @@ def value_scores(d, va):
         # 流动资产/总负债 ≥ 2，20 分
         lerp_score(liq_ratio, 1, 2, 0, 20),
         # 最新年报净利润 > 0，15 分
-        15.0 if (net_profit is not None and net_profit > 0) else 0.0,
+        15.0 if (ttm_np is not None and ttm_np > 0) else 0.0,
         # 资产负债率 ≤ 60%，10 分
         lerp_score(debtr, 0.6, 0.8, 10, 0),
         # 连续分红 ≥ 3 年，5 分
@@ -506,7 +526,7 @@ def value_scores(d, va):
         lerp_score_nonneg(pe, 10, 20, 20, 0),       # 市盈率 ≤ 10
         lerp_score(liq_ratio, 1, 2, 0, 20),        # 流动资产/总负债 ≥ 2
         lerp_score(div_yield, 0, 0.03, 0, 15),  # 股息率 ≥ 3%
-        10.0 if (net_profit is not None and net_profit > 0) else 0.0,  # 最新年报净利 > 0
+        10.0 if (ttm_np is not None and ttm_np > 0) else 0.0,  # TTM 净利 > 0（批次 2，缺则年报）
         # 市值 ≤ 流动资产
         ((10.0 if mcap <= ca else lerp_score(mcap / ca, 1, 2, 10, 0))
          if (mcap is not None and ca is not None and ca > 0) else None),
@@ -515,9 +535,14 @@ def value_scores(d, va):
     ba_annual = annual_balance_rows(d.get('balance') or [])
     in_annual = annual_balance_rows(d.get('income') or [])
     cf_annual = annual_balance_rows(d.get('cashflow') or [])
-    last_eq = equity_of(last_ba)
+    # 时点类端点（批次 1）：最新一期行优先，权益/有息负债在季报缺时回退年报行
+    last_eq = equity_of(latest_ba) if latest_ba is not None else None
+    if last_eq is None:
+        last_eq = equity_of(last_ba)
     earliest_eq = equity_of(ba_annual[0]) if len(ba_annual) >= 5 else None
-    int_debt_now = _int_debt(last_ba)
+    int_debt_now = _int_debt(latest_ba)
+    if int_debt_now is None:
+        int_debt_now = _int_debt(last_ba)
     int_debt_earliest = _int_debt(ba_annual[0]) if len(ba_annual) >= 5 else None
     # 近5年扣非亏损年数（annual 最后 5 行）
     adj_net = [r.get('扣非净利润') for r in annual[-5:]]
@@ -553,8 +578,8 @@ def value_scores(d, va):
     # 属正常资本结构；亏损导致的资不抵债、账上却还压着商誉无形，才是本项最该扣的情形
     # ——比值在负权益下算不出来，但实质是"无形压在已被抹平的权益基数上"，按最重档处理
     eq_distress = (last_eq is not None and last_eq <= 0 and gw_int_sum > 0
-                   and not (net_profit is not None and net_profit > 0))
-    inv = last_ba.get('存货') if last_ba else None
+                   and not (ttm_np is not None and ttm_np > 0))
+    inv = bal('存货')
     # 9 个量化扣分项（与 JS riskItems 阈值/分值完全一致），数据不足给 0 不误伤
     risk_items = (
         # 净资产5年变动（归母权益）
@@ -846,7 +871,10 @@ def price_references(d, va):
                 'schloss': {'buy': None, 'sellCons': None, 'sellFair': None},
                 'buffett': {'buy': None, 'sellCons': None, 'sellFair': None}}
 
-    # ---- 基础量（最新年报资产负债表）----
+    # ---- 基础量 ----
+    # 批次 1（2026-09）：清算口径的资产负债科目取最新一期（含季报），缺则回退评分基准
+    # 年报行——与施洛斯账面锚（最新期每股净资产）对齐，消除「格攻清算用年报、施洛斯
+    # 账面用最新期」的组内不对称
     annual = annual_rows(d.get('indicators') or [])
     last = annual[-1] if annual else None
     last_date = str(last.get('报告期') or '')[:10] if last else None
@@ -854,11 +882,16 @@ def price_references(d, va):
     last_ba = sheet_row_by_date(ba_list, last_date) if last_date else None
 
     def g(key):
-        return last_ba.get(key) if last_ba else None
+        v = ba_list[-1].get(key) if ba_list else None
+        if v is None and last_ba is not None:
+            v = last_ba.get(key)
+        return v
 
     ca, tl = g('流动资产合计'), g('负债合计')
     ncav = (ca - tl) if (ca is not None and tl is not None) else None
-    last_eq = equity_of(last_ba)
+    last_eq = equity_of(ba_list[-1]) if ba_list else None
+    if last_eq is None:
+        last_eq = equity_of(last_ba)
     # 每股净资产优先用指标字段（数据源按财报算好、随财报更新，与实时价无关），
     # 避免快照 pb/pe 舍入与 mcap 滞后导致参考价随行情漂移（财务无变化时参考价应不变）
     bps = _latest_field(d.get('indicators') or [], '每股净资产')

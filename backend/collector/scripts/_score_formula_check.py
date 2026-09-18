@@ -446,6 +446,27 @@ g_nc_dep = probe('nc_dep', company(
     notes={LAST: {'termDeposit': 90e8}}, **V_BASE))['grahamAgg']
 check(abs(g_nc_dep - g_nc_nonote - 20) < 1e-9,
       f"附注定期存款 90 亿（自其他流动拆出）应把该项再从 0 翻到满 20：{g_nc_nonote} → {g_nc_dep}")
+
+# ==================== 6d) 批次 1/2：时点类吃最新季报 + 盈利判定 TTM ====================
+# A) 资产负债表科目取最新一期：同一张年报行之上叠一张季报行，流动资产 4e10→2.5e10
+#    （仍 > 负债合计 2e10，NCAV 项不动），liq_ratio 2.0→1.25 → 格攻该项 20→5，总差恰为 −15。
+g_bal_annual = probe('bal_annual', company(ba=[ba_row()], **V_BASE))['grahamAgg']
+g_bal_interim = probe('bal_interim', company(
+    ba=[ba_row(), ba_row(day='2025-06-30', ca=2.5e10)], **V_BASE))['grahamAgg']
+check(abs(g_bal_interim - g_bal_annual + 15) < 1e-9,
+      f"季报行流动资产 4e10→2.5e10 应让格攻恰降 15 分（liq_ratio 2.0→1.25）：{g_bal_annual} → {g_bal_interim}")
+
+# B) 盈利状态按 TTM：年报净利 +10 亿，但 2025H1 累计 −8 亿（上年同期 +5 亿）
+#    → TTM = −8 + 10 − 5 = −3 亿 < 0，格攻盈利项 15 → 0，总差恰为 −15。
+#    （indicators 无季报行时 TTM 回退年报，探针 bal_* 系列顺带钉住该回退。）
+ind_ttm = [ind_row('2024-06-30', net=5e8)] + \
+          [ind_row(f'{y}-12-31') for y in YEARS] + \
+          [ind_row('2025-06-30', net=-8e8)]
+g_ttm_base = probe('ttm_base', company(**V_BASE))['grahamAgg']
+g_ttm_flip = probe('ttm_flip', company(
+    **{k: v for k, v in V_BASE.items() if k != 'ind'}, ind=ind_ttm))['grahamAgg']
+check(abs(g_ttm_flip - g_ttm_base + 15) < 1e-9,
+      f"TTM 净利转负（年报为正）应让格攻盈利项恰降 15 分：{g_ttm_base} → {g_ttm_flip}")
 if not ALT:
     # R = 0.6×V + 0.4×G：批次行情动了 V，R 只许按 0.6 的权重跟着挪（门槛状态不许变——门槛输入不含 V）
     _cs_ref, _cs_bq = compute_scores(_d_ref), compute_scores(_d_bq)

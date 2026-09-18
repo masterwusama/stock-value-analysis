@@ -1230,19 +1230,28 @@
     var divConsecutive = va.divConsecutive || 0;
     var divYield = va.divYield;
 
-    // ---- 基础量（最新年报）----
-    var ca = lastBa ? lastBa['流动资产合计'] : null;      // 流动资产合计
-    var cl = lastBa ? lastBa['流动负债合计'] : null;      // 流动负债合计
-    var tl = lastBa ? lastBa['负债合计'] : null;          // 负债合计
-    var assets = lastBa ? lastBa['资产总计'] : null;      // 资产总计
-    var cash = lastBa ? lastBa['货币资金'] : null;        // 货币资金
-    var stDebt = lastBa ? lastBa['短期借款'] : null;      // 短期借款
-    var ltDebt = lastBa ? lastBa['长期借款'] : null;      // 长期借款
-    var bond = lastBa ? lastBa['应付债券'] : null;        // 应付债券
-    var due1y = lastBa ? lastBa['一年内到期的非流动负债'] : null; // 一年内到期的长贷/债券/租赁重分类
-    var lease = lastBa ? lastBa['租赁负债'] : null;       // 租赁负债（新租赁准则表内化的分期付款）
-    var intang = lastBa ? lastBa['无形资产'] : null;      // 无形资产
-    var goodwill = lastBa ? lastBa['商誉'] : null;        // 商誉
+    // ---- 基础量 ----
+    // 资产负债表科目取**最新一期**（含季报，2026-09 起，批次 1），某科目季报缺则回退年报行——
+    // 时点数越新越真，季报行覆盖率与年报持平（实测 98%+）；银行/外资口径结构性缺失两侧同缺。
+    // 利润与披露比率（净利/负债率/毛利率）仍取年报，盈利状态单独走 TTM（见下）。
+    // scoring.py 的 value_scores.bal 同一条规则。
+    var latestBaVS = baList.length ? baList[baList.length - 1] : null;
+    function balVS(key) {
+      var v = (latestBaVS && latestBaVS[key] != null) ? latestBaVS[key] : (lastBa ? lastBa[key] : null);
+      return v == null ? null : v;
+    }
+    var ca = balVS('流动资产合计');      // 流动资产合计
+    var cl = balVS('流动负债合计');      // 流动负债合计
+    var tl = balVS('负债合计');          // 负债合计
+    var assets = balVS('资产总计');      // 资产总计
+    var cash = balVS('货币资金');        // 货币资金
+    var stDebt = balVS('短期借款');      // 短期借款
+    var ltDebt = balVS('长期借款');      // 长期借款
+    var bond = balVS('应付债券');        // 应付债券
+    var due1y = balVS('一年内到期的非流动负债'); // 一年内到期的长贷/债券/租赁重分类
+    var lease = balVS('租赁负债');       // 租赁负债（新租赁准则表内化的分期付款）
+    var intang = balVS('无形资产');      // 无形资产
+    var goodwill = balVS('商誉');        // 商誉
     var netProfit = last ? last['净利润'] : null;
     var debtr = last ? last['资产负债率'] : null;
     var gMargin = last ? last['销售毛利率'] : null;
@@ -1255,9 +1264,18 @@
     // net-cash 原文的「现金＋有价证券−有息债」。旧口径只认货币资金一行，把存款/理财重的
     // 公司判成负净现金（603599 实例）。无交易性/票据/其他流动且无附注时与旧口径逐位相同。
     // 报表行仍取评分基准年报。scoring.py 的 value_scores 同一条规则。
-    var noteVS = lastBa ? noteLatest(d.notes, String(lastDate || '')) : null;
-    var wCashVS = weightedCashOf(lastBa, noteVS ? noteVS[1] : null);
+    // 报表行随批次 1 取最新一期，季报行整行缺/货币资金缺回退年报行
+    var baDayVS = String((latestBaVS || {})['报告日'] || '').slice(0, 10) || String(lastDate || '');
+    var noteVS = baDayVS ? noteLatest(d.notes, baDayVS) : null;
+    var wCashVS = weightedCashOf(latestBaVS, noteVS ? noteVS[1] : null);
+    if (wCashVS == null) {
+      var noteVSA = lastBa ? noteLatest(d.notes, String(lastDate || '')) : null;
+      wCashVS = weightedCashOf(lastBa, noteVSA ? noteVSA[1] : null);
+    }
     var netCash = (wCashVS != null) ? wCashVS - intDebt : null; // 净现金（加权类现金−有息负债）
+    // 盈利状态（批次 2）：滚动 TTM 净利润，缺则回退年报净利——「还赚不赚钱」回答到最新季
+    var ttmNp = ttmNetProfit(d.indicators || [], '净利润');
+    if (ttmNp == null) ttmNp = netProfit;
     var ncav = (ca != null && tl != null) ? ca - tl : null;   // 净流动资产 NCAV
     var wc = (ca != null && cl != null) ? ca - cl : null;     // 营运资本
     // 长期有息负债全口径：一年内到期部分为重分类的长贷/债券，租赁负债计入（字段缺失视为 0）
@@ -1316,14 +1334,15 @@
 
     var basis = '评分基准：' + (lastYear ? lastYear + ' 年报' : '最新财报') +
       (s.time ? ' + ' + fmtDate(s.time) + ' 收盘价/市值' : '') +
-      '；有息负债含一年内到期与租赁负债（全口径）';
+      '；资产负债科目取最新一期财报（' + (latestBaVS ? String(latestBaVS['报告日']).slice(0, 10) : lastYear) +
+      '，缺科目回退年报），盈利状态按 TTM；有息负债含一年内到期与租赁负债（全口径）';
 
     // ---- 格雷厄姆 · 进取型烟蒂（net-net 净流动资产折价）----
     var gA = [
       it('价格/净流动资产（市值/NCAV）', pncavVal, '≤ 0.67×（2/3 净流动资产，亦是买入参考倍数）', 30, ncav == null ? null : (ncav > 0 ? lerpScore(pncav, G_A_PNCAV_FULL, 1.5, 30, 0) : 0), noCA),
       it('价格/净现金（市值/加权类现金−有息负债）', pnetcashVal, '≤ 1×', 20, netCash == null ? null : (netCash > 0 ? lerpScore(pnetcash, 1, 2, 20, 0) : 0), noCash),
       it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2（资产覆盖债务）', 20, lerpScore(liqRatio, 1, 2, 0, 20), noCA),
-      it('最新年报净利润', fmtMoney(netProfit), '> 0（清算缓冲）', 15, netProfit != null && netProfit > 0 ? 15 : 0),
+      it('TTM 净利润', fmtMoney(ttmNp), '> 0（清算缓冲）', 15, ttmNp != null && ttmNp > 0 ? 15 : 0),
       it('资产负债率', fmtPct(debtr), '≤ 60%', 10, lerpScore(debtr, 0.6, 0.8, 10, 0)),
       it('连续分红年数', (divConsecutive || 0) + ' 年', '≥ 3 年', 5, divConsecutive >= 3 ? 5 : divConsecutive >= 1 ? 2.5 : 0)
     ];
@@ -1374,9 +1393,12 @@
       var v = sum([row['短期借款'], row['一年内到期的非流动负债'], row['长期借款'], row['应付债券'], row['租赁负债']]);
       return v == null ? 0 : v;
     }
-    var lastEq = equityOf(lastBa);
+    // 时点类端点（批次 1）：最新一期行优先，权益/有息负债在季报缺时回退年报行
+    var lastEq = equityOf(latestBaVS);
+    if (lastEq == null) lastEq = equityOf(lastBa);
     var earliestEq = baAnnual.length >= 5 ? equityOf(baAnnual[0]) : null;
-    var intDebtNow = lastBa ? intDebtOf(lastBa) : null;
+    var intDebtNow = intDebtOf(latestBaVS);
+    if (intDebtNow == null) intDebtNow = lastBa ? intDebtOf(lastBa) : null;
     var intDebtEarliest = baAnnual.length >= 5 ? intDebtOf(baAnnual[0]) : null;
     // 近5年扣非亏损年数（annual 最后 5 行）
     var adjNet = annual.slice(-5).map(function (r) { return r['扣非净利润']; });
@@ -1408,8 +1430,8 @@
     // 负权益有两种，不能一律豁免：回购把权益打成负数而公司仍在赚钱（达美乐/HCA 这类）
     // 属正常资本结构；亏损导致的资不抵债、账上却还压着商誉无形，才是本项最该扣的情形
     // ——比值在负权益下算不出来，但实质是"无形压在已被抹平的权益基数上"，按最重档处理
-    var eqDistress = lastEq != null && lastEq <= 0 && gwIntSum > 0 && !(netProfit != null && netProfit > 0);
-    var inv = lastBa ? lastBa['存货'] : null;
+    var eqDistress = lastEq != null && lastEq <= 0 && gwIntSum > 0 && !(ttmNp != null && ttmNp > 0);
+    var inv = balVS('存货');
     // 9 个量化扣分项：危险信号触发负分（与正向分叠加），数据不足给 0 不误伤
     var riskItems = [
       it('净资产5年变动（归母权益）', eqGrow == null ? '-' : fmtPct(eqGrow), '≥ -20%（萎缩扣分）', 5,
@@ -1438,7 +1460,7 @@
       it('市盈率（TTM）', pe == null ? '-' : (pe > 0 ? fmtNum(pe) : 'PE 为负（亏损）'), '≤ 10', 20, lerpScoreNonneg(pe, 10, 20, 20, 0)),
       it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2', 20, lerpScore(liqRatio, 1, 2, 0, 20), noCA),
       it('股息率（近12月）', fmtPct(divYield), '≥ 3%', 15, lerpScore(divYield, 0, 0.03, 0, 15)),
-      it('最新年报净利润', fmtMoney(netProfit), '> 0', 10, netProfit != null && netProfit > 0 ? 10 : 0),
+      it('TTM 净利润', fmtMoney(ttmNp), '> 0', 10, ttmNp != null && ttmNp > 0 ? 10 : 0),
       it('市值 / 流动资产', (mcap == null ? '-' : fmtMoney(mcap)) + ' / ' + (ca == null ? '-' : fmtMoney(ca)), '市值 ≤ 流动资产', 10,
         (mcap != null && ca != null && ca > 0) ? (mcap <= ca ? 10 : lerpScore(mcap / ca, 1, 2, 10, 0)) : null, noCA)
     ];
@@ -3185,10 +3207,18 @@
     var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
     var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var lastBa = lastDate ? sheetRowByDate(baList, lastDate) : null;
-    var ca = lastBa ? lastBa['流动资产合计'] : null;
-    var tl = lastBa ? lastBa['负债合计'] : null;
+    // 批次 1（2026-09）：清算口径的资产负债科目取最新一期（含季报），缺则回退评分基准
+    // 年报行——与施洛斯账面锚（最新期每股净资产）对齐。scoring.py 的 price_references 同一条规则。
+    var latestBaPR = baList.length ? baList[baList.length - 1] : null;
+    function balPR(key) {
+      var v = (latestBaPR && latestBaPR[key] != null) ? latestBaPR[key] : (lastBa ? lastBa[key] : null);
+      return v == null ? null : v;
+    }
+    var ca = balPR('流动资产合计');
+    var tl = balPR('负债合计');
     var ncav = (ca != null && tl != null) ? ca - tl : null;
-    var lastEq = equityOf(lastBa);
+    var lastEq = equityOf(latestBaPR);
+    if (lastEq == null) lastEq = equityOf(lastBa);
     // 每股净资产优先用指标字段（数据源按财报算好、随财报更新，与实时价无关），
     // 避免快照 pb/pe 舍入与 mcap 滞后导致参考价随行情漂移（财务无变化时参考价应不变）
     var bps = latestField(d.indicators, '每股净资产');
