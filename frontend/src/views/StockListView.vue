@@ -41,11 +41,12 @@ const COLS = [
   // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
   { key: 'fair_liq', label: '清算', ratio: true, group: 'asset', edge: true },
   // 净现金三件套（等式顺序：加权现金−有息负债=净现金），紧贴净现金/市值比值列。
-  // 两个「净现金」口径不同：本组是亿（减有息负债），比值列是 %（减负债合计）——悬停各有代入式
+  // 两个「净现金」口径不同：本组是亿（减有息负债），比值列是 %（减负债合计）——列名与
+  // 小注直接标明，悬停各有代入式
   { key: 'w_cash', label: '加权现金(亿)', group: 'asset' },
   { key: 'int_debt', label: '有息负债(亿)', group: 'asset' },
-  { key: 'net_cash_w', label: '净现金(亿)', group: 'asset' },
-  { key: 'net_cash_ratio', label: '净现金/市值', group: 'asset' },
+  { key: 'net_cash_w', label: '净现金(扣有息)', group: 'asset' },
+  { key: 'net_cash_ratio', label: '净现金/市值', sub: '减全部负债', group: 'asset' },
   // PB 十年分位（外源 Wind 口径）：只放这一列，PE/PS 分位在详情页——
   // PE 分位对亏损股无意义（一片 “-”）、PS 分位又宽又少人看，摆进这张表只会稀释信号。
   { key: 'pb_pctile', label: 'PB十年分位', group: 'asset' },
@@ -273,7 +274,7 @@ const dipOf = (s) => s.interim_dip == null ? null : (s.interim_dip <= -0.3 ? Mat
 // 净现金三件套的悬停口径（列在资产组，单位本币亿；与「净现金/市值」比值列的口径差是重点）
 const WCASH_TIP = '加权类现金（最新一期财报，本币亿）：货币资金(扣受限)×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4 ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0（定期存款/受限来自财报附注，闭合才采信）。'
 const IDEBT_TIP = '有息负债（最新一期财报，本币亿）：短期借款 ＋ 一年内到期的非流动负债 ＋ 长期借款 ＋ 应付债券 ＋ 租赁负债。'
-const NCW_TIP = '净现金 ＝ 加权类现金 − 有息负债（本币亿），回答「活钱够不够还有息债」。注意与右侧「净现金/市值」不是同一个数：那一列减的是负债合计（含应付款/预收），回答「净资产缓冲」——两列都对，别拿一处的数核对另一处。'
+const NCW_TIP = '净现金(扣有息) ＝ 加权类现金 − 有息负债（本币亿），回答「活钱够不够还有息债」。注意与右侧「净现金/市值（减全部负债）」不是同一个数：那一列减的是负债合计（含应付款/预收），回答「净资产缓冲」——两列都对，别拿一处的数核对另一处。'
 function gateTip(s) {
   const f = (s.gate_flags || []).map((k) => GATE_TEXT[k] || k)
   return '触发硬门槛：' + (f.join('、') || '（后端未给出行因）')
@@ -813,7 +814,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <th v-for="c in COLS" :key="c.label" :class="{ l: c.l, unsort: !c.key, stick: c.stick, gedge: c.edge }"
                 :title="thTip(c)"
                 @click="c.key && setSort(c.key)">
-              {{ c.label }}<template v-if="sortActive(c)">{{ order === 'desc' ? ' ▼' : ' ▲' }}</template>
+              {{ c.label }}<i v-if="c.sub" class="th-sub">{{ c.sub }}</i><template v-if="sortActive(c)">{{ order === 'desc' ? ' ▼' : ' ▲' }}</template>
             </th>
           </tr>
         </thead>
@@ -1057,6 +1058,15 @@ table.grid-list th, table.grid-list td { padding: 6px 6px; }
 .grid-list thead tr.grp-row th + th { border-left: 1px solid var(--line); }
 /* 列名行：不折行（「格进取」折成两行是原先最刺眼的乱源），字号微降，长标签如 PB十年分位也就 ~80px */
 .grid-list thead tr:not(.grp-row) th { font-size: 12px; white-space: nowrap; }
+/* 列名小注：口径差异直接印在表头（如「净现金/市值 · 减全部负债」），不靠悬停 */
+.grid-list thead tr:not(.grp-row) th .th-sub {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: #a5aebd;
+  letter-spacing: 0;
+  margin-top: 1px;
+}
 /* 组底色：极浅的功能色给每组一个「地盘」，只上组标签行不上数据行 */
 .grid-list thead tr.grp-row th.grp-id { letter-spacing: 0; }
 .grid-list thead tr.grp-row th.grp-school { background: #eef3fb; }
