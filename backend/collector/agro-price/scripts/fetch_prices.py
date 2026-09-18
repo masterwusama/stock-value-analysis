@@ -17,6 +17,7 @@
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.request
@@ -546,8 +547,15 @@ def main():
     old = {}
     reported = set()
     if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, encoding='utf-8') as f:
-            old_data = json.load(f)
+        try:
+            with open(DATA_FILE, encoding='utf-8') as f:
+                old_data = json.load(f)
+        except Exception as e:  # noqa: BLE001
+            # 坏档不能当空档跑：本文件是增量合并的唯一历史载体（老数据只在这份里），
+            # 空档继续写会把全部历史洗成只剩本轮新抓的几条。退出码 5 → run.py 记
+            # failed，人工从 .bak 恢复（或修档）后再跑。同款防线见 fetch_edb.load_existing。
+            print('[fatal] products.json 读不动（%r）：本轮不抓不写，先人工恢复' % e)
+            return 5
         for p in old_data.get('products', []):
             old[p['id']] = p
         # 上一轮已经告过警的断档品种，免得上游长期停更时一轮红一次刷屏
@@ -598,8 +606,14 @@ def main():
             'stale_reported': sorted(set(stale))}
 
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+    # 全量重写必须原子：写一半被杀会留下半截 JSON，下一轮在读取处就整个拒跑。
+    # 先落 .tmp 再 os.replace；替换前把上一轮原样留一代 .bak（历史不可再生的唯一回滚点）。
+    tmp = DATA_FILE + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
+    if os.path.exists(DATA_FILE):
+        shutil.copyfile(DATA_FILE, DATA_FILE + '.bak')
+    os.replace(tmp, DATA_FILE)
     total = sum(len(p['prices']) for p in result_products)
     print('已写入 %s（共 %d 条价格记录）' % (DATA_FILE, total))
     if new_stale:

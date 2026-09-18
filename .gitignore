@@ -44,3 +44,6 @@ backend/collector/data/actions/
 _screen_cache.json
 # screen_stocks 输出(内含本机绝对路径,每次运行重写)
 _screen_result.json
+# 农价/EDB 落盘的原子写中转与上一代备份(运行期产物,可由 .bak 人工回滚)
+backend/collector/agro-price/data/*.tmp
+backend/collector/agro-price/data/*.bak

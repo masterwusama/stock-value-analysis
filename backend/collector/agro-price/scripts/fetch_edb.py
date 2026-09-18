@@ -502,8 +502,12 @@ def main():
 
     ofull = os.path.abspath(OUT)
     os.makedirs(os.path.dirname(ofull), exist_ok=True)
-    with io.open(ofull, "w", encoding="utf-8") as f:
+    # 原子写：写一半被杀留下的半截文件，下一轮会被 load_existing 判为坏档拒写，
+    # 2,116 个不可再生的历史点就只剩人工 --begin 重铺。tmp + os.replace 消掉这个窗口。
+    tmp = ofull + ".tmp"
+    with io.open(tmp, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
+    os.replace(tmp, ofull)
     # 统计口径用合并后的 out["categories"]：写 cats_out（本次抓取窗口内的）会让人以为
     # 文件里只剩这么多点；本轮新抓的点数单独标在窗口后面
     print("[done] 写入 %s  分类=%d 序列=%d 文件总点数=%d（本轮 %s~%s 抓到 %d 点）" % (
