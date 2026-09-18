@@ -44,15 +44,16 @@ const COLS = [
   // PB 十年分位（外源 Wind 口径）：只放这一列，PE/PS 分位在详情页——
   // PE 分位对亏损股无意义（一片 “-”）、PS 分位又宽又少人看，摆进这张表只会稀释信号。
   { key: 'pb_pctile', label: 'PB十年分位', group: 'asset' },
-  { key: null, label: '定增', noSort: true, tip: SEO_TIP, group: 'event', edge: true },
-  { key: null, label: '回购', noSort: true, tip: BUY_TIP, group: 'event' },
   // 价格参考合并列:每流派一列,竖排 买→保守/公允(同原站 listCells)
   // 列头排序键 buy_* 走的是"买入性价比"（现价相对买价的折价深度，后端算），不是买价绝对值；
   // 格内保守/公允两档小字仍按各自卖价排。键名与 score_daily 列/SecurityItem 字段保持一致。
+  // 排在股本事件之前：价格参考是估值域的延伸，紧贴资产组；事件是消息域，放表尾。
   { key: 'buy_graham_agg', label: '格进取 买/保/公', ref: true, school: 'grahamAgg', group: 'ref', edge: true },
   { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef', group: 'ref' },
   { key: 'buy_schloss', label: '施洛斯 买/保/公', ref: true, school: 'schloss', group: 'ref' },
   { key: 'buy_buffett', label: '巴菲特 买/保/公', ref: true, school: 'buffett', group: 'ref' },
+  { key: null, label: '定增', noSort: true, tip: SEO_TIP, group: 'event', edge: true },
+  { key: null, label: '回购', noSort: true, tip: BUY_TIP, group: 'event' },
 ]
 // 两级表头：组标签行由 COLS 归并派生（span = 组内列数），列名行沿用原 v-for
 const GROUP_LABEL = { id: '标的', quote: '行情', school: '四派评分', score: '量化评分', asset: '资产 · 分位', event: '股本事件', ref: '买卖参考价' }
@@ -840,6 +841,15 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                 :title="NCR_CELL_TIP">{{ score2(s.net_cash_ratio) }}</td>
             <td :class="{ 'r-hit': s.pb_pctile != null && s.pb_pctile <= 20 }" :title="pbCellTip(s)">{{ pbCell(s) }}</td>
+            <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :class="{ gedge: c.edge }" :title="refTitle(s, c.school)">
+              <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>
+              <span class="rf-sell">
+                <span class="sl-sort" :class="{ 'r-hit-s': refCons(s, c.school) != null && s.price != null && s.price >= refCons(s, c.school) }"
+                      title="按保守卖出价排序" @click.stop="setSort(refKey(c.school, 'sellCons'))">{{ fmt(refCons(s, c.school)) }}</span>
+                <span class="sl-sort" :class="{ 'r-hit-s': refFair(s, c.school) != null && s.price != null && s.price >= refFair(s, c.school) }"
+                      title="按公允卖出价排序" @click.stop="setSort(refKey(c.school, 'sellFair'))">{{ refFair(s, c.school) == null ? '' : fmt(refFair(s, c.school)) }}</span>
+              </span>
+            </td>
             <td class="c-act gedge" :title="seoTip(s)">
               <div class="ac-l" v-if="s.actions?.seo">
                 <span class="ac-p">{{ fmt(s.actions.seo.price) }}</span><span class="ac-s">{{ ym(s.actions.seo.date) }} {{ qty(s.actions.seo.num) }}</span>
@@ -851,15 +861,6 @@ const REF_COLS = COLS.filter((c) => c.ref)
                 <span class="ac-p">{{ r.price }}</span><i class="ac-cx">{{ r.cx }}</i><span class="ac-s">{{ r.tag }} {{ r.date }} {{ r.num }}股</span>
               </div>
               <div v-if="!buyRows(s).length" class="ac-l">-</div>
-            </td>
-            <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :class="{ gedge: c.edge }" :title="refTitle(s, c.school)">
-              <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>
-              <span class="rf-sell">
-                <span class="sl-sort" :class="{ 'r-hit-s': refCons(s, c.school) != null && s.price != null && s.price >= refCons(s, c.school) }"
-                      title="按保守卖出价排序" @click.stop="setSort(refKey(c.school, 'sellCons'))">{{ fmt(refCons(s, c.school)) }}</span>
-                <span class="sl-sort" :class="{ 'r-hit-s': refFair(s, c.school) != null && s.price != null && s.price >= refFair(s, c.school) }"
-                      title="按公允卖出价排序" @click.stop="setSort(refKey(c.school, 'sellFair'))">{{ refFair(s, c.school) == null ? '' : fmt(refFair(s, c.school)) }}</span>
-              </span>
             </td>
           </tr>
         </tbody>
