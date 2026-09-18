@@ -41,9 +41,12 @@ if ALT:
     value_analysis, value_scores = _mod.value_analysis, _mod.value_scores
     growth_score, _school_total = _mod.growth_score, _mod._school_total
     value_score = _mod.value_score
+    price_references = _mod.price_references
+    compute_scores, trap_score = _mod.compute_scores, _mod.trap_score
 else:
     from scoring import (value_analysis, value_scores, growth_score,  # noqa: E402
-                         value_score, _school_total)
+                         value_score, _school_total, price_references,
+                         compute_scores, trap_score)
 
 FIX_DIR = HERE.parent / "_tmp" / "formula-fixtures"
 YEARS = [2020, 2021, 2022, 2023, 2024]
@@ -361,10 +364,73 @@ check(w_us['raw'].get('return_cash') is None and w_us['evaluated'] == 6,
 check(w_2y['total'] is None and w_2y['evaluated'] == 0,
       f"年报不足 3 期应整分判不动，实为 {w_2y['total']}/可评估 {w_2y['evaluated']}")
 
+# ==================== 6b) V 的行情输入：批次行情只喂 V 的市值 ====================
+# companies/<代码>.json 的 snapshot 是深抓那一刻切的，A 股与本页行情中位差 2.18%、p90 7.98%
+# （5,551 家两侧都有可用市值，其中 5,466 家这两个数不同），所以 V 那 65 分会滞后一整周、
+# 并与详情页现算的对不上。
+# _refresh_scores 现在把批次行情作为 batch_quote 注进输入，但只喂 V 的市值那一项——
+# 把 snapshot 整体换掉的实测代价是 10,406 处非 V 字段（施洛斯的市值档、12 个参考价、
+# 净现金/市值），所以这条边界钉在探针里，而不是靠改代码的人自觉。
+SNAP_CAP_1E9 = {'price': 10.0, 'market_cap': 1e9, 'pe_ttm': 8.0, 'pb': 0.5}
+
+
+def bq_case(bq, snap=None):
+    """一家只有「批次行情给不给市值」这一个变量的公司。bq=None 即改前的老形状。"""
+    d = company(snap=dict(SNAP_CAP_1E9 if snap is None else snap), **V_BASE)
+    if bq is not None:
+        d['batch_quote'] = bq
+    return d
+
+
+BQ_FIX = []
+
+
+def bq_probe(name, d):
+    BQ_FIX.append(name)
+    return v_probe(name, d)
+
+
+b_ref = bq_probe('bq_snapshot', bq_case(None))
+b_2x = bq_probe('bq_2x', bq_case({'market_cap': 2e9}))
+b_far = bq_probe('bq_100x', bq_case({'market_cap': 1e11}))
+b_snap_nocap = bq_probe('bq_snapshot_nocap', bq_case(
+    {'market_cap': 1e11}, snap={'price': 10.0, 'pe_ttm': 8.0, 'pb': 0.5}))
+for bq_name, bad_bq in (('zero', {'market_cap': 0.0}), ('neg', {'market_cap': -5e8}),
+                        ('nocol', {'price': 11.0}), ('empty', {})):
+    b_bad = bq_probe(f"bq_bad_{bq_name}", bq_case(bad_bq))
+    check(b_bad['total'] == b_ref['total'] and b_bad['evaluated'] == b_ref['evaluated'],
+          f"批次行情给的市值不可用（{bad_bq}）时应退回深抓快照，而不是把 65 分整块判不动")
+
+# 批次行情换市值 ⇒ 吃市值那三项按比值同步挪，不吃市值那四项分毫不动
+check(close(b_2x['raw']['ep'], b_ref['raw']['ep'] / 2.0, 1e-12)
+      and close(b_2x['raw']['cash_yld'], b_ref['raw']['cash_yld'] / 2.0, 1e-12)
+      and close(b_2x['raw']['edge_tbv'], b_ref['raw']['edge_tbv'] - math.log(2), 1e-12),
+      f"V 的市值项没跟着批次行情走：ep {b_ref['raw']['ep']} → {b_2x['raw']['ep']}")
+check(all(b_2x['raw'][k] == b_ref['raw'][k] for k in ('roe_med5', 'debt_rev', 'ocfnp')),
+      "批次行情不该动质量那几项")
+# 挪出锚点区间才会显出分差：默认快照那份三项都在满分位上
+check(b_far['total'] < b_ref['total'] and b_far['evaluated'] == b_ref['evaluated'] == 7,
+      f"市值涨到 100 倍后 V 应明显走低：{b_ref['total']} → {b_far['total']}")
+# 深抓快照压根没市值（行情源那次没返）是真实形状：批次行情补上就不该整块判不动
+check(b_snap_nocap['evaluated'] == 7 and b_snap_nocap['total'] is not None,
+      f"快照缺市值但批次行情有时应算得满 7 项，实为 {b_snap_nocap['evaluated']} 项")
+
+_d_ref, _d_bq = bq_case(None), bq_case({'market_cap': 1e11})
+_va_ref, _va_bq = value_analysis(_d_ref), value_analysis(_d_bq)
+check(value_scores(_d_ref, _va_ref) == value_scores(_d_bq, _va_bq),
+      "批次行情动了四派总分或价格锚（清算/净现金）")
+check(price_references(_d_ref, _va_ref) == price_references(_d_bq, _va_bq),
+      "批次行情动了 12 个买卖参考价")
+check(growth_score(_d_ref) == growth_score(_d_bq) and trap_score(_d_ref) == trap_score(_d_bq),
+      "批次行情动了成长分或陷阱分")
+_kept = lambda s: {k: v for k, v in s.items() if k not in ('value', 'valueEval')}
+check(_kept(compute_scores(_d_ref)) == _kept(compute_scores(_d_bq)),
+      f"compute_scores 全字段里除 value/valueEval 外出现了差异："
+      f"{[k for k in _kept(compute_scores(_d_ref)) if _kept(compute_scores(_d_ref))[k] != _kept(compute_scores(_d_bq))[k]]}")
+
 E_EXP = {}
 if not ALT:
     from equity import PARENT_KEYS, TOTAL_KEYS, equity_of, hk_equity_patch
-    from scoring import compute_scores
 
     def equity_probe(name, fields, expected):
         d = company(ba=[ba_row(eq=None, **fields)], **V_BASE)
@@ -495,7 +561,8 @@ else:
 
 print(f"  输入 {len(FIX)} 组（流动比率扫点 {len(RS)} / 扣分 {len(PEN_CASES)} / "
       f"成长分覆盖度 {len(G_EXP) - len(EXTREME) - len(E_EXP)} / "
-      f"价值分覆盖度 {len(V_EXP) - len(EXTREME) - len(E_EXP)} / 权益别名 {len(E_EXP)} / "
+      f"价值分覆盖度 {len(V_EXP) - len(EXTREME) - len(E_EXP) - len(BQ_FIX)} / "
+      f"V 批次行情 {len(BQ_FIX)} / 权益别名 {len(E_EXP)} / "
       f"其余为缺失与极端；另验港股规范化、冲突拒绝与幂等）")
 if fails:
     print(f"  不通过 {len(fails)} 项:")
@@ -503,4 +570,5 @@ if fails:
         print("   ", m)
     sys.exit(1)
 print("  全部通过：流动比率单调、施洛斯扣分足额落地、净现比按年配对、成长分与价值分固定分母"
-      "（含市值缺位与负账面那两态）" + ("" if ALT else "，且 Python/JS 一致"))
+      "（含市值缺位与负账面那两态）、V 只从批次行情取市值而四派分与参考价不受它影响"
+      + ("" if ALT else "，且 Python/JS 一致"))

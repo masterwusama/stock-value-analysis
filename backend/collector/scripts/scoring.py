@@ -1272,7 +1272,8 @@ def growth_score(d):
 # 价值综合分：分项、权重与锚点冻结在 backend/scripts/v_validity.py 的定稿指表上（那份脚本是这条
 # 轴的出厂检验，四条验收线的实测数打在它的文件头）。三条纪律与 growth_score 同形：锚点是固定绝对
 # 阈值不按横截面重排；分母恒为 V_SUM_W、缺项不进分子也不重新归一；「算得出而为负」记 0 分档，
-# 只有「科目取不到」才判不动。便宜那 65 分吃快照市值，质量与回报那 35 分不吃。
+# 只有「科目取不到」才判不动。便宜那 65 分吃市值（取法见 _v_mcap：本批行情优先、退回深抓快照），
+# 质量与回报那 35 分不吃。
 V_ITEMS = (
     ('edge_tbv', 30, -1.5, 0.5),
     ('ep', 25, 0.0, 0.10),
@@ -1296,11 +1297,21 @@ def _v_year(s):
     return int(m) if m.isdigit() and int(m) else None
 
 
+def _v_mcap(q):
+    """V 的市值：本批次行情优先，没给到可用市值才退回深抓快照。
+
+    0 与负数市值不是「便宜」，是行情行坏了，与缺值同处理。stockLegacy.js 的 vMcap 同一条规则。
+    """
+    v = _v_num((q or {}).get('market_cap'))
+    return v if (v is not None and v > 0) else None
+
+
 def value_score(d):
     """对应 JS valueScore。返回 {total, evaluated, missing, na, raw}；分母恒为 V_SUM_W。
 
-    市值取行情快照 market_cap（与四派分、参考价同一个数），三市场都有。便宜度的分子分母同币种，
-    比值天然免汇率，所以全程只做比值、不跨币种相加。
+    市值取本批次行情 `batch_quote`（日更刷进 index.json 的那一笔），缺则退回深抓快照——
+    V 是三条轴里唯一把市值当输入的入库分数，其它分与参考价照旧只认深抓快照那一个数。
+    便宜度的分子分母同币种，比值天然免汇率，所以全程只做比值、不跨币种相加。
     """
     d = d or {}
     by_year = {}
@@ -1343,9 +1354,9 @@ def value_score(d):
         return {'total': None, 'evaluated': 0, 'missing': len(V_ITEMS),
                 'na': 0, 'raw': {}}
     ay, win, cur = years[-1], years[-5:], by_year[years[-1]]
-    mcap = _v_num((d.get('snapshot') or {}).get('market_cap'))
-    if mcap is not None and not mcap > 0:
-        mcap = None                           # 0 与负数市值不是「便宜」，是行情行坏了
+    mcap = _v_mcap(d.get('batch_quote'))
+    if mcap is None:
+        mcap = _v_mcap(d.get('snapshot'))
     # 派现年表：归属年 → 每 10 股现金红利合计，只数真给了钱的行（送股不派现不算回过钱）
     div_amt, div_seen = {}, False
     for r in (d.get('dividends') or []):
@@ -1764,7 +1775,7 @@ def compute_scores(company, now=None):
     gr = growth_score(company)
     scores['growth'] = gr['total']
     scores['growthEval'] = gr['evaluated']
-    # 价值综合分：同一套固定分母纪律，七项里便宜那 65 分吃快照市值，缺市值就整块判不动
+    # 价值综合分：同一套固定分母纪律，七项里便宜那 65 分吃市值（本批行情优先），两笔都缺才整块判不动
     vv = value_score(company)
     scores['value'] = vv['total']
     scores['valueEval'] = vv['evaluated']

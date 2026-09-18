@@ -1976,8 +1976,9 @@
    *    公司顶到榜首）；覆盖度由 eff.evaluated 单独出。
    * 3. 「算得出而为负」记 0 分档（有形账面价值为负、利润为负、五年一股没回过钱），
    *    「科目取不到」才判不动——把前者记成判不动，等于让最没有安全边际的公司因为算不出而不被扣分。
-   * 便宜那三项（30+25+10＝65 分）吃快照市值，质量那三项与回报那一项不吃；回测只证明了不吃价格的
-   * 那半边有判别效度（C+D 块五分位对其后转亏率 25.5%→5.8%），便宜块本库量不了（没有历史市值）。
+   * 便宜那三项（30+25+10＝65 分）吃市值（取法见 vMcap：本批行情优先、退回深抓快照），质量那三项与回报
+   * 那一项不吃；回测只证明了不吃价格的那半边有判别效度（C+D 块五分位对其后转亏率 25.5%→5.8%），
+   * 便宜块本库量不了（没有历史市值）。
    */
   var V_ITEMS = [
     { key: 'edge_tbv', label: 'ln(有形账面价值 ÷ 市值)', weight: 30, lo: -1.5, hi: 0.5 },
@@ -1992,6 +1993,13 @@
   var V_EDGE_FLOOR = -9;    // 有形账面价值 ≤0 时 ln 无定义：记成一个必然夹到 0 分档的下界
 
   function vNum(v) { return (typeof v === 'number' && isFinite(v)) ? v : null; }
+
+  // V 的市值：本批次行情优先，没给到可用市值才退回深抓快照。0 与负数市值不是「便宜」，
+  // 是行情行坏了，与缺值同处理。collector/scripts/scoring.py 的 _v_mcap 是同一条规则。
+  function vMcap(q) {
+    var v = vNum((q || {}).market_cap);
+    return (v != null && v > 0) ? v : null;
+  }
 
   function valueScore(d) {
     d = d || {};
@@ -2027,9 +2035,8 @@
         eff: { evaluated: 0, missing: V_ITEMS.length, na: 0 } };
     }
     var ay = years[years.length - 1], win = years.slice(-5), cur = byYear[ay];
-    var snap = d.snapshot || {};
-    var mcap = vNum(snap.market_cap);
-    if (mcap != null && !(mcap > 0)) mcap = null;      // 0 与负数市值不是「便宜」，是行情行坏了
+    var mcap = vMcap(d.batch_quote);
+    if (mcap == null) mcap = vMcap(d.snapshot);
     // 派现年表：归属年 → 每 10 股现金红利合计，只数真给了钱的行（送股不派现不算回过钱）
     var divAmt = {}, divSeen = false;
     (d.dividends || []).forEach(function (r) {

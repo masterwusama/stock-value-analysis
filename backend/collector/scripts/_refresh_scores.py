@@ -10,6 +10,14 @@ score_daily（`import_index_snapshot`），跑完列表页就是新分。手动�
 那份深抓时切的旧片段——否则今天新公告的摊薄要等到下次深抓才进陷阱分，而详情页读库里的
 `share_action` 当天就能看到，同一个 T 两边不同日。
 
+价值综合分同理，但只给它一个数：市值。`companies/<代码>.json` 的 `snapshot` 是深抓那一刻
+切的（实测 A 股停在上一轮周六：5,551 家两侧都有可用市值，与本页行情中位差 2.18%、p90
+7.98%；港美股那笔与快照同批、漂移为 0），而 V 是唯一把市值当输入的入库分数，跟着旧快照走
+会让列表页那一分滞后整整一周、与详情页现算的对不上。所以这里把本条
+`quote`（日更刚刷的那一笔）作为 `batch_quote` 注进评分输入，只喂 V 的市值那一项；四派分、
+陷阱分、成长分与 12 个买卖参考价照旧读 `snapshot`，一个数都不动。
+`batch_quote` 只活在这次传入的内存字典里，不写回 companies/*.json。
+
 ⚠ 改算法要先改完 scoring.py 并与 stockLegacy.js 同步（_score_check.py 全量比对），
 否则刷出来的分与详情页现算的对不上。
 
@@ -66,6 +74,8 @@ def main():
             if fresh is not None:
                 d["seo_actions"] = fresh
                 seo_hit += 1
+        # V 的市值只认这一笔（其余评分与参考价仍读 d["snapshot"]）：见文件头
+        d["batch_quote"] = c.get("quote") or {}
         try:
             new = compute_scores(d)
         except Exception as e:
