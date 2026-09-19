@@ -487,6 +487,7 @@ watch(keyword, (v) => {
   setSort._t = setTimeout(() => { kwDebounced.value = v.trim(); page.value = 1 }, 300)
 })
 
+onMounted(() => {
 // —— URL 状态持久化（Phase：筛选/排序写进 hash query，刷新/分享/收藏即恢复）——
 // 恢复必须在首次 load 之前：onMounted 里的 load() 拿到的就是恢复后的完整状态
 {
@@ -520,7 +521,6 @@ watch(keyword, (v) => {
   windMode.value = s('wind') === '1'
 }
 
-onMounted(() => {
   load()
   loadIndustries()
 })
