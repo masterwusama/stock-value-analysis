@@ -506,6 +506,7 @@ def list_securities(
     ncr_min: FiniteF | None = Query(None, description="净现金/市值≥(小数比率,0.35=35%;负数=净负债;含边界)"),
     ncr_max: FiniteF | None = Query(None, description="净现金/市值≤(小数比率,0.35=35%;用于专门捞净负债标的;含边界)"),
     niche: str | None = Query(None, max_length=32, description="细分行业精确匹配（主营造入词典归属，/securities/niches 枚举）"),
+    bm: str | None = Query(None, max_length=32, description="商业模式特征多选（逗号分隔 light/pricing，AND 语义：所勾标签全部亮灯才命中；判不动不命中）"),
     # PB 十年分位：与响应 pb_pctile 同单位，是 0~100 的百分比数值（30 = 处于自身十年 30% 位），
     # 不要按 net_cash_ratio 的小数习惯填 0.35。这一列定义域就是 0~100，故给 ge/le。
     pbp_min: FiniteF | None = Query(None, ge=0, le=100, description="PB 十年分位≥(0~100,含边界)"),
@@ -592,6 +593,11 @@ def list_securities(
         conds.append(Security.industry == industry)
     if niche:
         conds.append(Security.niche == niche)
+    # 商业模式特征多选（AND）：只认 light/pricing 两个键；is_(True) 让 NULL（判不动）
+    # 与 False（未亮）都不命中——与详情芯片的 ✓ 语义一致
+    for _b in [x for x in (bm or "").split(",") if x in ("light", "pricing")]:
+        conds.append(ScoreDaily.bm_light.is_(True) if _b == "light"
+                     else ScoreDaily.bm_pricing.is_(True))
     if ex_names:
         # 必须补 IS NULL 那半边：NOT IN 遇 NULL 出 NULL，会把 39 家没有行业标注的标的(38 A + 1 美)
         # 一起静默丢掉，而它们不属于任何被排除的行业。空串在库里不存在(实测 0 家)，不必第三支。
@@ -795,6 +801,8 @@ def _load_scores(db: Session, sid: int) -> dict | None:
         "growthEval": s.growth_eval,
         "value": s.value,
         "valueEval": s.value_eval,
+        "bmLight": s.bm_light,
+        "bmPricing": s.bm_pricing,
         "recommend": s.recommend,
         "recommendGate": s.recommend_gate,
         "interimDip": s.interim_dip,

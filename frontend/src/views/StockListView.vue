@@ -108,7 +108,7 @@ const error = ref('')
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(现价≥公允卖价即命中,公允恒高于保守);空值=不限
 // 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)、净现金/市值区间(%)、PB 十年分位区间(0~100)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
-const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [] })
+const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [], bm: [] })
 // 评分基准报告期距今多少月（接口 report_age_max）：四派分永远建在最新年报上，那一期越旧分越旧。
 // 阈值取 13 月：上一年 12-31 的年报最迟 12 个月龄，超出去就是再上一年度。
 const AGE_TIP = '评分用的财报期（最新年报）距今 ≤ 多少月：填 13 就是只要「基准年报还是上一年度」的公司；'
@@ -302,7 +302,7 @@ function toggleFlt(arr, key, on) {
   if (!on && i >= 0) arr.splice(i, 1)
 }
 function resetFlt() {
-  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [] })
+  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [], bm: [] })
   industry.value = ''
   niche.value = ''
   exIndustries.value = []
@@ -321,7 +321,7 @@ const fltCount = () =>
   (flt.ncrMin !== '' ? 1 : 0) + (flt.ncrMax !== '' ? 1 : 0) +
   (flt.pbpMin !== '' ? 1 : 0) + (flt.pbpMax !== '' ? 1 : 0) +
   (flt.ageMax !== '' ? 1 : 0) +
-  (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) +
+  (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) + (flt.bm.length ? 1 : 0) +
   (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0) + (noGate.value ? 1 : 0)
 
 // 勾选清单过搜索词。只数保持 /securities/industries 的原生顺序（count 降序），
@@ -348,6 +348,7 @@ async function load() {
     const d = await get('/securities', {
       market: market.value, board: board.value, industry: industry.value,
       niche: niche.value || null,
+      bm: flt.bm.length ? flt.bm.join(',') : null,
       ex_industry: exIndustries.value.length ? exIndustries.value.join(',') : null,
       st: noSt.value ? false : null,
       gate: noGate.value ? false : null,
@@ -712,6 +713,13 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <label v-for="[k, lab] in SCHOOLS" :key="'s' + k" class="cb">
         <input type="checkbox" :checked="flt.sells.includes(k)"
                @change="toggleFlt(flt.sells, k, $event.target.checked); applyFlt()">{{ lab }}</label>
+      <span class="t" title="商业模式特征多选（AND：所勾标签全部亮灯才命中）。轻资产＝capex÷经营现金流≤60%；定价权＝毛利率5年降幅≤3pp。回测（bm_validity，A 股 21,926 观测）两标签亮灯组其后转亏率显著更低；判不动的公司不命中，'-' 不是未亮灯">特征</span>
+      <label class="cb" title="capex÷经营现金流 ≤60%（回测转亏 lift 0.57）"><input type="checkbox"
+        :checked="flt.bm.includes('light')"
+        @change="toggleFlt(flt.bm, 'light', $event.target.checked); applyFlt()">轻资产</label>
+      <label class="cb" title="毛利率较 5 年前降幅 ≤3pp（回测转亏 lift 0.83）"><input type="checkbox"
+        :checked="flt.bm.includes('pricing')"
+        @change="toggleFlt(flt.bm, 'pricing', $event.target.checked); applyFlt()">定价权</label>
       <button type="button" class="rst" @click="resetFlt">重置筛选{{ fltCount() ? `(${fltCount()})` : '' }}</button>
       <!-- 手机没有 hover：桌面靠 title 才看得到的口径说明，触屏上必须常驻可见。
            文案复用上面的 FRAUD_TIP/MGMT_TIP/CAP_TIP/NCR_TIP，同一套解释不维护两份。 -->

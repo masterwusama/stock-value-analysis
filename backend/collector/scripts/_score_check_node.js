@@ -117,6 +117,28 @@ async function main() {
     out[code].recommendGate = rec.gate == null ? null : rec.gate;
     // 中报恶化 dip：纯 indicators 函数，数值比对（与 Python 同一浮点运算路径）
     out[code].interimDip = num(dipV);
+
+    // 商业模式标签（与 scoring.compute_scores 同一规则）：年报行 capex/OCF≤0.6；
+    // 毛利率较 5 年前年报降幅 ≤3pp；原料缺失 null
+    const annualBM = (d.indicators || []).filter(r => String(r['报告期'] || '').includes('-12-31'))
+      .sort((a, b) => String(a['报告期']) < String(b['报告期']) ? -1 : 1);
+    const lastBM = annualBM[annualBM.length - 1] || null;
+    const ldBM = lastBM ? String(lastBM['报告期']).slice(0, 10) : null;
+    const cfBM = (d.cashflow || []).filter(r => String(r['报告日'] || '').includes('-12-31'))
+      .sort((a, b) => String(a['报告日']) < String(b['报告日']) ? -1 : 1);
+    const lastCfBM = ldBM ? (cfBM.find(r => String(r['报告日']).slice(0, 10) === ldBM) || null) : null;
+    const cxBM = lastCfBM ? lastCfBM['购建固定资产、无形资产和其他长期资产所支付的现金'] : null;
+    const ocBM = lastCfBM ? lastCfBM['经营活动产生的现金流量净额'] : null;
+    out[code].bmLight = (cxBM != null && ocBM != null && ocBM > 0) ? (cxBM / ocBM <= 0.6) : null;
+    const gmNowBM = lastBM ? lastBM['销售毛利率'] : null;
+    let gmOldBM = null;
+    if (ldBM) {
+      const oldY = Number(ldBM.slice(0, 4)) - 5;
+      for (const r of annualBM) {
+        if (String(r['报告期']).slice(0, 4) === String(oldY)) { gmOldBM = r['销售毛利率']; break; }
+      }
+    }
+    out[code].bmPricing = (gmNowBM != null && gmOldBM != null) ? (gmNowBM - gmOldBM >= -0.03) : null;
   }
   process.stdout.write(JSON.stringify(out));
 }

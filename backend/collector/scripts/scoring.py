@@ -2050,6 +2050,31 @@ def compute_scores(company, now=None):
         scores['interimDip'])
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
+    # 商业模式特征（bm_validity 过线标签，2026-09-19 上线）：布尔入库，列表「特征」筛选用。
+    # 轻资产自供：capex÷经营现金流 ≤0.6（OCF>0，年报行）；定价权：毛利率较 5 年前降幅 ≤3pp
+    # （与 bmChips 同一规则）。原料缺失 → None（判不动），筛选不命中也不误显。
+    _bm_ld = va.get('annualDate')
+    _bm_cf = sheet_row_by_date(
+        annual_balance_rows(company.get('cashflow') or []), _bm_ld) if _bm_ld else None
+    _bm_cx = _bm_cf.get('购建固定资产、无形资产和其他长期资产所支付的现金') if _bm_cf else None
+    _bm_ocf = _bm_cf.get('经营活动产生的现金流量净额') if _bm_cf else None
+    if _bm_cx is not None and _bm_ocf is not None and _bm_ocf > 0:
+        scores['bmLight'] = _bm_cx / _bm_ocf <= 0.6
+    else:
+        scores['bmLight'] = None
+    _bm_annual = annual_rows(company.get('indicators') or [])
+    _bm_gm_now = _bm_annual[-1].get('销售毛利率') if _bm_annual else None
+    _bm_gm_old = None
+    if _bm_annual:
+        _bm_old_y = str(int(str(_bm_annual[-1].get('报告期') or '')[:4] or 0) - 5)
+        for r in _bm_annual:
+            if str(r.get('报告期') or '')[:4] == _bm_old_y:
+                _bm_gm_old = r.get('销售毛利率')
+                break
+    if _bm_gm_now is not None and _bm_gm_old is not None:
+        scores['bmPricing'] = (_bm_gm_now - _bm_gm_old) >= -0.03
+    else:
+        scores['bmPricing'] = None
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。
     # 原先只有净现金代入明细里顺带带的 report 可用，算不出净现金的公司就回落成跑数日
     # （实测 2026-09-12 那轮 5095/6939 行如此），导致报告龄与「这批分用的哪一期财报」都无法回答。

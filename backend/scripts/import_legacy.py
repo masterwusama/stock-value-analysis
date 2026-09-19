@@ -334,6 +334,8 @@ def build_score_rows(index, trade_date, db):
             "value_eval": sc.get("valueEval"),
             "recommend": sc.get("recommend"),
             "recommend_gate": sc.get("recommendGate"),
+            "bm_light": sc.get("bmLight"),
+            "bm_pricing": sc.get("bmPricing"),
             "interim_dip": sc.get("interimDip"),
             "fair_liq": refs.get("fairLiq"),
             "w_cash": refs.get("wCash"),
@@ -387,7 +389,8 @@ def build_score_rows(index, trade_date, db):
 # 覆写成空时集体掉到 0；growth 与 value 方向相反，同一起事故让它们分项全算不出而整列变 NULL
 # （年报不足 3 期、行情不返市值）。两端的家数都盯，故一把尺共用。新增列的首批无基线，guard 里会跳过
 # （recommend 的 NULL 还有一层「门槛拦截」的合法来源——所以它的基线要等第一批入库之后才成立）。
-SCORE_HOLD_COLS = ("fraud", "trap", "growth", "value", "recommend", "w_cash", "net_cash_w")
+SCORE_HOLD_COLS = ("fraud", "trap", "growth", "value", "recommend", "w_cash", "net_cash_w",
+                   "bm_light", "bm_pricing")
 SCORE_HOLD_RATIO = 2.0
 SCORE_HOLD_FLOOR = 500
 SCORE_HOLD_ROW_DROP = 0.9
@@ -396,7 +399,8 @@ SELECT t.trade_date, COUNT(*) n,
        SUM(fraud = 0), SUM(fraud IS NULL), SUM(trap = 0), SUM(trap IS NULL),
        SUM(growth = 0), SUM(growth IS NULL), SUM(value = 0), SUM(value IS NULL),
        SUM(recommend = 0), SUM(recommend IS NULL),
-       SUM(w_cash = 0), SUM(w_cash IS NULL), SUM(net_cash_w = 0), SUM(net_cash_w IS NULL)
+       SUM(w_cash = 0), SUM(w_cash IS NULL), SUM(net_cash_w = 0), SUM(net_cash_w IS NULL),
+       SUM(bm_light = 0), SUM(bm_light IS NULL), SUM(bm_pricing = 0), SUM(bm_pricing IS NULL)
 FROM score_daily t
 WHERE t.trade_date = (SELECT MAX(trade_date) FROM score_daily WHERE trade_date < :d)
 GROUP BY t.trade_date

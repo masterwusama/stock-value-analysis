@@ -233,6 +233,10 @@ class ScoreDaily(Base):
     # 宽口径金额 = 加权类现金 − 负债合计（本币）。列表「净现金(减全部负债)」列显示金额；
     # 占市值百分比保留在 net_cash_ratio（筛选/详情 ①），两处口径同源、算法差一步除法
     net_cash_b: Mapped[float | None] = mapped_column(Double)
+    # 商业模式特征标签（bm_validity 过线，布尔）：True=亮灯 / False=可判未亮 / NULL=判不动
+    # （原料缺失）。列表「特征」多选筛选（AND）用；定义与回测见 scripts/bm_validity.py。
+    bm_light: Mapped[bool | None] = mapped_column(Boolean)
+    bm_pricing: Mapped[bool | None] = mapped_column(Boolean)
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
     buy_graham_agg: Mapped[float | None] = mapped_column(Double)
