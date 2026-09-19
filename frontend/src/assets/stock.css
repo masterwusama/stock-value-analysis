@@ -777,9 +777,10 @@
 /* ---- 主营构成（模块①内，东财 F10 三维度） ---- */
 .zygc-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
   gap: 12px;
 }
+.zygc-tbl { overflow-x: auto; }
 .zygc-tbl h4 {
   margin: 0 0 6px;
   font-size: 13px;
