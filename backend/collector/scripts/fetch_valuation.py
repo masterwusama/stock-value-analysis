@@ -475,7 +475,14 @@ def main():
                       if any(x and x["pct"] is not None for x in v.values()))
         for key, vals in results.items():
             market, _, code = key.partition(":")
-            entry = items.get(key) or {"code": code, "market": market}
+            prev = items.get(key)
+            if prev is not None and not any(v and v["pct"] is not None for v in vals.values()):
+                # 整支空手而归（Wind 没回行或三项全判不可信）：上一轮条目原样保留，
+                # 与 import_valuation 的 skipped_empty 同口径——库留最后好观测，产物也不洗掉，
+                # verify 的「与采集产物逐家一致」基线才有得对；单指标判不可信不在此列，
+                # 仍照常洗空（clean_value 的亏损/越界/停更判定）。
+                continue
+            entry = prev or {"code": code, "market": market}
             dates = [v["date"] for v in vals.values() if v and v["date"]]
             entry.update({"fetched_at": dt.datetime.now().isoformat(timespec="seconds"),
                           "round": round_id, "trade_date": max(dates) if dates else None})
