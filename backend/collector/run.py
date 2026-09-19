@@ -124,6 +124,8 @@ FETCH_LOCK_STALE = 45 * 60
 # 挂死护栏:单脚本墙钟上限(秒)。采集脚本卡死(网络栈/CLI 挂住)会永久占住 job,
 # etl_job_log 停在 running 无从分辨死活。上限取历史最长一轮(deep 4.2h、stock 10min、
 # import 4min、valuation 3min)再放宽约一倍;events 手动跑全市场,量级同 deep。
+# agro 早上 10min、晚间 100ppi 变慢后 30min 跑不完(9-18/9-19 连续两晚被杀,自然时长
+# 未知),按最坏估计放宽到 2h;21:05 起跑至多到 23:05,与 stock(22:05)无锁冲突。
 SCRIPT_TIMEOUT = {
     "stock": 2 * 3600,
     "deep": 8 * 3600,
@@ -131,7 +133,7 @@ SCRIPT_TIMEOUT = {
     "valuation": 2 * 3600,
     "import": 2 * 3600,
     "edb": 3600,
-    "agro": 30 * 60,
+    "agro": 2 * 3600,
 }
 
 
