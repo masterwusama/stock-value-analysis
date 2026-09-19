@@ -626,7 +626,23 @@
       '<div class="stock-tabs">' +
       sheetTab('income', '利润表') + sheetTab('balance', '资产负债表') + sheetTab('cashflow', '现金流量表') +
       '<select id="stock-period"></select></div>' +
-      '<table class="stock-table" id="stock-sheet-body"></table></div>';
+      '<table class="stock-table" id="stock-sheet-body"><tr><td class="k">点上方「利润表 / 资产负债表 / 现金流量表」标签加载报表</td></tr></table></div>';
+
+    // 报表延后构建：首次点任一报表标签时才整表构建（含标签绑定）；
+    // 若点的不是利润表，构建后补点该标签
+    var sheetBuilt = false;
+    document.querySelectorAll('.stock-tabs button[data-sheet]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (sheetBuilt) return;
+        sheetBuilt = true;
+        initSheet(d);
+        var want = btn.dataset.sheet;
+        if (want && want !== 'income') {
+          var b = document.querySelector('.stock-tabs button[data-sheet="' + want + '"]');
+          if (b) b.click();
+        }
+      });
+    });
 
     // 分红历史（全量；移动端默认前 5 条，其余折叠）
     var divs = d.dividends || [];
@@ -796,38 +812,58 @@
     bindViewToggle();
     bindComparePicks();
     bindVaNav();
-    renderCharts(d.indicators || []);
-    renderCompare(d);
-    initSheet(d);
-    renderValueAnalysis(va);
-    renderScores(sc);
-    var fa = fraudAnalysis(d);
-    var fraudEl = $('stock-score-fraud');
-    if (fraudEl) fraudEl.innerHTML = fraudCard(fa, ovD);
-    var ma = managementAnalysis(d);
-    var mgmtEl = $('stock-score-mgmt');
-    if (mgmtEl) mgmtEl.innerHTML = managementCard(ma, ovD);
-    var ca = cycleAnalysis(d);
-    var cycleEl = $('stock-score-cycle');
-    if (cycleEl) cycleEl.innerHTML = cycleCard(ca);
-    var vv = valueScore(d), gg = growthScore(d);
-    var valueEl = $('stock-score-value');
-    if (valueEl) valueEl.innerHTML = valueCard(vv);
-    var growthEl = $('stock-score-growth');
-    if (growthEl) growthEl.innerHTML = growthCard(gg);
-    // R 综合推荐分：同一份现算输入（V/G/造假/陷阱/中报恶化）合成，与列表页入库分同一套公式
-    var recEl = $('stock-score-recommend');
-    if (recEl) {
-      var tpD = trapScore(d) || {};
-      var dip = interimDipYoy(d.indicators || []);
-      recEl.innerHTML = recommendCard(recommendScore(vv.total, gg.total,
-                                                     fa ? fa.total : null, tpD.total, dip),
-                                       vv.total, gg.total, dip);
-    }
-    var trapEl = $('stock-score-trap');
-    if (trapEl) trapEl.innerHTML = trapCard(trapScore(d));
-    renderCycleChart(d, ca);
-    bindMoreButtons();
+
+    // ---- 渐进式渲染：重活逐个让出主线程，手机上页面先可用、模块依次点亮 ----
+    // 顺序即视觉顺序（图表 → 价值/评分卡 → 造假/管理/周期 → 综合分/陷阱）；
+    // 三大报表延后到首次点开标签页才构建（initSheet 是加载期最重的同步构建之一，
+    // 且报表标签页默认并不展开）。桌面同样走这条队列——每个任务之间只让出一帧。
+    var fa = null, ma = null, ca = null, vv = null, gg = null, tpD = null, dip = null;
+    var tasks = [
+      function () { renderCharts(d.indicators || []); },
+      function () { renderCompare(d); renderValueAnalysis(va); renderScores(sc); },
+      function () {
+        fa = fraudAnalysis(d);
+        var el = $('stock-score-fraud');
+        if (el) el.innerHTML = fraudCard(fa, ovD);
+      },
+      function () {
+        ma = managementAnalysis(d);
+        var el = $('stock-score-mgmt');
+        if (el) el.innerHTML = managementCard(ma, ovD);
+      },
+      function () {
+        ca = cycleAnalysis(d);
+        var el = $('stock-score-cycle');
+        if (el) el.innerHTML = cycleCard(ca);
+        renderCycleChart(d, ca);
+      },
+      function () {
+        vv = valueScore(d); gg = growthScore(d);
+        var ve = $('stock-score-value'), ge = $('stock-score-growth');
+        if (ve) ve.innerHTML = valueCard(vv);
+        if (ge) ge.innerHTML = growthCard(gg);
+      },
+      function () {
+        // R 综合推荐分：同一份现算输入（V/G/造假/陷阱/中报恶化）合成，与列表页入库分同一套公式
+        tpD = trapScore(d) || {};
+        dip = interimDipYoy(d.indicators || []);
+        var el = $('stock-score-recommend');
+        if (el) el.innerHTML = recommendCard(recommendScore(vv.total, gg.total,
+                                                       fa ? fa.total : null, tpD.total, dip),
+                                             vv.total, gg.total, dip);
+      },
+      function () {
+        var el = $('stock-score-trap');
+        if (el) el.innerHTML = trapCard(trapScore(d));
+        bindMoreButtons();
+      },
+    ];
+    (function next() {
+      var fn = tasks.shift();
+      if (!fn) return;
+      fn();
+      setTimeout(next, 0);
+    })();
   }
 
   // 移动端“展开全部”按钮：分红/定期报告各在其所属 section 内展开折叠项

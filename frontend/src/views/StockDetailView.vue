@@ -13,6 +13,7 @@ window.echarts = echarts
 const route = useRoute()
 const router = useRouter()
 const error = ref('')
+// 详情加载中：数据 453KB + 全模块同步构建，手机上有可感知的等待期——给个可见状态
 const loading = ref(false)
 let legacy = null
 
@@ -49,6 +50,7 @@ async function render(code) {
     await nextTick()
     if (!alive || seq !== renderSeq) return
     L.renderDetail(d)
+    loading.value = false
   } catch (e) {
     if (alive && seq === renderSeq) {
       error.value = e.message?.includes('404') ? `未找到证券 ${code}` : `加载失败：${e.message}`
@@ -77,6 +79,7 @@ onBeforeUnmount(() => {
       <button type="button" class="back-btn" @click="router.back()">← 返回列表</button>
     </div>
     <div v-if="error" class="error">{{ error }}</div>
+    <div v-if="loading && !error" class="detail-loading">加载中…（首次加载含全部分析模块，约需数秒）</div>
     <!-- legacy show() 切换的四块容器(id 与原页面一致)；loading 由 Vue 接管 v-show -->
     <div id="stock-loading" v-show="loading">加载中…</div>
     <div id="stock-error" class="error" style="display:none"></div>
@@ -103,6 +106,15 @@ onBeforeUnmount(() => {
 /* 手机端放大返回按钮的点击区；桌面保持原尺寸不变 */
 @media (max-width: 600px) {
   .back-btn { padding: 8px 16px; font-size: 15px; min-height: 36px; }
+}
+
+.detail-loading {
+  padding: 10px 14px;
+  font-size: 13px;
+  color: #3f639c;
+  background: #f3f7fd;
+  border-left: 3px solid #5585d4;
+  border-radius: 0 8px 8px 0;
 }
 </style>
 
