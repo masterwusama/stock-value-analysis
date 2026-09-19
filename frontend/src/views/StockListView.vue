@@ -109,7 +109,7 @@ const error = ref('')
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(现价≥公允卖价即命中,公允恒高于保守);空值=不限
 // 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)、净现金/市值区间(%)、PB 十年分位区间(0~100)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
-const flt = reactive({ fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', buys: [], discount: '', sells: [], bm: [] })
+const flt = reactive({ fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', liqDisc: '', buyDays: '', seoDays: '', buys: [], discount: '', sells: [], bm: [] })
 const gateFlag = ref('')
 // 评分基准报告期距今多少月（接口 report_age_max）：四派分永远建在最新年报上，那一期越旧分越旧。
 // 阈值取 13 月：上一年 12-31 的年报最迟 12 个月龄，超出去就是再上一年度。
@@ -304,7 +304,7 @@ function toggleFlt(arr, key, on) {
   if (!on && i >= 0) arr.splice(i, 1)
 }
 function resetFlt() {
-  Object.assign(flt, { fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', buys: [], discount: '', sells: [], bm: [] })
+  Object.assign(flt, { fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', liqDisc: '', buyDays: '', seoDays: '', buys: [], discount: '', sells: [], bm: [] })
   gateFlag.value = ''
   industry.value = ''
   niche.value = ''
@@ -327,6 +327,7 @@ const fltCount = () =>
   (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) + (flt.bm.length ? 1 : 0) +
   ((flt.recMin !== '' ? 1 : 0) + (flt.peMin !== '' ? 1 : 0) + (flt.peMax !== '' ? 1 : 0) +
    (flt.pbMin !== '' ? 1 : 0) + (flt.pbMax !== '' ? 1 : 0) + (flt.divMin !== '' ? 1 : 0) +
+   ((flt.liqDisc !== '' ? 1 : 0) + (flt.buyDays !== '' ? 1 : 0) + (flt.seoDays !== '' ? 1 : 0)) +
    (gateFlag.value ? 1 : 0)) +
   (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0) + (noGate.value ? 1 : 0)
 
@@ -362,6 +363,9 @@ async function load() {
       pb_min: flt.pbMin === '' ? null : Number(flt.pbMin),
       pb_max: flt.pbMax === '' ? null : Number(flt.pbMax),
       div_min: flt.divMin === '' ? null : Number(flt.divMin),
+      liq_disc_max: flt.liqDisc === '' ? null : Number(flt.liqDisc),
+      buyback_days: flt.buyDays === '' ? null : Number(flt.buyDays),
+      seo_days: flt.seoDays === '' ? null : Number(flt.seoDays),
       ex_industry: exIndustries.value.length ? exIndustries.value.join(',') : null,
       st: noSt.value ? false : null,
       gate: noGate.value ? false : null,
@@ -463,6 +467,9 @@ watch([market, board, industry, niche, kwDebounced, noSt, noGate, windMode, sort
     if (flt.pbMin !== '') q.pbmin = flt.pbMin
     if (flt.pbMax !== '') q.pbmax = flt.pbMax
     if (flt.divMin !== '') q.dmin = flt.divMin
+    if (flt.liqDisc !== '') q.ldc = flt.liqDisc
+    if (flt.buyDays !== '') q.bbd = flt.buyDays
+    if (flt.seoDays !== '') q.sed = flt.seoDays
     if (flt.buys.length) q.buys = flt.buys.join(',')
     if (flt.discount !== '' && flt.buys.length) q.disc = flt.discount
     if (flt.sells.length) q.sells = flt.sells.join(',')
@@ -501,6 +508,7 @@ watch(keyword, (v) => {
   flt.peMin = s('pemin'); flt.peMax = s('pemax')
   flt.pbMin = s('pbmin'); flt.pbMax = s('pbmax')
   flt.divMin = s('dmin')
+  flt.liqDisc = s('ldc'); flt.buyDays = s('bbd'); flt.seoDays = s('sed')
   flt.buys = s('buys').split(',').filter((x) => SCHOOLS.some(([k]) => k === x))
   flt.discount = s('disc')
   flt.sells = s('sells').split(',').filter((x) => SCHOOLS.some(([k]) => k === x))
@@ -858,6 +866,12 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <label class="cb" title="毛利率较 5 年前降幅 ≤3pp（回测转亏 lift 0.83）"><input type="checkbox"
         :checked="flt.bm.includes('pricing')"
         @change="toggleFlt(flt.bm, 'pricing', $event.target.checked); applyFlt()">定价权</label>
+      <label class="num" title="清算折价 ≤（%）：现价 ≤ 每股清算价值×80% 填 80。账面派的折价买入门槛（买点+打折只覆盖收益派的 EPS 锚）；现价或清算缺失的公司不进区间">清算折价≤
+        <input v-model="flt.liqDisc" type="number" min="0" placeholder="不限" @change="applyFlt">%</label>
+      <label class="num" title="近 N 天有回购（公告日或完成日落窗内；无回购记录的公司不命中）">回购≤
+        <input v-model="flt.buyDays" type="number" min="0" step="10" placeholder="天" @change="applyFlt">天</label>
+      <label class="num" title="近 N 天有定增发行（发行日落窗内；发行日缺失取上市日的采集约定）">定增≤
+        <input v-model="flt.seoDays" type="number" min="0" step="30" placeholder="天" @change="applyFlt">天</label>
       <button type="button" class="rst" @click="resetFlt">重置筛选{{ fltCount() ? `(${fltCount()})` : '' }}</button>
       <!-- 手机没有 hover：桌面靠 title 才看得到的口径说明，触屏上必须常驻可见。
            文案复用上面的 FRAUD_TIP/MGMT_TIP/CAP_TIP/NCR_TIP，同一套解释不维护两份。 -->

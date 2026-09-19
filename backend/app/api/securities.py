@@ -516,6 +516,9 @@ def list_securities(
     pb_min: float | None = Query(None, description="PB ≥"),
     pb_max: float | None = Query(None, description="PB ≤"),
     div_min: float | None = Query(None, description="股息率 ≥（小数比率，0.04=4%；NULL=无分红数据的公司自动排除）"),
+    liq_disc_max: float | None = Query(None, description="清算折价 ≤（百分比，80=现价≤清算价值×80%；现价/清算均缺的公司不进区间）"),
+    buyback_days: int | None = Query(None, description="近 N 天有回购（公告日或完成日落窗内；无回购记录的公司不命中）"),
+    seo_days: int | None = Query(None, description="近 N 天有定增发行（发行日落窗内；发行日缺失取上市日的采集约定）"),
     gate_flag: str | None = Query(None, description="硬门槛单项反查：audit_qualify/risk_warning/case_filed/neg_equity（命中该项目的公司）"),
     # PB 十年分位：与响应 pb_pctile 同单位，是 0~100 的百分比数值（30 = 处于自身十年 30% 位），
     # 不要按 net_cash_ratio 的小数习惯填 0.35。这一列定义域就是 0~100，故给 ge/le。
@@ -608,6 +611,24 @@ def list_securities(
     for _b in [x for x in (bm or "").split(",") if x in ("light", "pricing")]:
         conds.append(ScoreDaily.bm_light.is_(True) if _b == "light"
                      else ScoreDaily.bm_pricing.is_(True))
+    if liq_disc_max is not None:
+        conds.append(QuoteDaily.price.isnot(None))
+        conds.append(ScoreDaily.fair_liq.isnot(None))
+        conds.append(QuoteDaily.price <= ScoreDaily.fair_liq * (liq_disc_max / 100.0))
+    if buyback_days is not None and buyback_days > 0:
+        _since_bb = date.today() - timedelta(days=buyback_days)
+        conds.append(Security.sid.in_(
+            select(ShareAction.sid).where(
+                ShareAction.kind == "buyback",
+                or_(ShareAction.notice_date >= _since_bb,
+                    ShareAction.finish_date >= _since_bb))))
+    if seo_days is not None and seo_days > 0:
+        _since_seo = date.today() - timedelta(days=seo_days)
+        conds.append(Security.sid.in_(
+            select(ShareAction.sid).where(
+                ShareAction.kind == "seo",
+                or_(ShareAction.issue_date >= _since_seo,
+                    ShareAction.listing_date >= _since_seo))))
     if recommend_min is not None:
         conds.append(ScoreDaily.recommend >= recommend_min)
     if pe_min is not None:
