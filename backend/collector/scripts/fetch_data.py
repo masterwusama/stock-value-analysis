@@ -1663,6 +1663,17 @@ def fetch_company_a(code: str, name: str):
         result["info"] = fetch_info(code)
     except Exception as e:
         result["info"] = {}
+        # 两源都拿不到时，行业沿用 companies/<code>.json 里上次已知的值：2026-09-19 的
+        # 30054x 一段接口集体失灵，全量重写把产物行业洗成 None——导入层 COALESCE 挡得住库，
+        # 挡不住 index.json 本身（列表筛选、verify 基线都直接吃它）。只沿用行业这个慢变
+        # 分类字段，简称/上市日期等快变字段不沿用。
+        try:
+            _prev = json.loads((COMPANIES_DIR / f"{code}.json").read_text(encoding="utf-8"))
+            _prev_ind = (_prev.get("info") or {}).get("行业")
+            if _prev_ind:
+                result["info"]["行业"] = _prev_ind
+        except (OSError, ValueError):
+            pass
         errors.append(f"info: {e}")
     sleep_between()
 
