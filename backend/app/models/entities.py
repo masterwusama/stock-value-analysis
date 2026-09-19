@@ -42,6 +42,10 @@ class Security(Base):
     market: Mapped[str] = mapped_column(Enum("A", "HK", "US"), nullable=False)
     name: Mapped[str] = mapped_column(String(64), nullable=False)
     industry: Mapped[str | None] = mapped_column(String(64))
+    # 细分行业（Phase 3）：主营构成首项命中词典 → 规范细分名（如 农化/梯媒广告）。
+    # niche_src 记归属依据（如 "dict:农药@54.5%"）；NULL = 无构成数据或未命中词典。
+    niche: Mapped[str | None] = mapped_column(String(32))
+    niche_src: Mapped[str | None] = mapped_column(String(64))
     exchange: Mapped[str | None] = mapped_column(String(16))
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="CNY")
     status: Mapped[str] = mapped_column(

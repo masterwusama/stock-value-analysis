@@ -988,7 +988,9 @@ def import_zygc(db, stats):
         return  # 首轮采集还没跑过：无源可读不是回灌失败
     sids = load_sid_map(db)
     now = datetime.now()
+    from scripts.niche_dict import niche_of  # 细分词典（Phase 3，版本化在本目录）
     w = _Writer(db, stats, MainBusiness, mode="upsert", upd_coalesce=True)
+    niche_items = {}
     for path in sorted(src_dir.glob("*.json")):
         try:
             src = json.loads(path.read_text(encoding="utf-8"))
@@ -999,7 +1001,19 @@ def import_zygc(db, stats):
         if sid is None:
             stats["zygc.skipped_nosec"] += 1
             continue
-        for r in src.get("rows") or []:
+        # 细分归属原料：取「最近一个有产品/行业维度的报告期」（很多公司最新期只披露
+        # 地区构成，产品构成要看更早的期），剔除子项与兜底行，按占比降序
+        _rows = src.get("rows") or []
+        if _rows:
+            for _rd in sorted({r["report_date"] for r in _rows}, reverse=True):
+                _items = [(r["name"], r.get("ratio")) for r in _rows
+                          if r["report_date"] == _rd and r.get("type") in (2, 1)
+                          and r.get("name") and "其中" not in r["name"] and "补充" not in r["name"]]
+                if _items:
+                    _items.sort(key=lambda x: -(x[1] or 0))
+                    niche_items[sid] = _items
+                    break
+        for r in _rows:
             if not r.get("name"):
                 continue
             w.add({
@@ -1014,6 +1028,18 @@ def import_zygc(db, stats):
                 "updated_at": parse_dt(src.get("updated_at")) or now,
             })
     w.flush()
+
+    # 细分归属（Phase 3）：词典命中 → security.niche/niche_src，全量重算有构成的公司
+    from sqlalchemy import text as _text
+    upd = []
+    for sid, items in niche_items.items():
+        niche, src_note = niche_of(items)
+        if niche:
+            upd.append({"sid": sid, "niche": niche, "niche_src": src_note})
+    if upd:
+        db.execute(_text("UPDATE security SET niche = :niche, niche_src = :niche_src"
+                         " WHERE sid = :sid"), upd)
+        stats["zygc.niche_set"] = len(upd)
     db.commit()
 
 

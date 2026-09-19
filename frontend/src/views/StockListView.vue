@@ -90,6 +90,9 @@ const GATE_TIP = '排除触发硬门槛的标的：最近一份年报的审计�
   + '这四类是定性否决，不进任何分数（四派分照旧），所以触发者出现在高分前排并不罕见（实测 344 家触发，其中 24 家四派最高分 ≥ 70）。'
   + '注意：本开关只保留「明确未触发」的标的，一个信号都判不了的（未抓财务、无审计也无权益数据）会一并被排除'
 const industries = ref([])
+// 细分（Phase 3）：主营构成词典归属，仅 A 股有值；选项在 loadIndustries 时一并拉取
+const niches = ref([])
+const niche = ref('')
 const keyword = ref('')
 const kwDebounced = ref('')
 const sort = ref('market_cap')
@@ -301,6 +304,7 @@ function toggleFlt(arr, key, on) {
 function resetFlt() {
   Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [] })
   industry.value = ''
+  niche.value = ''
   exIndustries.value = []
   exKw.value = ''
   noSt.value = false
@@ -343,6 +347,7 @@ async function load() {
   try {
     const d = await get('/securities', {
       market: market.value, board: board.value, industry: industry.value,
+      niche: niche.value || null,
       ex_industry: exIndustries.value.length ? exIndustries.value.join(',') : null,
       st: noSt.value ? false : null,
       gate: noGate.value ? false : null,
@@ -390,12 +395,19 @@ async function loadIndustries() {
   try {
     industries.value = await get('/securities/industries', { market: market.value })
   } catch (e) { /* 下拉缺失不影响列表主体 */ }
+  if (market.value === '' || market.value === 'A') {
+    try { niches.value = await get('/securities/niches', { min_count: 3 }) }
+    catch (e) { niches.value = [] }
+  } else {
+    niches.value = []
+  }
 }
 
 // 必须注册在下面 load 的 watch 之前：切市场先把已选行业清掉，同一轮里触发的 load 才带着空行业去请求
 // 排除项同理且更必须——三个市场是三套字典（A 国标 / 港股恒生 / 美股东财中文），带过去的名字新市场里不存在
 watch(market, () => {
   industry.value = ''
+  niche.value = ''
   exIndustries.value = []
   exKw.value = ''
   loadIndustries()
@@ -404,7 +416,7 @@ watch(market, () => {
 // kwDebounced 必须在依赖里：搜索框原本只靠下面防抖回调里的 page=1 间接触发刷新，
 // 而搜索时通常已在第一页，页码不变 → watch 不触发 → 输入了也没发请求（applyFlt 同坑）。
 // windMode 同理：它是整列口径的开关，不在依赖里就会看到“点了没反应”的老毛病。
-watch([market, board, sort, order, page, kwDebounced, windMode], load)
+watch([market, board, sort, order, page, kwDebounced, windMode, niche], load)
 watch(pageSize, load)
 watch(keyword, (v) => {
   clearTimeout(setSort._t)
@@ -642,6 +654,11 @@ const REF_COLS = COLS.filter((c) => c.ref)
           <option value="">全部</option>
           <option v-for="i in industries" :key="i.industry" :value="i.industry">{{ i.industry }}（{{ i.count }}）{{
             exIndustries.includes(i.industry) ? '（已排除）' : '' }}</option>
+        </select></label>
+      <label class="t" v-show="market === '' || market === 'A'">细分
+        <select v-model="niche" @change="applyFlt">
+          <option value="">全部</option>
+          <option v-for="x in niches" :key="x.niche" :value="x.niche">{{ x.niche }}（{{ x.count }}）</option>
         </select></label>
       <button type="button" class="ex-t" :class="{ on: exIndustries.length }" :aria-expanded="exOpen"
               title="排除不关心的行业（多选）。与左侧「行业」下拉同时给出时按 AND 处理——选了它又排掉同一个行业，结果自然是空集。没有行业标注的公司不参与排除，始终保留"

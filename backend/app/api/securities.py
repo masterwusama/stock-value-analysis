@@ -505,6 +505,7 @@ def list_securities(
     # 看得见，不靠 422 兜；非有限值(NaN/inf)是另一回事，会一路炸到 SQL 变 500，故由 FiniteF 拦下。
     ncr_min: FiniteF | None = Query(None, description="净现金/市值≥(小数比率,0.35=35%;负数=净负债;含边界)"),
     ncr_max: FiniteF | None = Query(None, description="净现金/市值≤(小数比率,0.35=35%;用于专门捞净负债标的;含边界)"),
+    niche: str | None = Query(None, max_length=32, description="细分行业精确匹配（主营造入词典归属，/securities/niches 枚举）"),
     # PB 十年分位：与响应 pb_pctile 同单位，是 0~100 的百分比数值（30 = 处于自身十年 30% 位），
     # 不要按 net_cash_ratio 的小数习惯填 0.35。这一列定义域就是 0~100，故给 ge/le。
     pbp_min: FiniteF | None = Query(None, ge=0, le=100, description="PB 十年分位≥(0~100,含边界)"),
@@ -589,6 +590,8 @@ def list_securities(
                                        ScoreDaily.trade_date) <= report_age_max)
     if industry:
         conds.append(Security.industry == industry)
+    if niche:
+        conds.append(Security.niche == niche)
     if ex_names:
         # 必须补 IS NULL 那半边：NOT IN 遇 NULL 出 NULL，会把 39 家没有行业标注的标的(38 A + 1 美)
         # 一起静默丢掉，而它们不属于任何被排除的行业。空串在库里不存在(实测 0 家)，不必第三支。
@@ -737,6 +740,20 @@ def list_industries(
         q = q.where(Security.market == market)
     q = q.group_by(Security.industry).order_by(func.count().desc(), Security.industry)
     return [{"industry": r.industry, "count": r.cnt} for r in db.execute(q)]
+
+
+@router.get("/niches")
+def list_niches(min_count: int = Query(3, ge=1), db: Session = Depends(get_session)):
+    """细分下拉选项（成员 ≥min_count 的规范细分，按家数降序）。
+
+    niche 由 import_zygc 依词典归属（仅 A 股，主营构成数据面），故本端点不接 market。
+    """
+    q = (select(Security.niche, func.count().label("cnt"))
+         .where(Security.niche.isnot(None), Security.niche != "")
+         .group_by(Security.niche)
+         .having(func.count() >= min_count)
+         .order_by(func.count().desc(), Security.niche))
+    return [{"niche": r.niche, "count": r.cnt} for r in db.execute(q)]
 
 
 # ---------- 详情 ----------
@@ -977,12 +994,24 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
                  "gm": _f(r.gross_margin)}
                 for r in sub[:8]
             ]})
-        return {"reportDate": latest.isoformat(), "sections": sections} if sections else None
+        # 主业演变（观察芯片用）：各报告期占比最高的构成项（产品维度优先、剔除子项与兜底行）
+        tops = {}
+        for r in rows:
+            if r.mainop_type in (2, 1) and "其中" not in r.item_name and "补充" not in r.item_name:
+                k = r.report_date.isoformat()
+                cur = tops.get(k)
+                if cur is None or (r.income or 0) > (cur["income"] or 0):
+                    tops[k] = {"date": k, "name": r.item_name,
+                               "income": _f(r.income), "ratio": _f(r.income_ratio)}
+        history = sorted(tops.values(), key=lambda x: x["date"])[-8:]
+        return {"reportDate": latest.isoformat(), "sections": sections,
+                "historyTop1": history} if sections else None
 
     return {
         "code": sec.code, "name": sec.name, "market": sec.market, "currency": sec.currency,
         "updated_at": _dt(sec.updated_at),
         "info": {"行业": sec.industry, "股票简称": sec.name, "上市日期": _d(sec.list_date)},
+        "niche": {"name": sec.niche, "src": sec.niche_src},
         "snapshot": snapshot,
         "indicators": fin_rows(FinIndicator),
         "income": fin_rows(FinIncome),

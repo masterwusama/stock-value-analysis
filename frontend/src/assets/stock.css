@@ -797,3 +797,27 @@
   .zygc-grid { grid-template-columns: 1fr; }
   .zygc-tbl .zygc-name { max-width: 130px; }
 }
+
+/* ---- 商业模式特征芯片（模块①内） ---- */
+.bm-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+.bm-chips .bm-cap { font-size: 12px; font-weight: 600; color: #4a6076; }
+.bm-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: help;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.bm-chip.bm-on { border-color: #7cc39a; background: #eff8f2; color: #1e7e44; }
+.bm-chip.bm-off { border-color: #d8dee8; background: #f4f5f7; color: #8a94a6; }
+.bm-chip.bm-obs { border-color: #c9d6ea; background: #f3f7fd; color: #3f639c; }
+.bm-chips .bm-note { font-size: 11px; color: #a5aebd; }
