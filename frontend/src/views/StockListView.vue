@@ -547,6 +547,38 @@ function rTitle(s) {
   if (s.growth != null) ing.push('G ' + s.growth.toFixed(1))
   return `${R_TIP}｜本标的：${label}${ing.length ? ' · ' + ing.join(' · ') : ''}`
 }
+// 移动卡片第二层：推荐格无分时的门槛原因速记（与详情 R 卡一致，缩写版）
+const HERO_GATE = { fraud: '造假', trap: '陷阱', interim: '中报', nodata: '无数据' }
+const heroGate = (s) => {
+  const g = s.recommend_gate
+  if (!g) return ''
+  return String(g).split('+').map((k) => HERO_GATE[k] || k).join('+')
+}
+// 排序联动：当前排序字段在本行的值（挂在卡片第一层，折叠的指标排序时也能看到排序依据）
+const SORT_VAL_FMT = {
+  price: (s) => fmt(s.price) + (s.market !== 'A' ? s.currency : ''),
+  pe_ttm: (s) => 'PE ' + fmt(s.pe_ttm),
+  pb: (s) => 'PB ' + fmt(s.pb),
+  market_cap: (s) => '市值 ' + yi(s.market_cap) + (s.market !== 'A' ? s.currency : ''),
+  fraud: (s) => '造假 ' + score(dispScore(s, 'fraud')),
+  mgmt: (s) => '管理 ' + score(dispScore(s, 'mgmt')),
+  cycle: (s) => '周期 ' + score(s.cycle),
+  trap: (s) => '陷阱 ' + score(s.trap),
+  growth: (s) => '成长 ' + score(s.growth),
+  value: (s) => '价值 ' + score(s.value),
+  recommend: (s) => '推荐 ' + score(s.recommend),
+  fair_liq: (s) => '清算 ' + fmt(s.fair_liq),
+  net_cash_ratio: (s) => '净现金/市值 ' + score2(s.net_cash_ratio),
+  pb_pctile: (s) => 'PB分位 ' + pbCell(s),
+  w_cash: (s) => '加权现金 ' + yi(s.w_cash) + (s.market !== 'A' ? s.currency : ''),
+  int_debt: (s) => '有息负债 ' + yi(s.int_debt) + (s.market !== 'A' ? s.currency : ''),
+  net_cash_b: (s) => '净现金 ' + yi(s.net_cash_b) + (s.market !== 'A' ? s.currency : ''),
+  score_graham_agg: (s) => '格进取 ' + score(s.score_graham_agg),
+  score_graham_def: (s) => '格防御 ' + score(s.score_graham_def),
+  score_schloss: (s) => '施洛斯 ' + score(s.score_schloss),
+  score_buffett: (s) => '巴菲特 ' + score(s.score_buffett),
+}
+const sortValChip = (s) => (SORT_VAL_FMT[sort.value] ? SORT_VAL_FMT[sort.value](s) : null)
 const cls = (n) => n > 0 ? 'up' : n < 0 ? 'down' : 'flat'
 const MARKET_NAME = { A: 'A股', HK: '港股', US: '美股' }
 const totalPages = () => data.value ? Math.max(1, Math.ceil(data.value.total / pageSize.value)) : 1
@@ -754,6 +786,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         <div v-for="s in data.items" :key="s.sid" class="stock-card" tabindex="0" role="link"
              @click="router.push(`/stock/${s.code}`)"
              @keyup.enter="router.push(`/stock/${s.code}`)">
+          <!-- 第一层：身份与价格（首屏固定） -->
           <div class="sc-head">
             <span class="sc-name">{{ s.name }}</span>
             <span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span>
@@ -765,68 +798,82 @@ const REF_COLS = COLS.filter((c) => c.ref)
               {{ fmt(s.price) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i>
               <b>{{ pct(s.change_pct) }}</b>
             </span>
-            <span class="sc-industry">{{ s.industry || '-' }}</span>
+          </div>
+          <div class="sc-meta">
+            <span class="sc-industry" :title="s.industry">{{ s.industry || '-' }}</span>
+            <span v-if="s.niche" class="sc-niche" title="细分行业（主营构成词典归属）">{{ s.niche }}</span>
+            <span v-if="sortValChip(s)" class="sc-sortval" :title="'当前排序字段：' + (SORT_NAME[sort] || sort)">{{ sortValChip(s) }}</span>
           </div>
 
-          <div class="sc-badges">
-            <span class="sc-bd"><em>PE</em><b>{{ fmt(s.pe_ttm) }}</b></span>
-            <span class="sc-bd"><em>PB</em><b>{{ fmt(s.pb) }}</b></span>
-            <span class="sc-bd"><em>市值亿</em><b>{{ yi(s.market_cap) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></b></span>
-            <span class="sc-bd" :class="'sc-' + fraudGradeOf(dispScore(s, 'fraud'))"
-                  :title="windTip(s, 'fraud', FRAUD_TIP)">
-              <em>造假</em><b>{{ score(dispScore(s, 'fraud')) }}</b></span>
-            <span class="sc-bd" :class="'sc-' + gradeOf(dispScore(s, 'mgmt'))"
-                  :title="windTip(s, 'mgmt', MGMT_TIP)">
-              <em>管理</em><b>{{ score(dispScore(s, 'mgmt')) }}</b></span>
-            <span class="sc-bd" :class="'sc-' + fraudGradeOf(s.cycle)"
-                  :title="'周期位置（0-100，越低越接近周期底部）：' + FRAUD_GRADE_TEXT[fraudGradeOf(s.cycle)]">
-              <em>周期</em><b>{{ score(s.cycle) }}</b></span>
-            <span class="sc-bd" :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">
-              <em>陷阱</em><b>{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></b></span>
-            <span class="sc-bd" :class="'sc-' + vGrade(s)" :title="vTitle(s)">
-              <em>价值</em><b>{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></b></span>
-            <span class="sc-bd" :class="'sc-' + gGrade(s)" :title="gTitle(s)">
-              <em>成长</em><b>{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></b></span>
-            <span class="sc-bd" :class="'sc-' + rGrade(s)" :title="rTitle(s)">
-              <em>推荐</em><b>{{ score(s.recommend) }}</b></span>
-            <span class="sc-bd" :class="{ 'sc-good': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
-                  :title="NCR_CELL_TIP">
-              <em>净现金/市值</em><b>{{ score2(s.net_cash_ratio) }}</b></span>
-            <span class="sc-bd" :class="{ 'sc-good': s.pb_pctile != null && s.pb_pctile <= 20 }"
-                  :title="pbCellTip(s)">
-              <em>PB十年分位</em><b>{{ pbCell(s) }}</b></span>
-            <div class="sc-act" :title="seoTip(s)"><em>定增</em>
-              <span v-if="s.actions?.seo">{{ fmt(s.actions.seo.price) }} 元/股 · {{ s.actions.seo.date || '-' }} · {{ qty(s.actions.seo.num) }} 股</span>
-              <span v-else>-</span>
+          <!-- 第二层：决策格（入口分 R + 一坏一好的证据轴） -->
+          <div class="sc-hero">
+            <div class="hero-cell" :class="'sc-' + rGrade(s)" :title="rTitle(s)">
+              <em>推荐</em>
+              <b>{{ score(s.recommend) }}<i v-if="s.recommend == null && s.recommend_gate" class="hero-na">{{ heroGate(s) }}</i></b>
             </div>
-            <div class="sc-act" :title="buyTip(s)"><em>回购</em>
-              <span v-for="r in buyRows(s)" :key="r.tag">{{ r.tag }} {{ r.price }} 元/股（{{ r.kind }}） · {{ r.full }} · {{ r.num }} 股 · {{ r.cx }}（用途）</span>
-              <span v-if="!buyRows(s).length">-</span>
+            <div class="hero-cell" :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">
+              <em>陷阱</em><b>{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></b>
+            </div>
+            <div class="hero-cell" :class="'sc-' + vGrade(s)" :title="vTitle(s)">
+              <em>价值</em><b>{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></b>
             </div>
           </div>
 
-          <div class="sc-scores">
-            <div v-for="[k, lab] in SCORE_CARDS" :key="k" class="sc-score" :class="'sc-' + gradeOf(s[k])"
-                 :title="GRADE_TEXT[gradeOf(s[k])]">
-              <span class="sc-k">{{ lab }}</span>
-              <span class="sc-v">{{ score(s[k]) }}</span>
+          <!-- 第三层：其余全部指标，默认收起（点开不触发卡片跳转） -->
+          <details class="sc-more" @click.stop>
+            <summary>更多指标与买卖点</summary>
+            <div class="sc-badges">
+              <span class="sc-bd"><em>PE</em><b>{{ fmt(s.pe_ttm) }}</b></span>
+              <span class="sc-bd"><em>PB</em><b>{{ fmt(s.pb) }}</b></span>
+              <span class="sc-bd"><em>市值亿</em><b>{{ yi(s.market_cap) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></b></span>
+              <span class="sc-bd" :class="'sc-' + fraudGradeOf(dispScore(s, 'fraud'))"
+                    :title="windTip(s, 'fraud', FRAUD_TIP)">
+                <em>造假</em><b>{{ score(dispScore(s, 'fraud')) }}</b></span>
+              <span class="sc-bd" :class="'sc-' + gradeOf(dispScore(s, 'mgmt'))"
+                    :title="windTip(s, 'mgmt', MGMT_TIP)">
+                <em>管理</em><b>{{ score(dispScore(s, 'mgmt')) }}</b></span>
+              <span class="sc-bd" :class="'sc-' + fraudGradeOf(s.cycle)"
+                    :title="'周期位置（0-100，越低越接近周期底部）：' + FRAUD_GRADE_TEXT[fraudGradeOf(s.cycle)]">
+                <em>周期</em><b>{{ score(s.cycle) }}</b></span>
+              <span class="sc-bd" :class="'sc-' + gGrade(s)" :title="gTitle(s)">
+                <em>成长</em><b>{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></b></span>
+              <span class="sc-bd" :class="{ 'sc-good': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
+                    :title="NCR_CELL_TIP">
+                <em>净现金/市值</em><b>{{ score2(s.net_cash_ratio) }}</b></span>
+              <span class="sc-bd" :class="{ 'sc-good': s.pb_pctile != null && s.pb_pctile <= 20 }"
+                    :title="pbCellTip(s)">
+                <em>PB十年分位</em><b>{{ pbCell(s) }}</b></span>
+              <div class="sc-act" :title="seoTip(s)"><em>定增</em>
+                <span v-if="s.actions?.seo">{{ fmt(s.actions.seo.price) }} 元/股 · {{ s.actions.seo.date || '-' }} · {{ qty(s.actions.seo.num) }} 股</span>
+                <span v-else>-</span>
+              </div>
+              <div class="sc-act" :title="buyTip(s)"><em>回购</em>
+                <span v-for="r in buyRows(s)" :key="r.tag">{{ r.tag }} {{ r.price }} 元/股（{{ r.kind }}） · {{ r.full }} · {{ r.num }} 股</span>
+                <span v-if="!buyRows(s).length">-</span>
+              </div>
             </div>
-          </div>
 
-          <div class="sc-refs">
-            <div v-for="c in REF_COLS" :key="c.school" class="sc-ref" :title="refTitle(s, c.school)">
-              <em>{{ REF_LABELS[c.school] }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></em>
-              <span class="r-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">买 {{ fmt(refBuy(s, c.school)) }}</span>
-              <!-- 卖出价可点排序（.stop 挡住卡片的跳转）；公允缺失显示 - 而非留空，
-                   四列等高对齐，缺一行会让整排参差 -->
-              <span class="r-sell sl-sort"
-                    :class="{ 'r-hit-s': refCons(s, c.school) != null && s.price != null && s.price >= refCons(s, c.school) }"
-                    @click.stop="setSort(refKey(c.school, 'sellCons'))">保 {{ fmt(refCons(s, c.school)) }}</span>
-              <span class="r-sell sl-sort"
-                    :class="{ 'r-hit-s': refFair(s, c.school) != null && s.price != null && s.price >= refFair(s, c.school) }"
-                    @click.stop="setSort(refKey(c.school, 'sellFair'))">公 {{ fmt(refFair(s, c.school)) }}</span>
+            <div class="sc-scores">
+              <div v-for="[k, lab] in SCORE_CARDS" :key="k" class="sc-score" :class="'sc-' + gradeOf(s[k])"
+                   :title="GRADE_TEXT[gradeOf(s[k])]">
+                <span class="sc-k">{{ lab }}</span>
+                <span class="sc-v">{{ score(s[k]) }}</span>
+              </div>
             </div>
-          </div>
+
+            <div class="sc-refs">
+              <div v-for="c in REF_COLS" :key="c.school" class="sc-ref" :title="refTitle(s, c.school)">
+                <em>{{ REF_LABELS[c.school] }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></em>
+                <span class="r-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">买 {{ fmt(refBuy(s, c.school)) }}</span>
+                <span class="r-sell sl-sort"
+                      :class="{ 'r-hit-s': refCons(s, c.school) != null && s.price != null && s.price >= refCons(s, c.school) }"
+                      @click.stop="setSort(refKey(c.school, 'sellCons'))">保 {{ fmt(refCons(s, c.school)) }}</span>
+                <span class="r-sell sl-sort"
+                      :class="{ 'r-hit-s': refFair(s, c.school) != null && s.price != null && s.price >= refFair(s, c.school) }"
+                      @click.stop="setSort(refKey(c.school, 'sellFair'))">公 {{ fmt(refFair(s, c.school)) }}</span>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
@@ -1294,4 +1341,87 @@ table.grid-list .ind {
   .pager .psize { margin-left: 0; }
   .pager .psize select, .pager .psize input { min-height: 32px; }
 }
+</style>
+
+<style scoped>
+/* ---- M1 移动卡片三层重排 ---- */
+.sc-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--sub);
+}
+.sc-meta .sc-industry {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sc-niche {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #eef3fb;
+  color: #3f639c;
+  font-size: 10px;
+  line-height: 18px;
+}
+.sc-sortval {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: #3f639c;
+}
+.sc-hero {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+.hero-cell {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 4px;
+  text-align: center;
+  background: #fff;
+}
+.hero-cell em {
+  display: block;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--sub);
+}
+.hero-cell b {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+.hero-cell b .tp-ev { font-size: 9px; }
+.hero-cell .hero-na {
+  font-style: normal;
+  font-size: 9px;
+  color: #a5aeb5;
+  margin-left: 2px;
+}
+.sc-more {
+  margin-top: 8px;
+  border-top: 1px dashed var(--line);
+}
+.sc-more summary {
+  list-style: none;
+  text-align: center;
+  padding: 7px 0 2px;
+  font-size: 12px;
+  color: var(--sub);
+  cursor: pointer;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sc-more summary::-webkit-details-marker { display: none; }
+.sc-more summary::after { content: ' ▾'; }
+.sc-more[open] summary::after { content: ' ▴'; }
+.sc-more[open] summary { border-bottom: 1px dashed var(--line); margin-bottom: 6px; }
+/* 收起后 summary 承担触控目标；点开区不冒泡到卡片跳转由 @click.stop 处理 */
 </style>

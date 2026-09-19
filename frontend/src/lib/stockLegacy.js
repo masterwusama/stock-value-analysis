@@ -786,6 +786,13 @@
     }
 
     $('stock-detail-body').innerHTML = html;
+    // 移动端读法折叠：score-note 常占卡片 40% 高度，窄屏默认收起、点按展开
+    // （桌面不受影响：折叠样式只在 ≤600px 媒体查询里生效）
+    if (window.innerWidth <= 600) {
+      $('stock-detail-body').querySelectorAll('.score-note').forEach(function (n) {
+        n.addEventListener('click', function () { n.classList.toggle('open'); });
+      });
+    }
     bindViewToggle();
     bindComparePicks();
     bindVaNav();

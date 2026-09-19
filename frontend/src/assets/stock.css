@@ -821,3 +821,54 @@
 .bm-chip.bm-off { border-color: #d8dee8; background: #f4f5f7; color: #8a94a6; }
 .bm-chip.bm-obs { border-color: #c9d6ea; background: #f3f7fd; color: #3f639c; }
 .bm-chips .bm-note { font-size: 11px; color: #a5aebd; }
+
+/* ---- M2/M3 移动端（≤600px）：评分表得分列右 sticky + 读法折叠 + 触控目标 ---- */
+@media (max-width: 600px) {
+  /* 得分列右 sticky：仅「以得分为末列」的卡（四派/造假/管理）；V/G/R/T 的末列是
+     口径/说明文本，钉住反而挡视线，故不套。 -6px 阴影提示右侧还有列可滚 */
+  #stock-score-graham-agg .stock-compare td:last-child,
+  #stock-score-graham-agg .stock-compare th:last-child,
+  #stock-score-graham-def .stock-compare td:last-child,
+  #stock-score-graham-def .stock-compare th:last-child,
+  #stock-score-schloss .stock-compare td:last-child,
+  #stock-score-schloss .stock-compare th:last-child,
+  #stock-score-buffett .stock-compare td:last-child,
+  #stock-score-buffett .stock-compare th:last-child,
+  #stock-score-fraud .stock-compare td:last-child,
+  #stock-score-fraud .stock-compare th:last-child,
+  #stock-score-mgmt .stock-compare td:last-child,
+  #stock-score-mgmt .stock-compare th:last-child {
+    position: sticky;
+    right: 0;
+    background: #fff;
+    box-shadow: -6px 0 6px -6px rgba(0, 0, 0, .3);
+  }
+  #stock-score-graham-agg .stock-compare thead th:last-child,
+  #stock-score-graham-def .stock-compare thead th:last-child,
+  #stock-score-schloss .stock-compare thead th:last-child,
+  #stock-score-buffett .stock-compare thead th:last-child,
+  #stock-score-fraud .stock-compare thead th:last-child,
+  #stock-score-mgmt .stock-compare thead th:last-child { background: #f7f8fa; }
+
+  /* 读法段落折叠（默认 4 行收起，点按展开；展开态由 JS 加 .open） */
+  .score-note {
+    max-height: 4.2em;
+    overflow: hidden;
+    cursor: pointer;
+    position: relative;
+  }
+  .score-note::after {
+    content: '…展开 ▾';
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    background: #f7f9fc;
+    color: #3f639c;
+    padding: 0 4px;
+  }
+  .score-note.open { max-height: none; }
+  .score-note.open::after { content: '▴ 收起'; }
+
+  /* M3 触控目标：导航与筛选复选项加高 */
+  .va-nav a { padding: 8px 10px; }
+}
