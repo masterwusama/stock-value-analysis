@@ -960,6 +960,15 @@ const REF_COLS = COLS.filter((c) => c.ref)
                 <em>周期</em><b>{{ score(s.cycle) }}</b></span>
               <span class="sc-bd" :class="'sc-' + gGrade(s)" :title="gTitle(s)">
                 <em>成长</em><b>{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></b></span>
+              <!-- 净现金三件套＋两口径金额（与桌面列同源）：标签即口径，移动端无 hover -->
+              <span class="sc-bd" :title="WCASH_TIP">
+                <em>加权现金</em><b>{{ yi(s.weighted_cash) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></b></span>
+              <span class="sc-bd" :title="IDEBT_TIP">
+                <em>有息负债</em><b>{{ yi(s.int_debt) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></b></span>
+              <span class="sc-bd" :title="NCW_TIP" :class="{ 'sc-good': s.net_cash_w != null && s.net_cash_w > 0 }">
+                <em>净现金·扣有息</em><b>{{ yi(s.net_cash_w) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></b></span>
+              <span class="sc-bd" :title="NCB_TIP" :class="{ 'sc-good': s.net_cash_b != null && s.net_cash_b > 0 }">
+                <em>净现金·减全负债</em><b>{{ yi(s.net_cash_b) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></b></span>
               <span class="sc-bd" :class="{ 'sc-good': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }"
                     :title="NCR_CELL_TIP">
                 <em>净现金/市值</em><b>{{ score2(s.net_cash_ratio) }}</b></span>
