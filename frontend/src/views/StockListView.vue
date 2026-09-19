@@ -99,7 +99,7 @@ const kwDebounced = ref('')
 const sort = ref('market_cap')
 const order = ref('desc')
 const page = ref(1)
-const pageSize = ref(50)
+const pageSize = ref(isMobile.value ? 20 : 50)   // 手机渲染 50 张三层卡吃 CPU，默认 20（isMobile 定义在第 9 行）
 const jump = ref(null)   // 5500 只×50 行 = 110 页，逐页点不现实
 
 const data = ref(null)
@@ -1092,7 +1092,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <button :disabled="page >= totalPages()" @click="page++">下一页</button>
       <label class="psize">每页
         <select v-model.number="pageSize" @change="page = 1">
-          <option :value="50">50</option><option :value="100">100</option><option :value="200">200</option>
+          <option :value="20">20</option><option :value="50">50</option><option :value="100">100</option><option :value="200">200</option>
         </select></label>
       <label class="psize">跳至
         <input v-model.number="jump" type="number" min="1" :max="totalPages()" @keyup.enter="doJump">

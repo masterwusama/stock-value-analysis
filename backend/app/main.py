@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -18,6 +19,10 @@ from app.api import agro, securities
 from app.db import get_session
 
 app = FastAPI(title="stock-value-analysis API", version="0.1.0")
+
+# gzip 压缩：API JSON（列表 75KB→约 15KB）与静态 JS/CSS/HTML（1MB 主包虽有按需分包，
+# 97KB 入口仍可再压 3 倍）——手机/Tailscale 远程访问的传输量直降 3~4 倍
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # 局域网部署 + Vue3 开发服务器跨域
 app.add_middleware(
