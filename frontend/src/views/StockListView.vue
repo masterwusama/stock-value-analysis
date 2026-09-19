@@ -1467,6 +1467,17 @@ table.grid-list .ind {
 </style>
 
 <style scoped>
+/* ---- M2 移动端：筛选/排序切换钮吸顶——面板展开后有一千多像素高，点深处的
+        选项时按钮会被顶出视口（用户视角＝「筛选按钮消失」）——按钮常驻顶部 ---- */
+@media (max-width: 600px) {
+  .m-tgls {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    background: var(--card, #fff);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .08);
+  }
+}
 /* ---- M1 移动卡片三层重排 ---- */
 .sc-meta {
   display: flex;
