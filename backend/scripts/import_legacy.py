@@ -60,6 +60,7 @@ from app.models import (
     ScoreDaily,
     Security,
     ShareAction,
+    MainBusiness,
     ValuationPctile,
     WindEvent,
     WindHolder,
@@ -976,6 +977,46 @@ def import_actions(db, stats):
     db.commit()
 
 
+def import_zygc(db, stats):
+    """data/zygc/<code>.json → main_business（东财 F10 主营构成，产品/行业/地区）。
+
+    每文件为整表覆盖式重抓的最新 8 期快照，(sid, report_date, mainop_type, item_name)
+    自然主键走 upsert；不追删源侧撤行（采集器全量重抓同代码即自愈，历史期不收缩）。
+    """
+    src_dir = DATA_DIR / "zygc"
+    if not src_dir.exists():
+        return  # 首轮采集还没跑过：无源可读不是回灌失败
+    sids = load_sid_map(db)
+    now = datetime.now()
+    w = _Writer(db, stats, MainBusiness, mode="upsert", upd_coalesce=True)
+    for path in sorted(src_dir.glob("*.json")):
+        try:
+            src = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            stats["zygc.skipped_broken"] += 1
+            continue
+        sid = sids.get((src.get("code"), "A"))
+        if sid is None:
+            stats["zygc.skipped_nosec"] += 1
+            continue
+        for r in src.get("rows") or []:
+            if not r.get("name"):
+                continue
+            w.add({
+                "sid": sid,
+                "report_date": _as_date(r.get("report_date")),
+                "mainop_type": r.get("type") or 0,
+                "item_name": r.get("name"),
+                "income": r.get("income"),
+                "income_ratio": r.get("ratio"),
+                "gross_margin": r.get("gm"),
+                "rank": r.get("rank"),
+                "updated_at": parse_dt(src.get("updated_at")) or now,
+            })
+    w.flush()
+    db.commit()
+
+
 def import_valuation(db, stats):
     """valuation/latest.json → valuation_pctile（每个标的一行最新观测）。
 
@@ -1015,7 +1056,7 @@ def import_valuation(db, stats):
 TABLES = [
     "wind_holder", "wind_event", "score_daily", "periodic_report", "dividend",
     "fin_cashflow", "fin_balance", "fin_income", "fin_indicator", "fin_note",
-    "quote_daily", "valuation_pctile", "share_action",
+    "quote_daily", "valuation_pctile", "share_action", "main_business",
     "security", "agro_price", "agro_product", "edb_value", "edb_indicator", "etl_job_log",
 ]
 
@@ -1043,6 +1084,8 @@ def main():
                     help="仅导入 N 小时内更新过的公司 JSON（全市场日更增量）")
     ap.add_argument("--only-scores", action="store_true",
                     help="只重算 score_daily（评分算法变更后单刷分），不碰其他业务表")
+    ap.add_argument("--only-zygc", action="store_true",
+                    help="只回灌 data/zygc/ 主营构成（fetch_zygc 采集后手动跑）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1054,6 +1097,8 @@ def main():
         # 同上，但这里直接改掉而不是报错：只刷分却先 TRUNCATE 18 张表、事后只回填一张，
         # 是一个不该靠调用方记得敲 --no-clean 才能避免的坑
         args.no_clean = True
+    if args.only_zygc:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
@@ -1064,7 +1109,9 @@ def main():
         if not args.no_clean:
             clean_tables(db)
             print("已清空业务表")
-        if args.only_scores:
+        if args.only_zygc:
+            import_zygc(db, stats)
+        elif args.only_scores:
             import_scores_only(db, stats, quiet=args.quiet)
         elif args.only_fresh:
             # 日更：表头三表走 index.json 全量（快），财务明细只读刚重抓的公司文件
@@ -1076,6 +1123,7 @@ def main():
             import_edb(db, stats)
             import_valuation(db, stats)
             import_actions(db, stats)
+            import_zygc(db, stats)
         else:
             import_companies(db, stats, quiet=args.quiet)
             import_events(db, stats)
@@ -1083,6 +1131,7 @@ def main():
             import_edb(db, stats)
             import_valuation(db, stats)
             import_actions(db, stats)
+            import_zygc(db, stats)
         held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),

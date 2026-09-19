@@ -773,3 +773,26 @@
 .ac-tag { white-space: nowrap; color: #34405a; }
 .ac-note { color: #657086; font-size: 12px; line-height: 1.7; margin: 6px 0; overflow-wrap: anywhere; }
 .va-actions details summary { cursor: pointer; }
+
+/* ---- 主营构成（模块①内，东财 F10 三维度） ---- */
+.zygc-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+.zygc-tbl h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: #4a6076;
+}
+.zygc-tbl .zygc-name {
+  text-align: left;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 600px) {
+  .zygc-grid { grid-template-columns: 1fr; }
+  .zygc-tbl .zygc-name { max-width: 130px; }
+}

@@ -484,6 +484,28 @@
       divBox +
       '</div></div>';
 
+    // 主营构成（东财 F10，产品/行业/地区三维度，最新报告期；fetch_zygc 采集）
+    var zygc = d.zygc;
+    if (zygc && zygc.sections && zygc.sections.length) {
+      var zygcHtml = '<div class="stock-section-head" style="margin-top:16px">' +
+        '<h3>主营业务构成（' + zygc.reportDate + ' 报告期）</h3></div><div class="zygc-grid">';
+      zygc.sections.forEach(function (sec) {
+        zygcHtml += '<div class="zygc-tbl"><h4>' + sec.label + '</h4>' +
+          '<table class="stock-compare"><thead><tr><th>构成项</th><th>收入(亿)</th><th>占比</th><th>毛利率</th></tr></thead><tbody>';
+        sec.rows.forEach(function (r) {
+          zygcHtml += '<tr><td class="zygc-name" title="' + esc(r.name) + '">' + esc(r.name) + '</td>' +
+            '<td class="v">' + (r.income == null ? '-' : fmtNum(r.income / 1e8)) + '</td>' +
+            '<td class="v">' + (r.ratio == null ? '-' : (r.ratio * 100).toFixed(1) + '%') + '</td>' +
+            '<td class="v">' + (r.gm == null ? '-' : (r.gm * 100).toFixed(1) + '%') + '</td></tr>';
+        });
+        zygcHtml += '</tbody></table></div>';
+      });
+      zygcHtml += '</div>' +
+        '<p class="score-note">来源：东方财富 F10 主营构成，按公司披露口径分维度（缺哪个维度就是不披露，不是没有）。' +
+        '毛利率为东财披露的分部毛利率；「其他(补充)」类行是公司兜底项，占比小可忽略。</p>';
+      html += zygcHtml;
+    }
+
     // （价值分析五大区块：价值体检/股东回报/现金流质量/杜邦分析/成长性已移至模块二）
 
     // 指标趋势图（按指标分 3 个独立图表；支持季/年视图切换）

@@ -40,6 +40,8 @@ backend/collector/data/*.err
 backend/collector/data/valuation/
 # 个股日线 hfq（收益侧回测专用，~170MB 全量可再生：fetch_daily_prices 重拉一遍）
 backend/collector/data/prices/
+# 主营构成（东财 F10，~60MB 全量可再生：fetch_zygc 重拉一遍）
+backend/collector/data/zygc/
 # 定增/回购全量明细快照（fetch_actions.py 重抓一轮 ~10 秒可重生，12MB）：同上，只 churn 不差异
 backend/collector/data/actions/
 # 全市场扫描缓存(screen_stocks/auto_screen 副产物)

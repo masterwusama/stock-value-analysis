@@ -23,6 +23,7 @@ from app.models import (
     ScoreDaily,
     Security,
     ShareAction,
+    MainBusiness,
     ValuationPctile,
     WindEvent,
     WindHolder,
@@ -955,6 +956,29 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
             "ps": {"pct": _f(vrow.ps_pctile), "days": vrow.ps_days},
         }
 
+
+    def _load_zygc(sid):
+        """东财 F10 主营构成：最新报告期的产品/行业/地区三维度（各按收入降序，最多 8 项）。"""
+        rows = db.execute(
+            select(MainBusiness).where(MainBusiness.sid == sid)
+        ).scalars().all()
+        if not rows:
+            return None
+        latest = max(r.report_date for r in rows)
+        labels = {2: "产品构成", 1: "行业构成", 3: "地区构成"}
+        sections = []
+        for tp in (2, 1, 3):
+            sub = sorted((r for r in rows if r.report_date == latest and r.mainop_type == tp),
+                         key=lambda r: (-(r.income or 0), r.rank or 999))
+            if not sub:
+                continue
+            sections.append({"type": tp, "label": labels[tp], "rows": [
+                {"name": r.item_name, "income": _f(r.income), "ratio": _f(r.income_ratio),
+                 "gm": _f(r.gross_margin)}
+                for r in sub[:8]
+            ]})
+        return {"reportDate": latest.isoformat(), "sections": sections} if sections else None
+
     return {
         "code": sec.code, "name": sec.name, "market": sec.market, "currency": sec.currency,
         "updated_at": _dt(sec.updated_at),
@@ -972,4 +996,5 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         "seo_actions": _load_seo_history(db, sec),
         "scores": _load_scores(db, sec.sid),
         "events": _load_events(db, sec.sid, sec.name),
+        "zygc": _load_zygc(sec.sid),
     }

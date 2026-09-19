@@ -513,3 +513,27 @@ class EtlJobLog(Base):
     stats: Mapped[dict | None] = mapped_column(JSON)
 
     __table_args__ = (Index("idx_job_name", "job_name", "started_at"),)
+
+
+class MainBusiness(Base):
+    """主营构成（东财 F10 BusinessAnalysis，产品/行业/地区三维度，多报告期）。
+
+    自然主键 (sid, report_date, mainop_type, item_name)：同一期同一维度下公司自报的
+    构成项名即源侧键。mainop_type 语义随源侧：1=行业、2=产品、3=地区（同一家可能只
+    披露其中一两个维度）。gross_margin 为东财披露的分部毛利率。数据由 fetch_zygc
+    采集（财报披露后手动跑），回灌走 upsert（见 import_legacy.import_zygc）。
+    """
+
+    __tablename__ = "main_business"
+
+    sid: Mapped[int] = mapped_column(primary_key=True)
+    report_date: Mapped[date] = mapped_column(primary_key=True)
+    mainop_type: Mapped[int] = mapped_column(primary_key=True)
+    item_name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    income: Mapped[float | None] = mapped_column(Numeric(24, 6))
+    income_ratio: Mapped[float | None] = mapped_column(Double)
+    gross_margin: Mapped[float | None] = mapped_column(Double)
+    rank: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (Index("idx_zygc_sid_date", "sid", "report_date"),)
