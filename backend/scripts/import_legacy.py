@@ -336,6 +336,7 @@ def build_score_rows(index, trade_date, db):
             "recommend_gate": sc.get("recommendGate"),
             "bm_light": sc.get("bmLight"),
             "bm_pricing": sc.get("bmPricing"),
+            "div_yield": sc.get("divYield"),
             "interim_dip": sc.get("interimDip"),
             "fair_liq": refs.get("fairLiq"),
             "w_cash": refs.get("wCash"),

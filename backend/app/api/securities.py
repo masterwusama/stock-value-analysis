@@ -169,6 +169,7 @@ class SecurityItem(BaseModel):
     # 宽口径金额 = 加权类现金 − 负债合计（本币元）；占市值百分比走 net_cash_ratio
     net_cash_b: float | None = None
     niche: str | None = None
+    div_yield: float | None = None
     # 评分基准报告期与报告龄（月）：四派分永远建在最新年报上，那一期距今越久分越旧。
     # score_date 是这一行评分快照自己的交易日：逐证券各取最近收盘，美股会比顶部那个
     # 全局快照日旧一天，而 report_age_months 就是相对它算的——不给出它，这个月数无法自证。
@@ -243,6 +244,7 @@ SORT_COLS = {
     "int_debt": ScoreDaily.int_debt,
     "net_cash_w": ScoreDaily.net_cash_w,
     "net_cash_b": ScoreDaily.net_cash_b,
+    "div_yield": ScoreDaily.div_yield,
     # PB 十年分位：升序 = 处在自身十年最低那一头（分位本身已是跨市场可比的 0~100）
     "pb_pctile": ValuationPctile.pb_pctile,
 }
@@ -508,6 +510,13 @@ def list_securities(
     ncr_max: FiniteF | None = Query(None, description="净现金/市值≤(小数比率,0.35=35%;用于专门捞净负债标的;含边界)"),
     niche: str | None = Query(None, max_length=32, description="细分行业精确匹配（主营造入词典归属，/securities/niches 枚举）"),
     bm: str | None = Query(None, max_length=32, description="商业模式特征多选（逗号分隔 light/pricing，AND 语义：所勾标签全部亮灯才命中；判不动不命中）"),
+    recommend_min: float | None = Query(None, description="综合推荐分 ≥（NULL=横杆的公司自动排除）"),
+    pe_min: float | None = Query(None, description="PE(TTM) ≥（负数=亏损股的真实值，会命中 ≤ 区间，说明书 §10.1）"),
+    pe_max: float | None = Query(None, description="PE(TTM) ≤"),
+    pb_min: float | None = Query(None, description="PB ≥"),
+    pb_max: float | None = Query(None, description="PB ≤"),
+    div_min: float | None = Query(None, description="股息率 ≥（小数比率，0.04=4%；NULL=无分红数据的公司自动排除）"),
+    gate_flag: str | None = Query(None, description="硬门槛单项反查：audit_qualify/risk_warning/case_filed/neg_equity（命中该项目的公司）"),
     # PB 十年分位：与响应 pb_pctile 同单位，是 0~100 的百分比数值（30 = 处于自身十年 30% 位），
     # 不要按 net_cash_ratio 的小数习惯填 0.35。这一列定义域就是 0~100，故给 ge/le。
     pbp_min: FiniteF | None = Query(None, ge=0, le=100, description="PB 十年分位≥(0~100,含边界)"),
@@ -599,6 +608,22 @@ def list_securities(
     for _b in [x for x in (bm or "").split(",") if x in ("light", "pricing")]:
         conds.append(ScoreDaily.bm_light.is_(True) if _b == "light"
                      else ScoreDaily.bm_pricing.is_(True))
+    if recommend_min is not None:
+        conds.append(ScoreDaily.recommend >= recommend_min)
+    if pe_min is not None:
+        conds.append(QuoteDaily.pe_ttm >= pe_min)
+    if pe_max is not None:
+        conds.append(QuoteDaily.pe_ttm <= pe_max)
+    if pb_min is not None:
+        conds.append(QuoteDaily.pb >= pb_min)
+    if pb_max is not None:
+        conds.append(QuoteDaily.pb <= pb_max)
+    if div_min is not None:
+        conds.append(ScoreDaily.div_yield >= div_min)
+    # 硬门槛单项反查：JSON 数组包含性（MySQL JSON_CONTAINS）；白名单外一律 400 前置校验略——
+    # 这里直接忽略未知值（与特征键同款宽容），避免拼 URL 探库
+    if gate_flag in ("audit_qualify", "risk_warning", "case_filed", "neg_equity"):
+        conds.append(func.json_contains(ScoreDaily.gate_flags, f'"{gate_flag}"'))
     if ex_names:
         # 必须补 IS NULL 那半边：NOT IN 遇 NULL 出 NULL，会把 39 家没有行业标注的标的(38 A + 1 美)
         # 一起静默丢掉，而它们不属于任何被排除的行业。空串在库里不存在(实测 0 家)，不必第三支。
@@ -693,6 +718,7 @@ def list_securities(
             int_debt=_f(score.int_debt) if score else None,
             net_cash_w=_f(score.net_cash_w) if score else None,
             net_cash_b=_f(score.net_cash_b) if score else None,
+            div_yield=_f(score.div_yield) if score else None,
             niche=sec.niche,
             gate=score.gate if score else None,
             gate_flags=score.gate_flags if score else None,
@@ -805,6 +831,7 @@ def _load_scores(db: Session, sid: int) -> dict | None:
         "valueEval": s.value_eval,
         "bmLight": s.bm_light,
         "bmPricing": s.bm_pricing,
+        "divYield": s.div_yield,
         "recommend": s.recommend,
         "recommendGate": s.recommend_gate,
         "interimDip": s.interim_dip,

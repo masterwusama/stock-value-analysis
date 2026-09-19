@@ -2075,6 +2075,8 @@ def compute_scores(company, now=None):
         scores['bmPricing'] = (_bm_gm_now - _bm_gm_old) >= -0.03
     else:
         scores['bmPricing'] = None
+    # 股息率（近 1 年每股分红 ÷ 快照价，value_analysis 已算）：PE/PB/股息率区间筛选的数据面
+    scores['divYield'] = va.get('divYield')
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。
     # 原先只有净现金代入明细里顺带带的 report 可用，算不出净现金的公司就回落成跑数日
     # （实测 2026-09-12 那轮 5095/6939 行如此），导致报告龄与「这批分用的哪一期财报」都无法回答。

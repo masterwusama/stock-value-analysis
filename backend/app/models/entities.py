@@ -237,6 +237,8 @@ class ScoreDaily(Base):
     # （原料缺失）。列表「特征」多选筛选（AND）用；定义与回测见 scripts/bm_validity.py。
     bm_light: Mapped[bool | None] = mapped_column(Boolean)
     bm_pricing: Mapped[bool | None] = mapped_column(Boolean)
+    # 股息率（小数）：近 1 年每股分红 ÷ 深抓快照价（与施洛斯股息率项同源）；区间筛选用
+    div_yield: Mapped[float | None] = mapped_column(Double)
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
     buy_graham_agg: Mapped[float | None] = mapped_column(Double)

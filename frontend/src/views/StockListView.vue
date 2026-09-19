@@ -1,10 +1,11 @@
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { get } from '../api/client'
 import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
 
 const router = useRouter()
+const route = useRoute()
 const isMobile = useMediaQuery(MOBILE_QUERY)
 
 const SEO_TIP = '最近一次已发行定增：发行价（元/股）、发行年月、发行数量；完整日期与募集资金见悬浮和详情。'
@@ -108,7 +109,8 @@ const error = ref('')
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(现价≥公允卖价即命中,公允恒高于保守);空值=不限
 // 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)、净现金/市值区间(%)、PB 十年分位区间(0~100)
 const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
-const flt = reactive({ fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [], bm: [] })
+const flt = reactive({ fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', buys: [], discount: '', sells: [], bm: [] })
+const gateFlag = ref('')
 // 评分基准报告期距今多少月（接口 report_age_max）：四派分永远建在最新年报上，那一期越旧分越旧。
 // 阈值取 13 月：上一年 12-31 的年报最迟 12 个月龄，超出去就是再上一年度。
 const AGE_TIP = '评分用的财报期（最新年报）距今 ≤ 多少月：填 13 就是只要「基准年报还是上一年度」的公司；'
@@ -302,7 +304,8 @@ function toggleFlt(arr, key, on) {
   if (!on && i >= 0) arr.splice(i, 1)
 }
 function resetFlt() {
-  Object.assign(flt, { fraudMax: '', mgmtMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', buys: [], discount: '', sells: [], bm: [] })
+  Object.assign(flt, { fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', buys: [], discount: '', sells: [], bm: [] })
+  gateFlag.value = ''
   industry.value = ''
   niche.value = ''
   exIndustries.value = []
@@ -322,6 +325,9 @@ const fltCount = () =>
   (flt.pbpMin !== '' ? 1 : 0) + (flt.pbpMax !== '' ? 1 : 0) +
   (flt.ageMax !== '' ? 1 : 0) +
   (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) + (flt.bm.length ? 1 : 0) +
+  ((flt.recMin !== '' ? 1 : 0) + (flt.peMin !== '' ? 1 : 0) + (flt.peMax !== '' ? 1 : 0) +
+   (flt.pbMin !== '' ? 1 : 0) + (flt.pbMax !== '' ? 1 : 0) + (flt.divMin !== '' ? 1 : 0) +
+   (gateFlag.value ? 1 : 0)) +
   (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0) + (noGate.value ? 1 : 0)
 
 // 勾选清单过搜索词。只数保持 /securities/industries 的原生顺序（count 降序），
@@ -349,6 +355,13 @@ async function load() {
       market: market.value, board: board.value, industry: industry.value,
       niche: niche.value || null,
       bm: flt.bm.length ? flt.bm.join(',') : null,
+      recommend_min: flt.recMin === '' ? null : Number(flt.recMin),
+      gate_flag: gateFlag.value || null,
+      pe_min: flt.peMin === '' ? null : Number(flt.peMin),
+      pe_max: flt.peMax === '' ? null : Number(flt.peMax),
+      pb_min: flt.pbMin === '' ? null : Number(flt.pbMin),
+      pb_max: flt.pbMax === '' ? null : Number(flt.pbMax),
+      div_min: flt.divMin === '' ? null : Number(flt.divMin),
       ex_industry: exIndustries.value.length ? exIndustries.value.join(',') : null,
       st: noSt.value ? false : null,
       gate: noGate.value ? false : null,
@@ -417,12 +430,87 @@ watch(market, () => {
 // kwDebounced 必须在依赖里：搜索框原本只靠下面防抖回调里的 page=1 间接触发刷新，
 // 而搜索时通常已在第一页，页码不变 → watch 不触发 → 输入了也没发请求（applyFlt 同坑）。
 // windMode 同理：它是整列口径的开关，不在依赖里就会看到“点了没反应”的老毛病。
-watch([market, board, sort, order, page, kwDebounced, windMode, niche], load)
+watch([market, board, sort, order, page, kwDebounced, windMode, niche, gateFlag], load)
 watch(pageSize, load)
+// 状态写入 hash query（防抖 replace 不产生历史；只写非默认值，URL 保持可读）。
+// 刷新/分享/收藏即恢复——这是筛选状态唯一的持久化出口。
+let routeTimer = null
+watch([market, board, industry, niche, kwDebounced, noSt, noGate, windMode, sort, order, page,
+       () => JSON.stringify(flt)], () => {
+  clearTimeout(routeTimer)
+  routeTimer = setTimeout(() => {
+    const q = {}
+    if (market.value) q.market = market.value
+    if (board.value) q.board = board.value
+    if (industry.value) q.ind = industry.value
+    if (niche.value) q.niche = niche.value
+    if (kwDebounced.value) q.kw = kwDebounced.value
+    if (noSt.value) q.nost = '1'
+    if (noGate.value) q.nog = '1'
+    if (flt.fraudMax !== '') q.fm = flt.fraudMax
+    if (flt.mgmtMin !== '') q.mm = flt.mgmtMin
+    if (flt.capMin !== '') q.cmin = flt.capMin
+    if (flt.capMax !== '') q.cmax = flt.capMax
+    if (flt.ncrMin !== '') q.nmin = flt.ncrMin
+    if (flt.ncrMax !== '') q.nmax = flt.ncrMax
+    if (flt.pbpMin !== '') q.pmin = flt.pbpMin
+    if (flt.pbpMax !== '') q.pmax = flt.pbpMax
+    if (flt.ageMax !== '') q.age = flt.ageMax
+    if (flt.recMin !== '') q.rmin = flt.recMin
+    if (gateFlag.value) q.gf = gateFlag.value
+    if (flt.peMin !== '') q.pemin = flt.peMin
+    if (flt.peMax !== '') q.pemax = flt.peMax
+    if (flt.pbMin !== '') q.pbmin = flt.pbMin
+    if (flt.pbMax !== '') q.pbmax = flt.pbMax
+    if (flt.divMin !== '') q.dmin = flt.divMin
+    if (flt.buys.length) q.buys = flt.buys.join(',')
+    if (flt.discount !== '' && flt.buys.length) q.disc = flt.discount
+    if (flt.sells.length) q.sells = flt.sells.join(',')
+    if (flt.bm.length) q.bm = flt.bm.join(',')
+    if (sort.value !== 'code') q.sort = sort.value
+    if (order.value !== 'desc') q.order = order.value
+    if (page.value > 1) q.page = String(page.value)
+    if (windMode.value) q.wind = '1'
+    router.replace({ query: q }).catch(() => {})
+  }, 300)
+})
+
 watch(keyword, (v) => {
   clearTimeout(setSort._t)
   setSort._t = setTimeout(() => { kwDebounced.value = v.trim(); page.value = 1 }, 300)
 })
+
+// —— URL 状态持久化（Phase：筛选/排序写进 hash query，刷新/分享/收藏即恢复）——
+// 恢复必须在首次 load 之前：onMounted 里的 load() 拿到的就是恢复后的完整状态
+{
+  const q = route.query
+  const s = (k) => (typeof q[k] === 'string' ? q[k] : '')
+  if (['', 'A', 'HK', 'US'].includes(q.market)) market.value = q.market
+  if (BOARDS.some(([k]) => k === q.board)) board.value = q.board
+  if (s('ind')) industry.value = s('ind')
+  if (s('niche')) niche.value = s('niche')
+  if (s('kw')) { keyword.value = s('kw'); kwDebounced.value = s('kw') }
+  noSt.value = s('nost') === '1'
+  noGate.value = s('nog') === '1'
+  flt.fraudMax = s('fm'); flt.mgmtMin = s('mm')
+  flt.capMin = s('cmin'); flt.capMax = s('cmax')
+  flt.ncrMin = s('nmin'); flt.ncrMax = s('nmax')
+  flt.pbpMin = s('pmin'); flt.pbpMax = s('pmax')
+  flt.ageMax = s('age')
+  flt.recMin = s('rmin'); flt.gateFlag = s('gf')
+  flt.peMin = s('pemin'); flt.peMax = s('pemax')
+  flt.pbMin = s('pbmin'); flt.pbMax = s('pbmax')
+  flt.divMin = s('dmin')
+  flt.buys = s('buys').split(',').filter((x) => SCHOOLS.some(([k]) => k === x))
+  flt.discount = s('disc')
+  flt.sells = s('sells').split(',').filter((x) => SCHOOLS.some(([k]) => k === x))
+  flt.bm = s('bm').split(',').filter((x) => ['light', 'pricing'].includes(x))
+  if (SORT_NAME[q.sort]) sort.value = q.sort
+  if (q.order === 'asc' || q.order === 'desc') order.value = q.order
+  const pg = parseInt(q.page, 10)
+  if (Number.isFinite(pg) && pg > 1) page.value = pg
+  windMode.value = s('wind') === '1'
+}
 
 onMounted(() => {
   load()
@@ -715,10 +803,28 @@ const REF_COLS = COLS.filter((c) => c.ref)
       </div>
       <label class="cb" title="名称含 ST/*ST 的公司（退市风险与财务造假高发区）"><input type="checkbox" v-model="noSt" @change="applyFlt">剔除ST</label>
       <label class="cb" :title="GATE_TIP"><input type="checkbox" v-model="noGate" @change="applyFlt">排除门槛</label>
+      <select v-model="gateFlag" @change="applyFlt" class="t"
+              title="硬门槛单项反查：命中该项目的公司。与左侧「排除门槛」（四类整体排除）互补——这里只看某一类">
+        <option value="">门槛单项</option>
+        <option value="audit_qualify">审计非标</option>
+        <option value="risk_warning">含 ST</option>
+        <option value="case_filed">违规/立案</option>
+        <option value="neg_equity">资不抵债</option>
+      </select>
       <label class="num" title="财报造假可能性(0-100,越高越可疑),只保留 ≤ 该分的公司">造假≤
         <input v-model="flt.fraudMax" type="number" min="0" max="100" step="1" placeholder="不限" @change="applyFlt"></label>
       <label class="num" title="管理层水平(0-100,越高越好),只保留 ≥ 该分的公司">管理≥
         <input v-model="flt.mgmtMin" type="number" min="0" max="100" step="1" placeholder="不限" @change="applyFlt"></label>
+      <label class="num" title="综合推荐分 R ≥（0-100，越高越好）。横杆（无分）公司自动排除——门槛拦截与算不出都不进结果">推荐≥
+        <input v-model="flt.recMin" type="number" min="0" max="100" placeholder="不限" @change="applyFlt"></label>
+      <label class="num" title="PE(TTM) 区间：负数=亏损股的真实值，会命中 ≤ 区间（想要盈利低 PE 就叠加特征/质量筛选）">PE≥
+        <input v-model="flt.peMin" type="number" placeholder="不限" @change="applyFlt"> ≤
+        <input v-model="flt.peMax" type="number" placeholder="不限" @change="applyFlt"></label>
+      <label class="num" title="PB 区间：负数=负净资产的真实值">PB≥
+        <input v-model="flt.pbMin" type="number" placeholder="不限" @change="applyFlt"> ≤
+        <input v-model="flt.pbMax" type="number" placeholder="不限" @change="applyFlt"></label>
+      <label class="num" title="股息率 ≥（填 4 即 4%；近 1 年每股分红÷快照价；无分红数据的公司不进区间）">股息率≥
+        <input v-model="flt.divMin" type="number" min="0" step="0.5" placeholder="不限" @change="applyFlt">%</label>
       <label class="num" :title="CAP_TIP">市值≥
         <input v-model="flt.capMin" type="number" min="0" step="0.5" placeholder="不限" @change="applyFlt"></label>
       <label class="num" :title="CAP_TIP">市值≤
@@ -779,7 +885,10 @@ const REF_COLS = COLS.filter((c) => c.ref)
     <div v-if="error" class="error">{{ error }}</div>
     <div v-if="loading && !data" class="loading">加载中…</div>
 
-    <div v-if="data && !data.items.length && !loading" class="loading">无符合筛选条件的公司</div>
+    <div v-if="data && !data.items.length && !loading" class="loading">
+      无符合筛选条件的公司
+      <button type="button" class="rst" style="margin-left:8px" @click="resetFlt">重置筛选</button>
+    </div>
     <template v-else-if="data">
       <!-- 手机：卡片流，单指纵向滑、零横向拖动；桌面：原宽表，标记与样式一字未改 -->
       <div v-if="isMobile" class="stock-cards">
