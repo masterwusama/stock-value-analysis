@@ -6,6 +6,8 @@ CREATE TABLE security (
 	market ENUM('A','HK','US') NOT NULL, 
 	name VARCHAR(64) NOT NULL, 
 	industry VARCHAR(64), 
+	niche VARCHAR(32), 
+	niche_src VARCHAR(64), 
 	exchange VARCHAR(16), 
 	currency VARCHAR(3) NOT NULL, 
 	status ENUM('active','suspended','delisted') NOT NULL, 
@@ -131,7 +133,15 @@ CREATE TABLE score_daily (
 	value_eval INTEGER, 
 	recommend DOUBLE, 
 	recommend_gate VARCHAR(16), 
+	interim_dip DOUBLE, 
 	fair_liq DOUBLE, 
+	w_cash DOUBLE, 
+	int_debt DOUBLE, 
+	net_cash_w DOUBLE, 
+	net_cash_b DOUBLE, 
+	bm_light BOOL, 
+	bm_pricing BOOL, 
+	div_yield DOUBLE, 
 	net_cash_ratio DOUBLE, 
 	net_cash_calc JSON, 
 	buy_graham_agg DOUBLE, 
@@ -156,7 +166,13 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+
+CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
+
 CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
+
+CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
 
 CREATE INDEX idx_list_value ON score_daily (trade_date, value);
 
@@ -171,12 +187,6 @@ CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
-
-CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
-
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
-
-CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -345,4 +355,19 @@ CREATE TABLE etl_job_log (
 );
 
 CREATE INDEX idx_job_name ON etl_job_log (job_name, started_at);
+
+CREATE TABLE main_business (
+	sid INTEGER NOT NULL, 
+	report_date DATE NOT NULL, 
+	mainop_type INTEGER NOT NULL, 
+	item_name VARCHAR(128) NOT NULL, 
+	income NUMERIC(24, 6), 
+	income_ratio DOUBLE, 
+	gross_margin DOUBLE, 
+	`rank` INTEGER, 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (sid, report_date, mainop_type, item_name)
+);
+
+CREATE INDEX idx_zygc_sid_date ON main_business (sid, report_date);
 
