@@ -1413,7 +1413,7 @@
     // 有息负债全口径：短借 + 一年内到期 + 长借 + 应付债券 + 租赁负债（字段缺失视为 0）
     var intDebt = sum([stDebt, due1y, ltDebt, bond, lease]);
     if (intDebt == null) intDebt = 0;
-    // 格攻净现金（2026-09 口径升级）：分子改加权类现金（交易性×0.7/应收票据×0.4/其他流动
+    // 格攻净现金（2026-09 口径升级）：分子改加权类现金（交易性×1/应收票据×0.4/其他流动
     // 非存款×0.3、附注闭合才采信的定期存款×1.0、受限剔除），分母仍是有息负债——格雷厄姆
     // net-cash 原文的「现金＋有价证券−有息债」。旧口径只认货币资金一行，把存款/理财重的
     // 公司判成负净现金（603599 实例）。无交易性/票据/其他流动且无附注时与旧口径逐位相同。
@@ -3252,7 +3252,7 @@
   // 故展示名跟着第三项字段是否命中变；附注为空的分项不参与折算也不展示。
   var NET_CASH_W = [
     ['avail', '货币资金', 1, 'restricted'],
-    ['fin', '交易性金融资产', 0.7],
+    ['fin', '交易性金融资产', 1],
     ['notes', '应收票据', 0.4],
     ['otherNonDep', '其他流动资产', 0.3, 'termDeposit'],
     ['termDeposit', '定期存款', 1]
@@ -3318,7 +3318,7 @@
     return v == null ? 0 : v;
   }
 
-  // 加权类现金：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
+  // 加权类现金：可用货币资金×1.0 ＋ 交易性金融资产×1.0 ＋ 应收票据×0.4
   // ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0（附注闭合才采信、存款夹在科目内、
   // 受限按 0 折）。行缺或货币资金缺 → null；其余科目缺按 0 折入。
   // priceReferences（最新一期）与 valueScores 格攻净现金（年报行）共用这一条折算。
@@ -3331,7 +3331,7 @@
       dep: note ? note.termDeposit : null, rst: note ? note.restrictedCash : null
     });
     function wgt(v, k) { return v != null ? v * k : 0; }
-    return wgt(p.avail, 1) + wgt(p.fin, 0.7) + wgt(p.notes, 0.4) + wgt(p.otherNonDep, 0.3) + wgt(p.termDeposit, 1);
+    return wgt(p.avail, 1) + wgt(p.fin, 1) + wgt(p.notes, 0.4) + wgt(p.otherNonDep, 0.3) + wgt(p.termDeposit, 1);
   }
 
   // 净现金/市值 代入计算式（多行文本，桌面 title 与移动端点击浮层共用）；无明细返回空串
@@ -3446,7 +3446,7 @@
       }
     }
     // 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
-    // 类现金保守折算：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
+    // 类现金保守折算：可用货币资金×1.0 ＋ 交易性金融资产×1.0 ＋ 应收票据×0.4
     //                ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0；
     // 定期存款与受限货币资金来自财报附注（PDF 解析），附注缺失时两者为空、式子退回旧口径；
     // 分子随财报更新（含季报），分母随行情快照，缺失科目按 0 折入
@@ -3469,7 +3469,7 @@
     function wgt(v, k) { return v != null ? v * k : 0; }
     // 货币资金缺失（银行/外资口径行）→ null，与 scoring.py _weighted_cash 的锚点一致
     var weightedCash = (cashV == null) ? null
-      : wgt(ncParts.avail, 1) + wgt(ncParts.fin, 0.7) + wgt(ncParts.notes, 0.4) + wgt(ncParts.otherNonDep, 0.3) + wgt(ncParts.termDeposit, 1);
+      : wgt(ncParts.avail, 1) + wgt(ncParts.fin, 1) + wgt(ncParts.notes, 0.4) + wgt(ncParts.otherNonDep, 0.3) + wgt(ncParts.termDeposit, 1);
     // 净现金三件套（列表三列用，本币）：加权类现金、有息负债、净现金=加权−有息。
     // 与 netCashRatio（减全部负债的宽口径比值）并存，口径差见说明书 §2.1。
     var intDebtLatest = lastBaAll ? intDebtOf(lastBaAll) : null;

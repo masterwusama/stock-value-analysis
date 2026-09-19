@@ -382,7 +382,7 @@ def value_scores(d, va):
     int_debt = ssum([st_debt, due1y, lt_debt, bond, lease])
     if int_debt is None:
         int_debt = 0.0
-    # 格攻净现金（2026-09 口径升级）：分子改加权类现金——交易性金融资产×0.7、应收票据×0.4、
+    # 格攻净现金（2026-09 口径升级）：分子改加权类现金——交易性金融资产×1.0、应收票据×0.4、
     # 其他流动资产非存款×0.3、附注闭合才采信的定期存款×1.0、受限货币资金剔除——分母仍是
     # 有息负债，即格雷厄姆 net-cash 原文的「现金＋有价证券−有息债」。旧口径分子只认货币资金
     # 一行，把存款/理财重的公司判成负净现金（603599 广信股份：账上近 80 亿类现金、窄口径
@@ -861,7 +861,7 @@ def _int_debt(row):
 
 
 def _weighted_cash(ba_row, note=None):
-    """加权类现金：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
+    """加权类现金：可用货币资金×1.0 ＋ 交易性金融资产×1.0 ＋ 应收票据×0.4
     ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0。
 
     定期存款/受限货币资金来自财报附注（note 字典），闭合才采信；存款不超过「其他流动资产」
@@ -886,7 +886,7 @@ def _weighted_cash(ba_row, note=None):
     def gw(v, k):
         return (v * k) if v is not None else 0.0
 
-    return (gw(avail_v, 1.0) + gw(fin_v, 0.7) + gw(notes_v, 0.4)
+    return (gw(avail_v, 1.0) + gw(fin_v, 1.0) + gw(notes_v, 0.4)
             + gw(other_nd, 0.3) + gw(dep_v, 1.0))
 
 
@@ -979,7 +979,7 @@ def price_references(d, va):
             if adj_net < RECURRING_MIN_RATIO * ttm_net:
                 eps_ttm = (eps_ttm * adj_net / ttm_net) if adj_net > 0 else None
     # 净现金/市值：最近一期财报（加权类现金 − 负债合计）÷ 快照总市值；
-    # 类现金保守折算：可用货币资金×1.0 ＋ 交易性金融资产×0.7 ＋ 应收票据×0.4
+    # 类现金保守折算：可用货币资金×1.0 ＋ 交易性金融资产×1.0 ＋ 应收票据×0.4
     #                ＋ 其他流动资产非存款部分×0.3 ＋ 定期存款×1.0；
     # 定期存款与受限货币资金来自财报附注（PDF 解析），附注缺失时两者为空、式子退回旧口径；
     # 分子随财报更新（含季报），分母随行情快照，缺失科目按 0 折入
