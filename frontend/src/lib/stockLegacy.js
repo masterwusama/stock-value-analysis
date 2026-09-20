@@ -4048,9 +4048,124 @@
     $('stock-sheet-body').innerHTML = html;
   }
 
+  /* ---------------- 列表页悬浮代入式（多行纯文本） ----------------
+   * 与详情页评分卡同一批现算函数（fraudAnalysis/managementAnalysis/cycleAnalysis/trapScore/
+   * growthScore/valueScore/recommendScore/valueScores），这里只把卡面压成多行文本——
+   * 数值口径不允许在这里出现第二套。which ∈ grahamAgg/grahamDef/schloss/buffett/
+   * fraud/mgmt/cycle/trap/growth/value/recommend。列表页动态 import 本库后按格调用。
+   */
+  function scoreCalcText(d, which) {
+    var L = [];
+    function pushStd(items) {
+      (items || []).forEach(function (x) {
+        if (x.na) { L.push('· ' + x.std + '：报表无此科目（不适用），不计分也不计入有效满分'); return; }
+        L.push('· ' + x.std + '：' + (x.val == null ? '-' : x.val) + '（阈值 ' + x.thr + '）→ ' +
+          (x.score == null ? '缺数据，不计分' : fmtNum(x.score) + ' / ' + x.max + ' 分'));
+      });
+    }
+    function bandLabel(bands, total) {
+      for (var i = 0; i < bands.length; i++) if (total <= bands[i].hi) return bands[i].label;
+      return bands[bands.length - 1].label;
+    }
+
+    if (which === 'fraud' || which === 'mgmt') {
+      var fm = which === 'fraud' ? fraudAnalysis(d) : managementAnalysis(d);
+      L.push((which === 'fraud' ? '造假分（红旗加权，越高越可疑）' : '管理分（越高越好）') +
+        '：' + (fm.total == null ? '-' : fmtNum(fm.total)));
+      L.push(fm.basis);
+      pushStd(fm.items);
+      return L.join('\n');
+    }
+
+    if (which === 'cycle') {
+      var ca = cycleAnalysis(d);
+      L.push('阶段一 · 周期强度 ' + (ca.cyclicalScore == null ? '-' : fmtNum(ca.cyclicalScore)) +
+        '（≥ 40 判为周期性；非周期性不打位置分）');
+      pushStd(ca.cyclicalItems);
+      if (ca.cyclical) {
+        L.push('阶段二 · 周期位置：' + (ca.total == null ? '-' : fmtNum(ca.total)) + '（越低越接近周期底部）');
+        L.push(ca.basis);
+        pushStd(ca.items);
+      }
+      return L.join('\n');
+    }
+
+    if (which === 'trap') {
+      var tp = trapScore(d);
+      L.push('价值陷阱分 T：' + (tp.total == null ? (tp.na ? '不适用' : '判不动') : fmtNum(tp.total) + '（' + tp.band.label + '）'));
+      if (tp.reason) { L.push(tp.reason); return L.join('\n'); }
+      L.push(tp.basis + '　证据合计 C = ' + fmtNum(tp.c) + '，可判 ' + tp.eff.evaluated + '/7 项（缺项按「没证据」计 0，不给分也不加罚）');
+      (tp.items || []).forEach(function (x) {
+        var tf = TRAP_VALUE_FMT[x.key] || fmtNum;
+        var st = x.bad === null ? '判不动计 0' : (x.bad ? '亮灯计 ' + x.weight : '未触发计 0');
+        L.push('· ' + x.label + '：' + (x.value == null ? '-' : tf(x.value)) + '，' + st + '（' + x.why + '）');
+      });
+      return L.join('\n');
+    }
+
+    if (which === 'growth' || which === 'value') {
+      var gv = which === 'growth' ? growthScore(d) : valueScore(d);
+      var gvf = which === 'growth' ? G_VALUE_FMT : V_VALUE_FMT;
+      var gvb = which === 'growth' ? G_BANDS : V_BANDS;
+      var nm = which === 'growth' ? '成长综合分 G' : '价值综合分 V';
+      if (gv.total == null && gv.reason) { L.push(nm + '：算不出（' + gv.reason + '，七项全部判不动）'); return L.join('\n'); }
+      L.push(nm + '：' + (gv.total == null ? '-' : fmtNum(gv.total) + '（' + bandLabel(gvb, gv.total) + '）'));
+      L.push(gv.basis + '　可判 ' + gv.eff.evaluated + '/7 项（分母固定 100 权重，缺项只压低分数、不重新归一）');
+      (gv.items || []).forEach(function (x) {
+        var gf = gvf[x.key] || fmtNum;
+        if (x.na || x.sc == null) {
+          L.push('· ' + x.label + '：判不动，不计分' + (x.why ? '（' + x.why + '）' : ''));
+          return;
+        }
+        L.push('· ' + x.label + '：' + (x.value == null ? '-' : gf(x.value)) + ' → 符合 ' +
+          Math.round(x.sc * 100) + '% × 权重 ' + x.weight + ' = ' + fmtNum(x.weight * x.sc) + ' 分' +
+          (x.why ? '（' + x.why + '）' : ''));
+      });
+      return L.join('\n');
+    }
+
+    if (which === 'recommend') {
+      var rv = valueScore(d), rg = growthScore(d);
+      var rf = fraudAnalysis(d).total, rt = trapScore(d);
+      var dip = interimDipYoy(d.indicators || []);
+      var rRec = recommendScore(rv.total, rg.total, rf, rt.total, dip);
+      L.push('综合推荐分 R = 0.6 × V + 0.4 × G（门槛外的合成，权重先验不拟合）');
+      L.push('输入：V ' + (rv.total == null ? '-' : fmtNum(rv.total)) + ' · G ' + (rg.total == null ? '-' : fmtNum(rg.total)) +
+        ' · 造假 ' + (rf == null ? '-' : fmtNum(rf)) + ' · 陷阱 ' + (rt.total == null ? (rt.na ? '不适用' : '判不动') : fmtNum(rt.total)) +
+        ' · 中报 dip ' + (dip == null ? '判不动' : (dip * 100).toFixed(0) + '%'));
+      L.push('门槛核查：造假 ≤ 40 ' + (rf == null ? '（判不动放行）' : rf <= R_FRAUD_GATE ? '✓' : '✗') +
+        ' · 陷阱 ≤ 20 ' + (rt.total == null ? '（不适用放行）' : rt.total <= R_TRAP_GATE ? '✓' : '✗') +
+        ' · 中报 dip > −70% ' + (dip == null ? '（判不动放行）' : dip > INTERIM_DIP_GATE ? '✓' : '✗'));
+      if (rRec.total == null) {
+        L.push('结论：无 R（' + (R_GATE_TEXT[rRec.gate] || rRec.gate) + '）——门槛外是「不过资格线」，不是 0 分');
+      } else {
+        L.push('＝ 0.6×' + fmtNum(rv.total) + ' + 0.4×' + fmtNum(rg.total) + ' = ' + fmtNum(rRec.total) +
+          '（' + bandLabel(R_BANDS, rRec.total) + '）');
+      }
+      if (dip != null && dip <= INTERIM_DIP_NOTE) {
+        L.push('⚠ 中报恶化：最新一期扣非（缺则净利）同比 ' + (dip * 100).toFixed(0) + '%。评分轴只吃年报，年报之后的恶化不进任何分。');
+      }
+      return L.join('\n');
+    }
+
+    // 四派：sc.basis 共享一条，逐派 eff（缺失/不适用）注在基准行尾
+    var va = valueAnalysis(d);
+    var sc = valueScores(d, va);
+    var one = sc[which];
+    if (!one) return '';
+    var eff = one.eff || {};
+    L.push(one.title + '：' + (one.total == null ? '-' : fmtNum(one.total) + ' / ' + (eff.max || 100)));
+    L.push(sc.basis + ((eff.miss || eff.na) ? '；⚠ ' +
+      [eff.miss ? eff.miss + ' 项数据缺失未计分' : '', eff.na ? eff.na + ' 项报表无此科目（不适用）' : '']
+        .filter(Boolean).join('，') + '，按有效满分 ' + eff.max + '/100 折算' : ''));
+    pushStd(one.items);
+    return L.join('\n');
+  }
+
   /* ---------------- 启动(已移交 Vue 组件) ---------------- */
 
   export { renderDetail, showDetail, state, valueAnalysis, valueScores, priceReferences,
+    scoreCalcText,
     netCashFormula, equityOf,
     cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
     trapScore, trapBandOf, TRAP_W, TRAP_CUT, TRAP_BANDS,

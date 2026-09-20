@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get } from '../api/client'
 import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
@@ -650,6 +650,91 @@ const heroGate = (s) => {
   if (!g) return ''
   return String(g).split('+').map((k) => HERO_GATE[k] || k).join('+')
 }
+// ---- 评分格悬浮代入式（桌面） ----
+// 悬停任一主观评价分，浮层给出该家该分的逐项代入过程。数值来自详情接口（与详情页同一份
+// 数据），计算走详情页同一套现算函数——stockLegacy.scoreCalcText 只做文本化，不另设口径，
+// 所以这里显示的过程与详情页评分卡逐字同源。库与数据都懒加载：列表首屏不带 3900 行的
+// legacy 包，单家详情按 hover 拉一次（LRU 缓存，同行 11 个格共用同一份）。
+const legacyMod = shallowRef(null)
+const detailCache = new Map()      // code → 详情响应，LRU 触顶先淘汰最旧
+const detailInflight = new Map()   // code → Promise：一行内 11 个格、连扫多行不重复发请求
+const tip = reactive({ show: false, x: 0, y: 0, text: '', loading: false })
+let tipToken = 0
+let tipTimer = null
+const TIP_WHICH = {
+  score_graham_agg: 'grahamAgg', score_graham_def: 'grahamDef',
+  score_schloss: 'schloss', score_buffett: 'buffett',
+  fraud: 'fraud', mgmt: 'mgmt', cycle: 'cycle',
+  trap: 'trap', growth: 'growth', value: 'value', recommend: 'recommend',
+}
+async function loadLegacy() {
+  if (!legacyMod.value) legacyMod.value = await import('../lib/stockLegacy.js')
+  return legacyMod.value
+}
+function fetchDetailForTip(code) {
+  if (detailCache.has(code)) {
+    const v = detailCache.get(code)
+    detailCache.delete(code); detailCache.set(code, v)   // touch：命中也挪到队尾
+    return Promise.resolve(v)
+  }
+  if (detailInflight.has(code)) return detailInflight.get(code)
+  const p = get(`/securities/${code}`).then((j) => {
+    if (detailCache.size >= 24) detailCache.delete(detailCache.keys().next().value)
+    detailCache.set(code, j)
+    detailInflight.delete(code)
+    return j
+  }).catch((e) => { detailInflight.delete(code); throw e })
+  detailInflight.set(code, p)
+  return p
+}
+function scoreHover(evt, s, key) {
+  if (isMobile.value) return            // 触屏无悬停：移动卡片本就整卡可点进详情
+  if (!TIP_WHICH[key]) return
+  hideScoreTip()
+  const my = ++tipToken
+  tip.x = evt.clientX; tip.y = evt.clientY
+  // 160ms 悬停意图延迟：快速扫过一行时对路过的每个格都不发请求
+  tipTimer = setTimeout(async () => {
+    tip.show = true; tip.loading = true; tip.text = ''
+    try {
+      const [legacy, d] = await Promise.all([loadLegacy(), fetchDetailForTip(s.code)])
+      if (my !== tipToken) return       // 等待期间已移到别的格子：这次结果作废
+      let text = legacy.scoreCalcText(d, TIP_WHICH[key])
+      // Wind 增强档下格子里是叠加分，代入式是基础分——补一行换算，两边对得上
+      if ((key === 'fraud' || key === 'mgmt') && windMode.value && s.wind_hit && s[key] != null) {
+        const dl = (key === 'fraud' ? s.wind_fraud_delta : s.wind_mgmt_delta) || 0
+        text += '\nWind 事件档显示：基础 ' + score(s[key]) + (dl >= 0 ? ' ＋ 事件增量 +' : ' ＋ 事件增量 ')
+          + score(dl) + ' → ' + score(dispScore(s, key)) + '（本列排序与筛选同此口径）'
+      }
+      tip.text = text || '该分暂无可展示的计算过程'
+      tip.loading = false
+    } catch (e) {
+      if (my === tipToken) {
+        tip.loading = false
+        tip.text = '代入式加载失败（' + ((e && e.message) || e) + '），稍后重试'
+      }
+    }
+  }, 160)
+}
+function hideScoreTip() {
+  tipToken++
+  if (tipTimer) { clearTimeout(tipTimer); tipTimer = null }
+  tip.show = false
+}
+// 视口跨过移动断点时表格与卡片互换，桌面悬浮格随之消失——浮层还开着就成了孤儿
+watch(isMobile, () => hideScoreTip())
+// 浮层定位：先按鼠标右下放；渲染后量实际高度，底部出屏就整体上移，还放不下就贴顶
+// （max-height 72vh + 内部滚动兜底）。「加载中」短文案与正式长文本各量一次。
+const tipEl = ref(null)
+const tipStyle = ref({ left: '0px', top: '0px' })
+watch(() => [tip.show, tip.text, tip.loading, tip.x, tip.y], async () => {
+  await nextTick()
+  const h = tipEl.value ? tipEl.value.offsetHeight : 0
+  const left = Math.max(8, Math.min(tip.x + 14, window.innerWidth - 690))
+  let top = tip.y + 16
+  if (top + h > window.innerHeight - 8) top = window.innerHeight - 8 - h
+  tipStyle.value = { left: left + 'px', top: Math.max(8, top) + 'px' }
+})
 // 排序联动：当前排序字段在本行的值（挂在卡片第一层，折叠的指标排序时也能看到排序依据）
 const SORT_VAL_FMT = {
   price: (s) => fmt(s.price) + (s.market !== 'A' ? s.currency : ''),
@@ -1041,17 +1126,18 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td>{{ fmt(s.pe_ttm) }}</td>
             <td>{{ fmt(s.pb) }}</td>
             <td>{{ yi(s.market_cap) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
-            <td class="gedge">{{ score(s.score_graham_agg) }}</td>
-            <td>{{ score(s.score_graham_def) }}</td>
-            <td>{{ score(s.score_schloss) }}</td>
-            <td>{{ score(s.score_buffett) }}</td>
-            <td class="gedge" :title="windTip(s, 'fraud', FRAUD_TIP)">{{ score(dispScore(s, 'fraud')) }}</td>
-            <td :title="windTip(s, 'mgmt', MGMT_TIP)">{{ score(dispScore(s, 'mgmt')) }}</td>
-            <td>{{ score(s.cycle) }}</td>
-            <td :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></td>
-            <td :class="'sc-' + vGrade(s)" :title="vTitle(s)">{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></td>
-            <td :class="'sc-' + gGrade(s)" :title="gTitle(s)">{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></td>
-            <td :class="'sc-' + rGrade(s)" :title="rTitle(s)">{{ score(s.recommend) }}</td>
+            <!-- 主观评价分 11 格：悬停给逐项代入式浮层（scoreHover），原生 title 让位给浮层 -->
+            <td class="gedge calc" @mouseenter="scoreHover($event, s, 'score_graham_agg')" @mouseleave="hideScoreTip">{{ score(s.score_graham_agg) }}</td>
+            <td class="calc" @mouseenter="scoreHover($event, s, 'score_graham_def')" @mouseleave="hideScoreTip">{{ score(s.score_graham_def) }}</td>
+            <td class="calc" @mouseenter="scoreHover($event, s, 'score_schloss')" @mouseleave="hideScoreTip">{{ score(s.score_schloss) }}</td>
+            <td class="calc" @mouseenter="scoreHover($event, s, 'score_buffett')" @mouseleave="hideScoreTip">{{ score(s.score_buffett) }}</td>
+            <td class="gedge calc" @mouseenter="scoreHover($event, s, 'fraud')" @mouseleave="hideScoreTip">{{ score(dispScore(s, 'fraud')) }}</td>
+            <td class="calc" @mouseenter="scoreHover($event, s, 'mgmt')" @mouseleave="hideScoreTip">{{ score(dispScore(s, 'mgmt')) }}</td>
+            <td class="calc" @mouseenter="scoreHover($event, s, 'cycle')" @mouseleave="hideScoreTip">{{ score(s.cycle) }}</td>
+            <td class="calc" :class="'sc-' + trapGrade(s)" @mouseenter="scoreHover($event, s, 'trap')" @mouseleave="hideScoreTip">{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></td>
+            <td class="calc" :class="'sc-' + vGrade(s)" @mouseenter="scoreHover($event, s, 'value')" @mouseleave="hideScoreTip">{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></td>
+            <td class="calc" :class="'sc-' + gGrade(s)" @mouseenter="scoreHover($event, s, 'growth')" @mouseleave="hideScoreTip">{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></td>
+            <td class="calc" :class="'sc-' + rGrade(s)" @mouseenter="scoreHover($event, s, 'recommend')" @mouseleave="hideScoreTip">{{ score(s.recommend) }}</td>
             <td class="c-liq gedge" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
                 :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
             <td :title="WCASH_TIP">{{ yi(s.weighted_cash) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
@@ -1098,6 +1184,12 @@ const REF_COLS = COLS.filter((c) => c.ref)
         <input v-model.number="jump" type="number" min="1" :max="totalPages()" @keyup.enter="doJump">
         <button @click="doJump">GO</button></label>
     </div>
+
+    <!-- 评分代入式浮层：Teleport 到 body，躲开表格容器的 overflow 裁剪 -->
+    <Teleport to="body">
+      <div v-if="tip.show" ref="tipEl" class="calc-pop" :class="{ 'is-loading': tip.loading }" :style="tipStyle">{{
+        tip.loading ? '代入式计算中…' : tip.text }}</div>
+    </Teleport>
   </div>
 </template>
 
@@ -1473,6 +1565,29 @@ table.grid-list .ind {
   .pager .psize { margin-left: 0; }
   .pager .psize select, .pager .psize input { min-height: 32px; }
 }
+
+/* ---- 评分代入式浮层（桌面悬停） ----
+   Teleport 到 body 后仍是本组件模板编译产物（带 data-v 属性），scoped 选择器生效。
+   深底浮层与行内小字区分开；pre-line 按换行符成段，逐项一行。 */
+.calc-pop {
+  position: fixed;
+  z-index: 90;
+  max-width: 660px;
+  max-height: 72vh;
+  overflow: auto;
+  white-space: pre-line;
+  font-size: 12px;
+  line-height: 1.7;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #232936;
+  color: #e8ecf3;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.calc-pop.is-loading { color: #aeb8c6; font-style: italic; }
+/* 可悬停出代入式的分数格：help 光标提示「这里有过程可看」 */
+.calc { cursor: help; }
 </style>
 
 <style scoped>
