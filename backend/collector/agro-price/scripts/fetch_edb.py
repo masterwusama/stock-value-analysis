@@ -139,38 +139,51 @@ CATEGORIES = [
 ]
 
 
-def call_wind(codes, begin, end):
-    """一次 edb_data 调用，逗号批量传指标代码；返回 code->metric dict。
+# 本域调用契约被 Wind skill 自更新翻过两次，两代都记下来按序试，下次再翻不用改代码：
+#   现行（2026-09-12 夜里翻回）：economic_data / query_economic_indicator_data，
+#     指标代码走 question（逗号分隔，skill 参考文档明确支持）、beginDate/endDate
+#   9-9~9-12 那代：edb_data / economic_get_indicator_series / metricCodes/startDate
+# 返回结构两代一致（metrics[].meta + date[] + value[]）。ROUTE_ERROR（路由/工具名
+# 对不上）才换下一代重试；backend_error（积分不足等）不是契约问题，原样抛出。
+EDB_CALLS = (
+    ("economic_data", "query_economic_indicator_data", "question", "beginDate"),
+    ("edb_data", "economic_get_indicator_series", "metricCodes", "startDate"),
+)
 
-    2026-09-09 Wind skill 自更新后本域改名：server_type `economic_data`→`edb_data`、
-    工具 `query_economic_indicator_data`→`economic_get_indicator_series`、入参
-    `question/beginDate/endDate`→`metricCodes/startDate/endDate`（返回结构不变，
-    仍是 metrics[].meta + date[] + value[]）。旧 server_type 现在直接 ROUTE_ERROR。
-    """
-    params = {"metricCodes": ",".join(codes), "startDate": begin, "endDate": end}
-    suffix = "edb-%d" % int(dt.datetime.now().timestamp())
-    pf = os.path.join("scripts", "request-%s.json" % suffix)
-    pfull = os.path.join(SKILL_DIR, pf.replace("/", os.sep))
-    with io.open(pfull, "w", encoding="utf-8") as f:
-        f.write(json.dumps(params, ensure_ascii=False))
-    try:
-        r = subprocess.run(
-            ["node", CLI, "call", "edb_data",
-             "economic_get_indicator_series", "@" + pf],
-            cwd=SKILL_DIR, capture_output=True, text=True,
-            encoding="utf-8", timeout=180,
-        )
-    finally:
+
+def call_wind(codes, begin, end):
+    """一次 EDB 调用，逗号批量传指标代码；返回 code->metric dict。两代契约按序试。"""
+    env, last_env = None, None
+    for i, (server, tool, code_key, begin_key) in enumerate(EDB_CALLS):
+        params = {code_key: ",".join(codes), begin_key: begin, "endDate": end}
+        suffix = "edb-%d-%d" % (int(dt.datetime.now().timestamp()), i)
+        pf = os.path.join("scripts", "request-%s.json" % suffix)
+        pfull = os.path.join(SKILL_DIR, pf.replace("/", os.sep))
+        with io.open(pfull, "w", encoding="utf-8") as f:
+            f.write(json.dumps(params, ensure_ascii=False))
         try:
-            os.remove(pfull)
-        except OSError:
-            pass
-    out = (r.stdout or "").strip()
-    if not out:
-        raise RuntimeError("wind empty stdout; stderr=%s" % (r.stderr or "")[:300])
-    env = json.loads(out)
-    if not env.get("content"):
-        raise RuntimeError("wind envelope: %s" % json.dumps(env, ensure_ascii=False)[:300])
+            r = subprocess.run(
+                ["node", CLI, "call", server, tool, "@" + pf],
+                cwd=SKILL_DIR, capture_output=True, text=True,
+                encoding="utf-8", timeout=180,
+            )
+        finally:
+            try:
+                os.remove(pfull)
+            except OSError:
+                pass
+        out = (r.stdout or "").strip()
+        if not out:
+            raise RuntimeError("wind empty stdout; stderr=%s" % (r.stderr or "")[:300])
+        env = json.loads(out)
+        if env.get("content"):
+            break
+        if env.get("code") != "ROUTE_ERROR":
+            raise RuntimeError("wind envelope: %s" % json.dumps(env, ensure_ascii=False)[:300])
+        last_env = env
+        print("[fetch] %s/%s ROUTE_ERROR，换备选契约重试" % (server, tool), flush=True)
+    else:
+        raise RuntimeError("wind envelope: %s" % json.dumps(last_env, ensure_ascii=False)[:300])
     payload = json.loads(env["content"][0]["text"])
     result = {}
     for mt in payload.get("metrics", []):
