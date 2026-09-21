@@ -264,7 +264,9 @@ def main():
 
     r5 = r5_gz2000()
     state, ind, payload = build(quotes, uni, sizes, r5)
-    prev_state = history[-1]["state"] if history else None
+    # 排除当日自身:--force 重跑最新一天时不能自引用成 prev_state
+    prior = [h for h in history if h["date"] != date_s]
+    prev_state = prior[-1]["state"] if prior else None
     trans = TRANS.get(state, TRANS["普通"])
     trap = prev_state == "极弱" and state == "普通"
     md = render_md(date_s, state, prev_state, ind, r5, trans, trap, payload)
