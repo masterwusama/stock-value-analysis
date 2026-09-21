@@ -59,6 +59,8 @@ from app.models import (
     QuoteDaily,
     ScoreDaily,
     Security,
+    SentimentDaily,
+    SentimentSector,
     ShareAction,
     MainBusiness,
     ValuationPctile,
@@ -68,6 +70,7 @@ from app.models import (
 
 DATA_DIR = LEGACY_DATA_DIR / "data"
 AGRO_DIR = LEGACY_DATA_DIR / "agro-price" / "data"
+SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
 
 # Wind 事件类型 → etype
 EVENT_TYPE_MAP = {
@@ -869,6 +872,74 @@ def import_agro(db, stats):
             stats["agro_product_stale_deleted"] += 1
 
 
+def import_sentiment(db, stats):
+    """sentiment/{daily,history}.json → sentiment_daily / sentiment_sector。
+
+    daily.json 只存最新一天的全量,history.json 是逐日摘要——两者都灌:daily 负责
+    "今天"的明细 upsert,history 负责补齐历史状态序列(换机器/清库后历史状态不丢;
+    但名单与板块明细只在 daily 覆盖到的那天有,那部分不回溯)。
+    """
+    def _upsert_daily(row):
+        # daily.json 带 indicators 包装,history.json 是平铺字段——统一取平铺值
+        ind = row.get("indicators") or {}
+        vals = dict(
+            trade_date=parse_date(row["date"]), state=row["state"],
+            prev_state=row.get("prev_state"),
+            red_rate=ind.get("red_rate", row.get("red_rate")),
+            zt_count=ind.get("zt_count", row.get("zt")),
+            zha_count=ind.get("zha_count"),
+            zha_rate=ind.get("zha_rate", row.get("zha_rate")),
+            dt_count=ind.get("dt_count", row.get("dt")),
+            yz_dt_count=ind.get("yz_dt_count", row.get("yz_dt")),
+            r5=row.get("r5"), transitions=row.get("transitions"),
+            trap=bool(row.get("trap", False)),
+            report={k: row[k] for k in ("sectors", "candidates", "blacklist",
+                                        "watch_dt", "premium_hint", "report_md") if k in row},
+            updated_at=datetime.now(),
+        )
+        db.execute(mysql_insert(SentimentDaily).values(**vals)
+                   .on_duplicate_key_update(**{k: v for k, v in vals.items()
+                                               if k != "trade_date"}))
+
+    daily_p = SENTIMENT_DIR / "daily.json"
+    if daily_p.exists():
+        daily = json.loads(daily_p.read_text(encoding="utf-8"))
+        _upsert_daily(daily)
+        stats["sentiment_daily"] += 1
+        d = parse_date(daily["date"])
+        keep = set()
+        for e in daily.get("sectors", []):
+            db.execute(mysql_insert(SentimentSector).values(
+                trade_date=d, industry=e["industry"],
+                limit_count=e.get("limit_count"),
+                share_of_industry=e.get("share_of_industry"),
+                amount_yi=e.get("amount_yi"),
+            ).on_duplicate_key_update(
+                limit_count=e.get("limit_count"),
+                share_of_industry=e.get("share_of_industry"),
+                amount_yi=e.get("amount_yi"),
+            ))
+            stats["sentiment_sector"] += 1
+            keep.add(e["industry"])
+        # 当日板块明细是全量重写口径:源里消失的行业跟着删,避免残留
+        for (ind_name,) in db.execute(text(
+                "SELECT industry FROM sentiment_sector WHERE trade_date = :d"),
+                {"d": d}).fetchall():
+            if ind_name not in keep:
+                db.execute(text("DELETE FROM sentiment_sector "
+                                "WHERE trade_date = :d AND industry = :i"),
+                           {"d": d, "i": ind_name})
+                stats["sentiment_sector_stale_deleted"] += 1
+    hist_p = SENTIMENT_DIR / "history.json"
+    if hist_p.exists():
+        have = {r[0] for r in db.execute(select(SentimentDaily.trade_date)).fetchall()}
+        for h in json.loads(hist_p.read_text(encoding="utf-8")):
+            if parse_date(h["date"]) in have:
+                continue
+            _upsert_daily(h)
+            stats["sentiment_daily"] += 1
+
+
 def import_edb(db, stats):
     """edb.json → edb_indicator / edb_value。"""
     src = json.loads((AGRO_DIR / "edb.json").read_text(encoding="utf-8"))
@@ -1117,6 +1188,8 @@ def main():
                     help="只重算 score_daily（评分算法变更后单刷分），不碰其他业务表")
     ap.add_argument("--only-zygc", action="store_true",
                     help="只回灌 data/zygc/ 主营构成（fetch_zygc 采集后手动跑）")
+    ap.add_argument("--only-sentiment", action="store_true",
+                    help="只回灌 data/sentiment/ 情绪日报（fetch_sentiment 采集后跑）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1130,6 +1203,8 @@ def main():
         args.no_clean = True
     if args.only_zygc:
         args.no_clean = True
+    if args.only_sentiment:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
@@ -1140,7 +1215,9 @@ def main():
         if not args.no_clean:
             clean_tables(db)
             print("已清空业务表")
-        if args.only_zygc:
+        if args.only_sentiment:
+            import_sentiment(db, stats)
+        elif args.only_zygc:
             import_zygc(db, stats)
         elif args.only_scores:
             import_scores_only(db, stats, quiet=args.quiet)
@@ -1155,6 +1232,7 @@ def main():
             import_valuation(db, stats)
             import_actions(db, stats)
             import_zygc(db, stats)
+            import_sentiment(db, stats)
         else:
             import_companies(db, stats, quiet=args.quiet)
             import_events(db, stats)
@@ -1163,6 +1241,7 @@ def main():
             import_valuation(db, stats)
             import_actions(db, stats)
             import_zygc(db, stats)
+            import_sentiment(db, stats)
         held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),

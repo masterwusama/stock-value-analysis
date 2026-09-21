@@ -16,6 +16,8 @@ from app.models.entities import (  # noqa: F401
     QuoteDaily,
     ScoreDaily,
     Security,
+    SentimentDaily,
+    SentimentSector,
     ShareAction,
     MainBusiness,
     ValuationPctile,
@@ -45,5 +47,7 @@ __all__ = [
     "AgroPrice",
     "EdbIndicator",
     "EdbValue",
+    "SentimentDaily",
+    "SentimentSector",
     "EtlJobLog",
 ]

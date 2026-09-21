@@ -88,6 +88,9 @@ JOBS = {
     # 完全市场（70 批 × 2 = 140 次 > 日预算），靠 data/valuation/state.json 记游标跨天续跑，
     # 所以是独立 job、每天固定跑一次，不并进 stock/deep。
     "valuation": [(SCRIPTS, "fetch_valuation.py")],
+    # sentiment：盘后情绪日报（腾讯批量快照+东财榜单池，约 2~4 分钟，不碰 Wind）。
+    # 15:35 独立时段：收盘(15:00)之后、stock(16:05)之前；休市与当日去重采集器自兜
+    "sentiment": [(SCRIPTS, "fetch_sentiment.py")],
     "import": [],
 }
 
@@ -114,6 +117,8 @@ JOB_DEFAULTS = {
 # 深抓回灌全量（财务期表与报告都要重写）
 IMPORT_DEFAULTS = {
     "stock": ["--only-fresh", "26"],
+    # 情绪日报只灌自己两张表;不带这杆会跑成全量导入(实测多花 5 分钟)
+    "sentiment": ["--only-sentiment"],
 }
 
 
@@ -133,6 +138,7 @@ SCRIPT_TIMEOUT = {
     "valuation": 2 * 3600,
     "import": 2 * 3600,
     "edb": 3600,
+    "sentiment": 1800,
     "agro": 2 * 3600,
 }
 

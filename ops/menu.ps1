@@ -12,7 +12,7 @@
 # 轮转都只有一份口径，菜单不另起一套。
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('','daily','stock','deep','agro','edb','valuation','events','import')]
+    [ValidateSet('','daily','stock','deep','agro','edb','valuation','events','import','sentiment')]
     [string]$Job,
     [switch]$Watch,
     [switch]$NoWatch,
@@ -25,6 +25,7 @@ param(
 # 选它要先二次确认（积分是日预算制，见 docs\使用说明书.md §8.1）。
 $Meta = [ordered]@{
     stock     = @{ Desc = '全市场行情快照（腾讯批量估值）+ 定增/回购明细'; Est = '≈3 分钟'; Wind = $false }
+    sentiment = @{ Desc = '情绪日报：状态机/板块效应/候选池（腾讯快照+东财榜单池）'; Est = '2~4 分钟'; Wind = $false }
     agro      = @{ Desc = '生意社/中农立华 6 个产品价格';         Est = '20~40 分钟';  Wind = $false }
     deep      = @{ Desc = '全市场财务深抓（四表/分红/报告/评分）'; Est = '3~5 小时';    Wind = $false }
     import    = @{ Desc = '只回灌：JSON 工作目录 → MySQL';        Est = '≈3 分钟';     Wind = $false }

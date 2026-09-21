@@ -507,6 +507,44 @@ class EdbValue(Base):
     val: Mapped[float | None] = mapped_column(Numeric(24, 6))
 
 
+class SentimentDaily(Base):
+    """情绪日报:盘后市场情绪状态/转移预案/板块效应与三名单(采集:fetch_sentiment.py)。
+
+    状态机 极弱>回暖>极强>普通;阈值与转移矩阵为 2024-01~2026-09 校准,口径见
+    docs/使用说明书.md「情绪日报」。candidates/blacklist/watch_dt/sectors 全量进
+    report JSON——单日一条,明细不拆表,查询只走 trade_date。
+    """
+
+    __tablename__ = "sentiment_daily"
+
+    trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    state: Mapped[str] = mapped_column(String(8), nullable=False)
+    prev_state: Mapped[str | None] = mapped_column(String(8))
+    red_rate: Mapped[float | None] = mapped_column(Double)      # 0~1,涨家数占比
+    zt_count: Mapped[int | None] = mapped_column(Integer)       # 涨停收盘家数
+    zha_count: Mapped[int | None] = mapped_column(Integer)      # 盘中触板收盘未封
+    zha_rate: Mapped[float | None] = mapped_column(Double)
+    dt_count: Mapped[int | None] = mapped_column(Integer)       # 跌停收盘家数
+    yz_dt_count: Mapped[int | None] = mapped_column(Integer)    # 一字跌停(高=低)
+    r5: Mapped[float | None] = mapped_column(Double)            # 国证2000 五日累计
+    transitions: Mapped[dict | None] = mapped_column(JSON)      # P(明日x|今日)
+    trap: Mapped[bool | None] = mapped_column(Boolean)          # 昨极弱今普通=陷阱日
+    report: Mapped[dict | None] = mapped_column(JSON)           # 三名单+板块明细全量
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class SentimentSector(Base):
+    """情绪日报·板块效应明细:同行业涨停达双门槛(≥5家且≥该行业成分2%)。"""
+
+    __tablename__ = "sentiment_sector"
+
+    trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
+    industry: Mapped[str] = mapped_column(String(128), primary_key=True)
+    limit_count: Mapped[int | None] = mapped_column(Integer)
+    share_of_industry: Mapped[float | None] = mapped_column(Double)
+    amount_yi: Mapped[float | None] = mapped_column(Double)
+
+
 class EtlJobLog(Base):
     """采集任务运行日志(替代 GitHub Actions 运行记录页)。"""
 

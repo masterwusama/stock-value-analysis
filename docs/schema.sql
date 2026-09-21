@@ -166,18 +166,6 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
-
-CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
-
-CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
-
-CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
-
-CREATE INDEX idx_list_value ON score_daily (trade_date, value);
-
-CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
-
 CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
 
 CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
@@ -187,6 +175,18 @@ CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
+
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+
+CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
+
+CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
+
+CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
+
+CREATE INDEX idx_list_value ON score_daily (trade_date, value);
+
+CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -300,9 +300,9 @@ CREATE TABLE share_action (
 	PRIMARY KEY (sid, kind, src_id)
 );
 
-CREATE INDEX idx_action_date ON share_action (kind, issue_date);
-
 CREATE INDEX idx_action_sid_kind ON share_action (sid, kind, notice_date);
+
+CREATE INDEX idx_action_date ON share_action (kind, issue_date);
 
 CREATE TABLE agro_product (
 	product_id VARCHAR(64) NOT NULL, 
@@ -341,6 +341,33 @@ CREATE TABLE edb_value (
 	data_date DATE NOT NULL, 
 	val NUMERIC(24, 6), 
 	PRIMARY KEY (edb_code, data_date)
+);
+
+CREATE TABLE sentiment_daily (
+	trade_date DATE NOT NULL, 
+	state VARCHAR(8) NOT NULL, 
+	prev_state VARCHAR(8), 
+	red_rate DOUBLE, 
+	zt_count INTEGER, 
+	zha_count INTEGER, 
+	zha_rate DOUBLE, 
+	dt_count INTEGER, 
+	yz_dt_count INTEGER, 
+	r5 DOUBLE, 
+	transitions JSON, 
+	trap BOOL, 
+	report JSON, 
+	updated_at DATETIME, 
+	PRIMARY KEY (trade_date)
+);
+
+CREATE TABLE sentiment_sector (
+	trade_date DATE NOT NULL, 
+	industry VARCHAR(128) NOT NULL, 
+	limit_count INTEGER, 
+	share_of_industry DOUBLE, 
+	amount_yi DOUBLE, 
+	PRIMARY KEY (trade_date, industry)
 );
 
 CREATE TABLE etl_job_log (
