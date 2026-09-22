@@ -236,12 +236,33 @@ def build(quotes, uni, sizes, r5, pool_zt=None):
     return state, ind, payload
 
 
-def r5_gz2000():
-    """国证2000 五日累计 = 课程口径的"平均股价温度"。"""
+def r5_gz2000(snap_date=None):
+    """国证2000 五日累计 = 课程口径的"平均股价温度"。
+
+    新浪日频在收盘后有延迟(实测 15:35 仍无当日数据),拿最新一根直接算等于
+    用昨天的温度判今天(2026-09-22 实踩:9/21、9/22 两天 R5 同为 +4.30%)。
+    因此:双源轮询,最新日期必须等于快照日;都不行就用腾讯实时快照的指数
+    现价(15:00 后即收盘价)补最后一根,快照时间戳还对不上才报错。
+    """
     import akshare as ak
+    need = snap_date.replace("-", "") if snap_date else None
+    for fetch in (lambda: ak.stock_zh_index_daily(symbol="sz399303"),
+                  lambda: ak.stock_zh_index_daily_tx(symbol="sz399303")):
+        try:
+            d = fetch()
+            dates = d["date"].astype(str).str.replace("-", "")
+            if need is None or dates.iloc[-1] == need:
+                c = d["close"].astype(float).tolist()
+                return c[-1] / c[-6] - 1
+        except Exception:  # noqa: BLE001 单源挂了换下一个
+            continue
+    r = _get("https://qt.gtimg.cn/q=sz399303", retries=2)
+    f = r.text.split('="')[1].split("~")
+    if need and f[30][:8] != need:
+        raise RuntimeError(f"指数数据落后:最新{f[30][:8]}≠快照{need},R5 拒绝用旧值")
     d = ak.stock_zh_index_daily(symbol="sz399303")
     c = d["close"].astype(float).tolist()
-    return c[-1] / c[-6] - 1
+    return float(f[3]) / c[-6] - 1
 
 
 def render_md(date_s, state, prev_state, ind, r5, trans, trap, payload):
@@ -309,7 +330,7 @@ def main():
     pool_zt = fetch_pools(snap)["zt"]
     if pool_zt is not None:
         pool_zt.to_csv(OUT / f"pool_zt_{snap}.csv", index=False, encoding="utf-8-sig")
-    r5 = r5_gz2000()
+    r5 = r5_gz2000(snap)
     state, ind, payload = build(quotes, uni, sizes, r5, pool_zt)
     # 排除当日自身:--force 重跑最新一天时不能自引用成 prev_state
     prior = [h for h in history if h["date"] != date_s]
