@@ -32,6 +32,7 @@ backend/collector/data/universe_hk.json
 # 美股五大指数成分缓存（标普 CSV + Nasdaq WeightingData + 道指维基模板 + 东财全美股表，一次 --dump-us 可重生）
 backend/collector/data/universe_us.json
 backend/collector/data/.fetch.lock
+backend/collector/data/case/
 backend/collector/data/crawl_failed.json
 backend/collector/data/_index_backup_*
 backend/collector/data/*.err
