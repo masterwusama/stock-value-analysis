@@ -300,6 +300,7 @@ function ageTip(s) {
 // ST/退市风险预警（scoring._st_risk，同名 JS 镜像 stockLegacy.stRiskOf）：简称还没变色前，
 // 用上市规则的触发要件提前亮牌。⚠ 琥珀=关注（1），红=高危（2）；旗语文案与后端规则一一对应
 const ST_FLAG_TEXT = {
+  case: '证监会立案调查进行中（近 2 年有本公司立案告知书，其后未见行政处罚决定书——撤案/结案公告巨潮几乎不发，只能判「未见公开落地」；双创财务类豁免期对立案不适用，立案走的是规范类/重大违法通道）',
   loss_rev: '利润/扣非孰低为负，且营业收入低于退市线（*ST 财务类要件原文；主板线 3 亿、双创 1 亿、北交 0.5 亿）',
   loss_rev_near: '亏损且营业收入不足退市线的 2 倍（贴近 *ST 财务类要件，一份年报的距离）',
   debt90: '资产负债率 > 90%（金融业除外——银行保险的高杠杆是行业结构，不是恶化信号）',
@@ -308,11 +309,12 @@ const ST_FLAG_TEXT = {
 function stTip(s) {
   if (!s.st_risk) return ''
   const flags = (s.st_flags || '').split(',').filter((k) => ST_FLAG_TEXT[k]).map((k) => '· ' + ST_FLAG_TEXT[k])
+  const hasCase = (s.st_flags || '').includes('case')
   const lv = s.st_risk >= 2
-    ? '高危：亏损＋营收已低于退市线，即 *ST 财务类触发要件'
+    ? (hasCase ? '高危：证监会立案进行中——立案→行政处罚→重大违法是最直接的 *ST 通道' : '高危：亏损＋营收已低于退市线，即 *ST 财务类触发要件')
     : '关注：已出现滑向 ST/退市警示的信号'
   return `ST/退市风险预警 · ${lv}\n${flags.join('\n')}\n`
-    + '要件按交易所上市规则设定（非拟合分）；双创未盈利上市满 4 个完整会计年度前按豁免降为关注。'
+    + '要件按交易所上市规则设定（非拟合分）；双创未盈利上市满 4 个完整会计年度前财务类按豁免降为关注（立案旗不受豁免）。'
     + '已有 ⚑（硬门槛）的是已发生的定性事实，与本预警（尚在下滑通道）互为补充。'
 }
 // ST 风险三态筛选：'' 不限 / ex 排除有旗（无旗与港美股保留）/ on 只看有旗（仅 A 股）
@@ -925,7 +927,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <label class="cb" title="名称含 ST/*ST 的公司（退市风险与财务造假高发区）"><input type="checkbox" v-model="noSt" @change="applyFlt">剔除ST</label>
       <label class="cb" :title="GATE_TIP"><input type="checkbox" v-model="noGate" @change="applyFlt">排除门槛</label>
       <select v-model="stMode" @change="applyFlt" class="t"
-              title="ST/退市风险预警（简称变色前的下滑通道，要件按交易所上市规则：亏损+营收低于线、贴近线、负债率>90% 非金融、股价≤1.2 元）。排除=保留无旗与港美股；只看=有旗的 A 股（高危 2 与关注 1 都进，配排序选 st_risk 高危在前）。与「剔除ST/排除门槛」不同：那边是已发生的定性事实，这边是还没变色的预警">
+              title="ST/退市风险预警（简称变色前的下滑通道，要件按交易所上市规则：亏损+营收低于线、贴近线、负债率>90% 非金融、股价≤1.2 元、证监会立案进行中）。排除=保留无旗与港美股；只看=有旗的 A 股（高危 2 与关注 1 都进，配排序选 st_risk 高危在前）。与「剔除ST/排除门槛」不同：那边是已发生的定性事实，这边是还没变色的预警">
         <option value="">ST风险:不限</option>
         <option value="ex">排除ST风险</option>
         <option value="on">只看ST风险</option>

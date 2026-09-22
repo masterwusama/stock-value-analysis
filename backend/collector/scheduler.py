@@ -12,6 +12,8 @@
     农价     : 每天 09:05 / 21:05(生意社每周 2~4 次,一天 2 次足够)
     行业 EDB : 每周日 20:00——Wind 客户端量价序列(月/周频为主,周更足够)
     估值分位 : 每天 05:05——Wind PE/PB/PS 十年分位,单日 80 次调用,铺完一轮约 1.8 天
+    立案公告 : 每周日 10:05——巨潮全文检索「立案告知书/行政处罚决定书」(免 Wind),
+             灌 case_event 并单刷 score_daily,「正在立案」抬 ST 高危旗
     其余 Wind 侧(events job)仍不进调度:本机 Wind 客户端 CLI 要登录、按量耗积分,
              是自动链管不到的外部依赖(2026-09-03 09:05 的 agro 就被 fetch_edb 带成过 failed)。
 
@@ -84,10 +86,15 @@ def main():
     # 在采集器内部)。榜单池数据源只留 15 个交易日,中断超两周记得手动补跑
     s.add_job(run_job, "cron", args=["sentiment"], day_of_week="mon-fri",
               hour=15, minute=35, id="sentiment")
+    # 立案/处罚公告每周一次(周日 10:05,在 agro 早场之后、edb 之前,互不挤时段)。
+    # 立案是低频事件,周更足够;回灌 --only-case 顺带单刷 score_daily 把「正在立案」
+    # 抬成 ST 高危旗(旗发生在 score 行重建里,只灌 case_event 看不到)
+    s.add_job(run_job, "cron", args=["case"], day_of_week="sun",
+              hour=10, minute=5, id="case")
     print("[scheduler] 已注册: stock(周一~六 16:05/22:05 估值快照) "
           "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农价,不碰 Wind) "
           "edb(周日 20:00 行业量价) valuation(每天 05:05 估值分位,两个 Wind 任务按游标限额跑) "
-          "sentiment(交易日 15:35 情绪日报)。"
+          "sentiment(交易日 15:35 情绪日报) case(周日 10:05 立案/处罚公告)。"
           "Ctrl+C 退出",
           flush=True)
     s.start()

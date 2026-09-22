@@ -91,6 +91,10 @@ JOBS = {
     # sentiment：盘后情绪日报（腾讯批量快照+东财榜单池，约 2~4 分钟，不碰 Wind）。
     # 15:35 独立时段：收盘(15:00)之后、stock(16:05)之前；休市与当日去重采集器自兜
     "sentiment": [(SCRIPTS, "fetch_sentiment.py")],
+    # case：证监会立案/处罚公告（巨潮全文检索，全市场聚合翻页 ≈1 分钟，不碰 Wind）。
+    # 周更：立案是低频事件，且回答「正在立案」只看近 2 年的公告面；回灌走 --only-case
+    # （case_event + 单刷 score_daily——立案抬 ST 高危旗发生在 score 行重建里）
+    "case": [(SCRIPTS, "fetch_case.py")],
     "import": [],
 }
 
@@ -119,6 +123,8 @@ IMPORT_DEFAULTS = {
     "stock": ["--only-fresh", "26"],
     # 情绪日报只灌自己两张表;不带这杆会跑成全量导入(实测多花 5 分钟)
     "sentiment": ["--only-sentiment"],
+    # 立案公告：先灌 case_event 再单刷 score_daily（旗在 score 行重建里贴）
+    "case": ["--only-case"],
 }
 
 
@@ -140,6 +146,7 @@ SCRIPT_TIMEOUT = {
     "edb": 3600,
     "sentiment": 1800,
     "agro": 2 * 3600,
+    "case": 1800,   # 全量回填 28 页 ≈1 分钟，增量更少；放宽到与 sentiment 同档
 }
 
 

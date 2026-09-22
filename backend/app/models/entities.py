@@ -376,6 +376,30 @@ class WindEvent(Base):
     __table_args__ = (Index("idx_event_sid", "sid", "etype", "event_date"),)
 
 
+class CaseEvent(Base):
+    """证监会立案/处罚公告（巨潮全文检索，fetch_case → data/case → import_legacy --only-case）。
+
+    「正在立案」＝ self 主体、公告在近 2 年内、其后无 self 处罚决定书——import 侧把
+    它抬成 ST/退市风险预警的高危旗（scoring._st_risk 只见财报 JSON，公告面在落库时补）；
+    gate.case_filed 取近 3 年 self 立案（wind_event 只覆盖 16 家、立案分支原本是空的）。
+    subject 判定宁多标 related（子公司/控股股东/董事等主体词），漏标 self 比多标 related 更坏。
+    """
+
+    __tablename__ = "case_event"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(10))
+    sid: Mapped[int | None] = mapped_column(nullable=True)
+    kind: Mapped[str] = mapped_column(String(4), nullable=False)     # 立案 / 处罚
+    subject: Mapped[str] = mapped_column(String(8), nullable=False)  # self / related
+    announce_date: Mapped[date] = mapped_column(nullable=False)
+    title: Mapped[str | None] = mapped_column(String(256))
+    ann_id: Mapped[str] = mapped_column(String(16), unique=True)     # 巨潮公告编号，天然唯一键
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    __table_args__ = (Index("idx_case_code", "code", "kind", "announce_date"),)
+
+
 class WindHolder(Base):
     """Wind 股东结构(已透视:每家每期一行/名次一行)。
 

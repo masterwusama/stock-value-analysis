@@ -66,6 +66,7 @@ from app.models import (
     ValuationPctile,
     WindEvent,
     WindHolder,
+    CaseEvent,
 )
 
 DATA_DIR = LEGACY_DATA_DIR / "data"
@@ -380,6 +381,16 @@ def build_score_rows(index, trade_date, db):
         # 命中=True；可判但未命中=False；一个信号都判不了（未抓财务、无审计无权益）=NULL，
         # NULL 不等于通过，所以列表页默认不拿它排除任何标的
         row["gate"] = True if flags else (False if code in judgeable else None)
+    # ST/退市风险预警的公告面补旗：scoring._st_risk 只见财报 JSON，立案告知书是公告日
+    # 当天就爆的前兆（财务类要件要等年报），在落库这一步把「正在立案」抬成高危并补旗
+    # （case 排旗首，消费侧文案见前端 ST_FLAG_TEXT）。parity 校验的是 JSON 侧两份实现，
+    # 这里的 override 只活在 score_daily，不破坏两侧一致性。
+    ongoing = load_case_facts(db)
+    for code, row in score_rows.items():
+        if code in ongoing:
+            flags = [f for f in (row.get("st_flags") or "").split(",") if f and f != "case"]
+            row["st_flags"] = ",".join(["case"] + flags)
+            row["st_risk"] = max(row.get("st_risk") or 0, 2)
     return guard_score_batch(db, score_rows, trade_date)
 
 
@@ -527,11 +538,66 @@ def load_gate_facts(db):
     for code, market, name in db.execute(text(GATE_NAME_SQL)):
         if market == 'A':
             mark(code, 'risk_warning' if 'ST' in str(name or '').upper() else None)
+    # 立案（巨潮公告面，fetch_case → case_event）：wind_event 只覆盖 16 家、立案分支原本
+    # 是空的，换公告面补齐——近 3 年 self 主体收到立案告知书即 ⚑「违规/立案」（更早的
+    # 基本已了结，不追诉）。只有 self 算：子公司/控股股东被立案是另一回事，不挂公司旗
+    for (code,) in db.execute(text(
+            "SELECT DISTINCT code FROM case_event "
+            "WHERE kind='立案' AND subject='self' "
+            "AND announce_date >= CURRENT_DATE - INTERVAL 3 YEAR")):
+        mark(code, 'case_filed')
 
     order = {k: i for i, k in enumerate(GATE_FLAGS)}
     for flags in hits.values():
         flags.sort(key=lambda k: order.get(k, 99))
     return hits, judgeable
+
+
+def load_case_facts(db):
+    """case_event → 「正在立案」的 code 集：self 立案、近 2 年、其后无 self 处罚决定书。
+
+    「正在」的口径与边界见 fetch_case.py 文件头：撤案公告几乎不发，只能判「未见公开的
+    处罚落地」，不能判「确认在查」——消费侧旗语文案按这个措辞写。子公司/控股股东侧
+    （related）不进这里：那是别人的立案，进 ST 预警会把别人的事扣到公司头上。
+    """
+    rows = db.execute(text(
+        "SELECT code, kind, announce_date FROM case_event "
+        "WHERE subject='self' AND announce_date >= CURRENT_DATE - INTERVAL 2 YEAR")).all()
+    penalty_at: dict[str, object] = {}
+    for code, kind, day in rows:
+        if kind == "处罚":
+            penalty_at[code] = max(penalty_at.get(code, day), day)
+    ongoing = set()
+    for code, kind, day in rows:
+        if kind != "立案":
+            continue
+        if code in penalty_at and penalty_at[code] >= day:
+            continue  # 立案之后已有处罚决定书落地（是否构成重大违法看公告，这里不再抬旗）
+        ongoing.add(code)
+    return ongoing
+
+
+def import_case(db, stats):
+    """data/case/case_anns.json → case_event（整文件权威：先删后插，公告编号唯一）。"""
+    path = DATA_DIR / "case" / "case_anns.json"
+    if not path.exists():
+        stats["skipped_case"] += 1
+        return
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    anns = payload.get("anns") or []
+    sids = load_sid_map(db)
+    db.execute(text("DELETE FROM case_event"))
+    for a in anns:
+        sid = sids.get((a["code"], "A"))
+        if sid is None:
+            stats["skipped_case"] += 1
+            continue
+        db.execute(mysql_insert(CaseEvent).values(
+            code=a["code"], sid=sid, kind=a["kind"], subject=a["subject"],
+            announce_date=parse_date(a["date"]), title=a.get("title"),
+            ann_id=a["annId"], fetched_at=datetime.now()))
+        stats["case_event"] += 1
+    db.commit()
 
 
 def import_scores_only(db, stats, quiet=False):
@@ -1164,7 +1230,7 @@ def import_valuation(db, stats):
 
 
 TABLES = [
-    "wind_holder", "wind_event", "score_daily", "periodic_report", "dividend",
+    "wind_holder", "wind_event", "case_event", "score_daily", "periodic_report", "dividend",
     "fin_cashflow", "fin_balance", "fin_income", "fin_indicator", "fin_note",
     "quote_daily", "valuation_pctile", "share_action", "main_business",
     "security", "agro_price", "agro_product", "edb_value", "edb_indicator", "etl_job_log",
@@ -1198,6 +1264,9 @@ def main():
                     help="只回灌 data/zygc/ 主营构成（fetch_zygc 采集后手动跑）")
     ap.add_argument("--only-sentiment", action="store_true",
                     help="只回灌 data/sentiment/ 情绪日报（fetch_sentiment 采集后跑）")
+    ap.add_argument("--only-case", action="store_true",
+                    help="回灌 data/case/ 立案公告并单刷 score_daily（fetch_case 采集后跑——"
+                         "立案旗与 ST 高危补旗都发生在 score 行重建里，只灌 case_event 不刷分行看不到）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1213,12 +1282,15 @@ def main():
         args.no_clean = True
     if args.only_sentiment:
         args.no_clean = True
+    if args.only_case:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
     stats = _Stats()
     t0 = time.time()
-    mode = "only-scores" if args.only_scores else ("only-fresh" if args.only_fresh else "full")
+    mode = ("only-case" if args.only_case else "only-scores" if args.only_scores
+            else ("only-fresh" if args.only_fresh else "full"))
     try:
         if not args.no_clean:
             clean_tables(db)
@@ -1227,10 +1299,15 @@ def main():
             import_sentiment(db, stats)
         elif args.only_zygc:
             import_zygc(db, stats)
+        elif args.only_case:
+            # 先灌公告面，再刷分：立案旗与 ST 高危补旗都发生在 score 行重建（build_score_rows）里
+            import_case(db, stats)
+            import_scores_only(db, stats, quiet=args.quiet)
         elif args.only_scores:
             import_scores_only(db, stats, quiet=args.quiet)
         elif args.only_fresh:
             # 日更：表头三表走 index.json 全量（快），财务明细只读刚重抓的公司文件
+            import_case(db, stats)
             import_index_snapshot(db, stats, quiet=args.quiet)
             import_companies(db, stats, only_fresh=args.only_fresh,
                              quiet=args.quiet, head=False)
@@ -1242,6 +1319,7 @@ def main():
             import_zygc(db, stats)
             import_sentiment(db, stats)
         else:
+            import_case(db, stats)
             import_companies(db, stats, quiet=args.quiet)
             import_events(db, stats)
             import_agro(db, stats)

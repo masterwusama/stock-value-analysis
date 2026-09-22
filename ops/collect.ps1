@@ -13,7 +13,7 @@
 # 双击入口见 ops\collect.bat。
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('daily','stock','deep','agro','edb','valuation','events','import','sentiment')]
+    [ValidateSet('daily','stock','deep','agro','edb','valuation','events','import','sentiment','case')]
     [string]$Job = 'daily',
     [switch]$Background,
     [switch]$List,
@@ -33,6 +33,7 @@ $JobWhen = [ordered]@{
     deep      = '周六 09:05           全市场财务深抓 --resume(≈3~5 小时,可断点续)'
     edb       = '周日 20:00           Wind 行业量价(耗积分,要客户端登录)'
     valuation = '每天 05:05           Wind PE/PB/PS 十年分位,按游标续跑(≈56 次调用)'
+    case      = '周日 10:05           证监会立案/处罚公告(巨潮全文检索,免 Wind;正在立案抬 ST 高危旗)'
     events    = '不进调度             Wind 一次性事件/股东'
     import    = '不进调度             只把 JSON 工作目录回灌 MySQL'
 }

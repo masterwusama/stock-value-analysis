@@ -168,6 +168,12 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
+CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
+
+CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
+
+CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
+
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
 
 CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
@@ -183,12 +189,6 @@ CREATE INDEX idx_list_value ON score_daily (trade_date, value);
 CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
 
 CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
-
-CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
-
-CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
-
-CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -251,6 +251,22 @@ CREATE TABLE wind_event (
 
 CREATE INDEX idx_event_sid ON wind_event (sid, etype, event_date);
 
+CREATE TABLE case_event (
+	id BIGINT NOT NULL AUTO_INCREMENT, 
+	code VARCHAR(10) NOT NULL, 
+	sid INTEGER, 
+	kind VARCHAR(4) NOT NULL, 
+	subject VARCHAR(8) NOT NULL, 
+	announce_date DATE NOT NULL, 
+	title VARCHAR(256), 
+	ann_id VARCHAR(16) NOT NULL, 
+	fetched_at DATETIME, 
+	PRIMARY KEY (id), 
+	UNIQUE (ann_id)
+);
+
+CREATE INDEX idx_case_code ON case_event (code, kind, announce_date);
+
 CREATE TABLE wind_holder (
 	id BIGINT NOT NULL AUTO_INCREMENT, 
 	sid INTEGER NOT NULL, 
@@ -302,9 +318,9 @@ CREATE TABLE share_action (
 	PRIMARY KEY (sid, kind, src_id)
 );
 
-CREATE INDEX idx_action_sid_kind ON share_action (sid, kind, notice_date);
-
 CREATE INDEX idx_action_date ON share_action (kind, issue_date);
+
+CREATE INDEX idx_action_sid_kind ON share_action (sid, kind, notice_date);
 
 CREATE TABLE agro_product (
 	product_id VARCHAR(64) NOT NULL, 

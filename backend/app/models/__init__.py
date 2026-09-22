@@ -3,6 +3,7 @@
 from app.models.entities import (  # noqa: F401
     AgroPrice,
     AgroProduct,
+    CaseEvent,
     Dividend,
     EdbIndicator,
     EdbValue,
@@ -41,6 +42,7 @@ __all__ = [
     "ValuationPctile",
     "Dividend",
     "PeriodicReport",
+    "CaseEvent",
     "WindEvent",
     "WindHolder",
     "AgroProduct",
