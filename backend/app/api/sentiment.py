@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """情绪日报接口:状态卡/明日预案/板块效应/候选池 与 逐日状态序列。
 
-数据由 collector/scripts/fetch_sentiment.py 每个交易日 15:35 采集,
+数据由 collector/scripts/fetch_sentiment.py 每个交易日 16:30 采集,
 import_legacy(--only-sentiment)回灌 sentiment_daily / sentiment_sector 两表。
 """
 from datetime import date as date_type

@@ -89,7 +89,8 @@ JOBS = {
     # 所以是独立 job、每天固定跑一次，不并进 stock/deep。
     "valuation": [(SCRIPTS, "fetch_valuation.py")],
     # sentiment：盘后情绪日报（腾讯批量快照+东财榜单池，约 2~4 分钟，不碰 Wind）。
-    # 15:35 独立时段：收盘(15:00)之后、stock(16:05)之前；休市与当日去重采集器自兜
+    # 16:30 独立时段：收盘后 90 分钟,越过指数日频的更新延迟窗口,且与 stock(16:05) 错开；
+    # 休市与当日去重采集器自兜
     "sentiment": [(SCRIPTS, "fetch_sentiment.py")],
     # case：证监会立案/处罚公告（巨潮全文检索，全市场聚合翻页 ≈1 分钟，不碰 Wind）。
     # 周更：立案是低频事件，且回答「正在立案」只看近 2 年的公告面；回灌走 --only-case
