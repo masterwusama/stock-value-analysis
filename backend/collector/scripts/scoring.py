@@ -2015,6 +2015,82 @@ def cycle_trend(hist):
     return 'up' if d1 >= 0 else 'down'
 
 
+# ---------- ST/退市风险预警（st_risk，2026-09-20 上线）----------
+# 交易所把公司标成 *ST/ST 是「结果」，等简称变色人人都看得到；这里往前挪一步，用上市规则
+# 的触发要件做「滑向警示」的前验旗。规则取自《股票上市规则》财务类退市风险警示的原文要件
+# ——利润总额/净利润/扣非净利润孰低为负 且 营业收入低于线（2024 年修订后主板 3 亿、
+# 创业板/科创板 1 亿、北交所 0.5 亿；本库无「扣除后营业收入」，以利润表首行营业总收入
+# 代替，口径偏宽松=宁漏勿错）——不是拟合出来的分数。与 gate 的分工：gate 记「已发生」的
+# 定性事实（审计非标/简称ST/立案/资不抵债），这里只放 gate 还没覆盖的下滑通道。
+# 横截面自检（scripts/st_validity.py，2025 年报截面）：loss_rev 命中 41 家、其中 35 家已是
+# ST 简称，未命名的 6 家全是科创板第五套标准未盈利 biotech（首药控股/海创药业等）——这类
+# 公司的财务类指标自上市后第 4 个完整会计年度起才适用（上市规则 12.4.2 系豁免），故双创
+# 上市未满 4 个完整会计年度的 loss_rev 降级为关注（旗名不变、等级降），不标红。
+# 「连续两年扣非亏损」刻意不设旗：2025 年报截面命中 1,270 家（23%），现行规则下它本身不
+# 触发任何警示，叠上营收线才有含义——那是 loss_rev / loss_rev_near 的活。
+# stockLegacy.js 的 stRiskOf 是同一条规则的 JS 侧（_score_check 全量比对），改任一边先改完
+# 两边再跑比对。
+_ST_FIN_KW = ('金融', '银行', '保险', '证券', '货币金融', '资本市场')
+
+
+def _st_board_line(code):
+    """财务类退市线的营业收入门槛（元）：主板 3 亿 / 创业板·科创板 1 亿 / 北交所 0.5 亿。"""
+    if code[:3] in ('688', '689') or code[:2] == '30':
+        return 1e8
+    if code[:2] in ('43', '82', '83', '87', '88', '92'):
+        return 5e7
+    return 3e8
+
+
+def _st_risk(company):
+    """→ (risk, flags)：risk ∈ None(非A股/无年报=判不动) / 0(无旗) / 1(关注) / 2(高危)。
+
+    旗（按固定顺序进 flags 串）：loss_rev 亏损+营收低于线；loss_rev_near 亏损+营收不足
+    线的 2 倍；debt90 资产负债率>90%（金融业结构性高杠杆，剔除）；price_low 现价≤1.2 元
+    （1 元面值退市的提前量——它不走 ST 程序，属同族的退市预警）。
+    """
+    if (company.get('market') or 'A') != 'A':
+        return None, ''
+    code = str(company.get('code') or '')
+    annual = annual_rows(company.get('indicators') or [])
+    if not annual:
+        return None, ''
+    last = annual[-1]
+    prof = min([x for x in (last.get('净利润'), last.get('扣非净利润')) if x is not None],
+               default=None)
+    rev = last.get('营业总收入')
+    info = company.get('info') or {}
+    flags, exempt = [], False
+    if prof is not None and prof < 0 and rev is not None:
+        line = _st_board_line(code)
+        if rev < line:
+            flags.append('loss_rev')
+            if code[:3] in ('688', '689') or code[:2] == '30':
+                try:
+                    list_y = int(str(info.get('上市日期') or '')[:4] or 0)
+                except ValueError:
+                    list_y = 0
+                if list_y and int(str(last.get('报告期') or '')[:4] or 0) - list_y < 4:
+                    exempt = True
+        elif rev < 2 * line:
+            flags.append('loss_rev_near')
+    dr = last.get('资产负债率')
+    ind = str(info.get('行业') or '')
+    if dr is not None and dr > 0.9 and not any(k in ind for k in _ST_FIN_KW):
+        flags.append('debt90')
+    # 现价：本批行情优先（refresh 注入 batch_quote，与 V 的市值同一份），退回深抓快照。
+    # 对齐 _v_mcap 的取法：0/负价是行情行坏了，与缺值同看
+    price = (company.get('batch_quote') or {}).get('price')
+    if price is None:
+        price = (company.get('snapshot') or {}).get('price')
+    if price is not None and price > 0 and price <= 1.2:
+        flags.append('price_low')
+    if not flags:
+        return 0, ''
+    risk = 2 if ('loss_rev' in flags and not exempt) else 1
+    return risk, ','.join(flags)
+
+
 def compute_scores(company, now=None):
     """抓取后调用：返回四大流派总分 + 价格参考 + 造假风险分 + 管理分 + 周期分/趋势 dict（供 index.json 直接使用）"""
     va = value_analysis(company, now)
@@ -2077,6 +2153,8 @@ def compute_scores(company, now=None):
         scores['bmPricing'] = None
     # 股息率（近 1 年每股分红 ÷ 快照价，value_analysis 已算）：PE/PB/股息率区间筛选的数据面
     scores['divYield'] = va.get('divYield')
+    # ST/退市风险预警（_st_risk 文件头注释）：徽标与筛选的数据面，非 A 股给 None
+    scores['stRisk'], scores['stFlags'] = _st_risk(company)
     # 评分基准报告期（最新年报期）：入库成 score_daily.report_date。
     # 原先只有净现金代入明细里顺带带的 report 可用，算不出净现金的公司就回落成跑数日
     # （实测 2026-09-12 那轮 5095/6939 行如此），导致报告龄与「这批分用的哪一期财报」都无法回答。

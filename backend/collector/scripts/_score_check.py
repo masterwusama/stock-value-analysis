@@ -173,6 +173,11 @@ for f in sorted(companies_dir.glob('*.json')):
     pv, jv = py.get('interimDip'), js.get('interimDip')
     if not (pv is None and jv is None) and (pv is None or jv is None or abs(pv - jv) > 1e-9):
         diffs.append((code, 'interimDip', pv, jv))
+    # ST/退市风险预警：等级按数值比，旗串按文本比（两侧必须给出同一组旗、同一等级）
+    if py.get('stRisk') != js.get('stRisk'):
+        diffs.append((code, 'stRisk', py.get('stRisk'), js.get('stRisk')))
+    if (py.get('stFlags') or '') != (js.get('stFlags') or ''):
+        diffs.append((code, 'stFlags', py.get('stFlags'), js.get('stFlags')))
     vr = value_score(d)
     st = v_stats.setdefault(d.get('market') or '?', {'n': 0, 'scored': 0, 'mcap': 0, 'ev': 0,
                                                      'na': {}})
@@ -190,7 +195,8 @@ if diffs:
     sys.exit(1)
 else:
     print('全部一致: %d 家 × (4 项分数 + 价格参考含净现金代入明细 + 造假分 + 管理分 + 周期判定/强度/位置 '
-          ' + 趋势回溯 + 评分基准报告期 + 陷阱分含证据权重与覆盖项数 + 成长分与价值分含覆盖项数) 完全相同' % len(js_scores))
+          ' + 趋势回溯 + 评分基准报告期 + 陷阱分含证据权重与覆盖项数 + 成长分与价值分含覆盖项数 '
+          ' + ST/退市风险预警) 完全相同' % len(js_scores))
     # 价值综合分三市场覆盖：便宜那 65 分只吃快照市值，市值不返的家在这里现形
     print('V 覆盖（按市场）:')
     print('  市场   家数   算得出分   快照有市值   平均可评估项   判不动最多的分项')

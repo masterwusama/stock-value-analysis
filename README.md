@@ -125,6 +125,7 @@ python -X utf8 -m scripts.verify_filters    # 列表筛选与排序 68 项(含�
 python -X utf8 scripts\verify_writer.py     # 离线：写入层行为
 python -X utf8 scripts\verify_edb_merge.py  # 离线：EDB 合并防线与增量窗口
 python -X utf8 -m scripts.fraud_validity    # 离线：造假分判别效度回测（T 年红旗 → T+1 年非标/大额减值/转亏）
+python -X utf8 -m scripts.st_validity       # 离线：ST/退市风险预警的横截面命中面与规则自检
 cd collector; python -X utf8 scripts\_valuation_check.py   # 离线：估值分位守卫与 windcode 映射
 ```
 

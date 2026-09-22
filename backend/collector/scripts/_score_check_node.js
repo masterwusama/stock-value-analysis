@@ -139,6 +139,11 @@ async function main() {
       }
     }
     out[code].bmPricing = (gmNowBM != null && gmOldBM != null) ? (gmNowBM - gmOldBM >= -0.03) : null;
+
+    // ST/退市风险预警（与 scoring._st_risk 同一规则）：等级 + 旗串，入库前先证两侧一致
+    const stR = m.stRiskOf(d) || {};
+    out[code].stRisk = stR.risk == null ? null : stR.risk;
+    out[code].stFlags = stR.flags == null ? null : stR.flags;
   }
   process.stdout.write(JSON.stringify(out));
 }

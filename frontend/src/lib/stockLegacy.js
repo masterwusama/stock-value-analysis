@@ -4162,10 +4162,56 @@
     return L.join('\n');
   }
 
+  /* ---------------- ST/退市风险预警（scoring.py _st_risk 的 JS 侧，同一条规则） ----------------
+   * 徽标与筛选说明用的现算入口（列表行上的 st_risk/st_flags 是入库版，同一个函数在
+   * refresh 时算的）。旗与等级的来历见 scoring.py 对应注释块；改任一边先改完两边再跑比对。
+   */
+  var ST_FIN_KW = ['金融', '银行', '保险', '证券', '货币金融', '资本市场'];
+  function stBoardLine(code) {
+    if (code.slice(0, 3) === '688' || code.slice(0, 3) === '689' || code.slice(0, 2) === '30') return 1e8;
+    if (['43', '82', '83', '87', '88', '92'].indexOf(code.slice(0, 2)) >= 0) return 5e7;
+    return 3e8;
+  }
+  function stRiskOf(d) {
+    if ((d.market || 'A') !== 'A') return { risk: null, flags: '' };
+    var annual = annualRows(d.indicators || []);
+    if (!annual.length) return { risk: null, flags: '' };
+    var last = annual[annual.length - 1];
+    var profs = [last['净利润'], last['扣非净利润']].filter(function (x) { return x != null; });
+    var prof = profs.length ? Math.min.apply(null, profs) : null;
+    var rev = last['营业总收入'];
+    var info = d.info || {};
+    var code = String(d.code || '');
+    var flags = [], exempt = false;
+    if (prof != null && prof < 0 && rev != null) {
+      var line = stBoardLine(code);
+      if (rev < line) {
+        flags.push('loss_rev');
+        if (code.slice(0, 3) === '688' || code.slice(0, 3) === '689' || code.slice(0, 2) === '30') {
+          var ly = parseInt(String(info['上市日期'] || '').slice(0, 4), 10);
+          if (ly && parseInt(String(last['报告期'] || '').slice(0, 4), 10) - ly < 4) exempt = true;
+        }
+      } else if (rev < 2 * line) {
+        flags.push('loss_rev_near');
+      }
+    }
+    var dr = last['资产负债率'];
+    var ind = String(info['行业'] || '');
+    if (dr != null && dr > 0.9 && !ST_FIN_KW.some(function (k) { return ind.indexOf(k) >= 0; })) {
+      flags.push('debt90');
+    }
+    // 现价：本批行情优先（refresh 注入 batch_quote，与 V 的市值同一份），退回深抓快照
+    var price = (d.batch_quote || {}).price;
+    if (price == null) price = (d.snapshot || {}).price;
+    if (price != null && price > 0 && price <= 1.2) flags.push('price_low');
+    if (!flags.length) return { risk: 0, flags: '' };
+    return { risk: (flags.indexOf('loss_rev') >= 0 && !exempt) ? 2 : 1, flags: flags.join(',') };
+  }
+
   /* ---------------- 启动(已移交 Vue 组件) ---------------- */
 
   export { renderDetail, showDetail, state, valueAnalysis, valueScores, priceReferences,
-    scoreCalcText,
+    scoreCalcText, stRiskOf,
     netCashFormula, equityOf,
     cycleAnalysis, cycleHistory, cycleTrendOf, fraudAnalysis, managementAnalysis, fmtMoney, fmtNum, fmtPct, recentDividends,
     trapScore, trapBandOf, TRAP_W, TRAP_CUT, TRAP_BANDS,

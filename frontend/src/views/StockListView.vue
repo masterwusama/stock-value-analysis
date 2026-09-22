@@ -297,6 +297,26 @@ function ageTip(s) {
   return `评分用的是 ${s.report_date} 年报（距本行快照日 ${s.score_date} ${m} 个月）`
     + (m > STALE_MONTHS ? '：新一期年报还没出或还没回灌，四派分与买卖参考价都建在这份旧财报上' : '')
 }
+// ST/退市风险预警（scoring._st_risk，同名 JS 镜像 stockLegacy.stRiskOf）：简称还没变色前，
+// 用上市规则的触发要件提前亮牌。⚠ 琥珀=关注（1），红=高危（2）；旗语文案与后端规则一一对应
+const ST_FLAG_TEXT = {
+  loss_rev: '利润/扣非孰低为负，且营业收入低于退市线（*ST 财务类要件原文；主板线 3 亿、双创 1 亿、北交 0.5 亿）',
+  loss_rev_near: '亏损且营业收入不足退市线的 2 倍（贴近 *ST 财务类要件，一份年报的距离）',
+  debt90: '资产负债率 > 90%（金融业除外——银行保险的高杠杆是行业结构，不是恶化信号）',
+  price_low: '股价 ≤ 1.2 元（逼近 1 元面值退市线；交易类退市不走 ST 程序，属同族退市预警）',
+}
+function stTip(s) {
+  if (!s.st_risk) return ''
+  const flags = (s.st_flags || '').split(',').filter((k) => ST_FLAG_TEXT[k]).map((k) => '· ' + ST_FLAG_TEXT[k])
+  const lv = s.st_risk >= 2
+    ? '高危：亏损＋营收已低于退市线，即 *ST 财务类触发要件'
+    : '关注：已出现滑向 ST/退市警示的信号'
+  return `ST/退市风险预警 · ${lv}\n${flags.join('\n')}\n`
+    + '要件按交易所上市规则设定（非拟合分）；双创未盈利上市满 4 个完整会计年度前按豁免降为关注。'
+    + '已有 ⚑（硬门槛）的是已发生的定性事实，与本预警（尚在下滑通道）互为补充。'
+}
+// ST 风险三态筛选：'' 不限 / ex 排除有旗（无旗与港美股保留）/ on 只看有旗（仅 A 股）
+const stMode = ref('')
 
 function toggleFlt(arr, key, on) {
   const i = arr.indexOf(key)
@@ -306,6 +326,7 @@ function toggleFlt(arr, key, on) {
 function resetFlt() {
   Object.assign(flt, { fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', liqDisc: '', buyDays: '', seoDays: '', buys: [], discount: '', sells: [], bm: [] })
   gateFlag.value = ''
+  stMode.value = ''
   industry.value = ''
   niche.value = ''
   exIndustries.value = []
@@ -329,6 +350,7 @@ const fltCount = () =>
    (flt.pbMin !== '' ? 1 : 0) + (flt.pbMax !== '' ? 1 : 0) + (flt.divMin !== '' ? 1 : 0) +
    ((flt.liqDisc !== '' ? 1 : 0) + (flt.buyDays !== '' ? 1 : 0) + (flt.seoDays !== '' ? 1 : 0)) +
    (gateFlag.value ? 1 : 0)) +
+  (stMode.value ? 1 : 0) +
   (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0) + (noGate.value ? 1 : 0)
 
 // 勾选清单过搜索词。只数保持 /securities/industries 的原生顺序（count 降序），
@@ -358,6 +380,7 @@ async function load() {
       bm: flt.bm.length ? flt.bm.join(',') : null,
       recommend_min: flt.recMin === '' ? null : Number(flt.recMin),
       gate_flag: gateFlag.value || null,
+      st_risk: stMode.value || null,
       pe_min: flt.peMin === '' ? null : Number(flt.peMin),
       pe_max: flt.peMax === '' ? null : Number(flt.peMax),
       pb_min: flt.pbMin === '' ? null : Number(flt.pbMin),
@@ -434,12 +457,12 @@ watch(market, () => {
 // kwDebounced 必须在依赖里：搜索框原本只靠下面防抖回调里的 page=1 间接触发刷新，
 // 而搜索时通常已在第一页，页码不变 → watch 不触发 → 输入了也没发请求（applyFlt 同坑）。
 // windMode 同理：它是整列口径的开关，不在依赖里就会看到“点了没反应”的老毛病。
-watch([market, board, sort, order, page, kwDebounced, windMode, niche, gateFlag], load)
+watch([market, board, sort, order, page, kwDebounced, windMode, niche, gateFlag, stMode], load)
 watch(pageSize, load)
 // 状态写入 hash query（防抖 replace 不产生历史；只写非默认值，URL 保持可读）。
 // 刷新/分享/收藏即恢复——这是筛选状态唯一的持久化出口。
 let routeTimer = null
-watch([market, board, industry, niche, kwDebounced, noSt, noGate, windMode, sort, order, page,
+watch([market, board, industry, niche, kwDebounced, noSt, noGate, windMode, sort, order, page, stMode,
        () => JSON.stringify(flt)], () => {
   clearTimeout(routeTimer)
   routeTimer = setTimeout(() => {
@@ -462,6 +485,7 @@ watch([market, board, industry, niche, kwDebounced, noSt, noGate, windMode, sort
     if (flt.ageMax !== '') q.age = flt.ageMax
     if (flt.recMin !== '') q.rmin = flt.recMin
     if (gateFlag.value) q.gf = gateFlag.value
+    if (stMode.value) q.sr = stMode.value
     if (flt.peMin !== '') q.pemin = flt.peMin
     if (flt.peMax !== '') q.pemax = flt.peMax
     if (flt.pbMin !== '') q.pbmin = flt.pbMin
@@ -506,6 +530,7 @@ onMounted(() => {
   flt.pbpMin = s('pmin'); flt.pbpMax = s('pmax')
   flt.ageMax = s('age')
   flt.recMin = s('rmin'); flt.gateFlag = s('gf')
+  if (['ex', 'on'].includes(s('sr'))) stMode.value = s('sr')
   flt.peMin = s('pemin'); flt.peMax = s('pemax')
   flt.pbMin = s('pbmin'); flt.pbMax = s('pbmax')
   flt.divMin = s('dmin')
@@ -793,6 +818,9 @@ function toggleSort() {
 const SORT_CHIPS = COLS.filter((c) => c.key)
   .map((c) => [c.key, c.ref ? c.label.split(' ')[0] + '折价' : c.ratio ? c.label + '性价比' : c.label])
 const SORT_NAME = Object.fromEntries(SORT_CHIPS)
+// st_risk 不占列（徽标在名称格里），排序入口是「只看ST风险」配合 sort=st_risk（高危在前）；
+// 不进白名单的话 URL 恢复会把它当未知键丢掉，分享出去的链接就静默退回默认排序
+SORT_NAME.st_risk = 'ST风险'
 
 // 收起态按钮文案：把“已启用了哪些条件”直接写在按钮上，省得为了确认状态反复展开
 const fltSummary = computed(() => {
@@ -896,6 +924,12 @@ const REF_COLS = COLS.filter((c) => c.ref)
       </div>
       <label class="cb" title="名称含 ST/*ST 的公司（退市风险与财务造假高发区）"><input type="checkbox" v-model="noSt" @change="applyFlt">剔除ST</label>
       <label class="cb" :title="GATE_TIP"><input type="checkbox" v-model="noGate" @change="applyFlt">排除门槛</label>
+      <select v-model="stMode" @change="applyFlt" class="t"
+              title="ST/退市风险预警（简称变色前的下滑通道，要件按交易所上市规则：亏损+营收低于线、贴近线、负债率>90% 非金融、股价≤1.2 元）。排除=保留无旗与港美股；只看=有旗的 A 股（高危 2 与关注 1 都进，配排序选 st_risk 高危在前）。与「剔除ST/排除门槛」不同：那边是已发生的定性事实，这边是还没变色的预警">
+        <option value="">ST风险:不限</option>
+        <option value="ex">排除ST风险</option>
+        <option value="on">只看ST风险</option>
+      </select>
       <select v-model="gateFlag" @change="applyFlt" class="t"
               title="硬门槛单项反查：命中该项目的公司。与左侧「排除门槛」（四类整体排除）互补——这里只看某一类">
         <option value="">门槛单项</option>
@@ -998,6 +1032,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
           <div class="sc-head">
             <span class="sc-name">{{ s.name }}</span>
             <span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span>
+            <span v-if="s.st_risk" class="st-flag" :class="s.st_risk >= 2 ? 'st-hi' : 'st-lo'"
+                  :title="stTip(s)">{{ s.st_risk >= 2 ? '⚠ST' : '⚠' }}</span>
             <span v-if="dipOf(s) != null" class="stale-flag dip-flag" :title="DIP_TIP + '｜本标的：' + dipOf(s) + '%'">中报{{ dipOf(s) }}%</span>
             <span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span>
             <span class="sc-code">{{ s.code }}</span>
@@ -1116,6 +1152,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
               <div class="nm-sub">
                 <span class="ind" :title="s.industry">{{ s.industry || '-' }}</span>
                 <span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span>
+                <span v-if="s.st_risk" class="st-flag" :class="s.st_risk >= 2 ? 'st-hi' : 'st-lo'"
+                      :title="stTip(s)">{{ s.st_risk >= 2 ? '⚠ST' : '⚠' }}</span>
                 <span v-if="dipOf(s) != null" class="stale-flag dip-flag" :title="DIP_TIP + '｜本标的：' + dipOf(s) + '%'">中报{{ dipOf(s) }}%</span>
                 <span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span>
               </div>
@@ -1330,6 +1368,14 @@ const REF_COLS = COLS.filter((c) => c.ref)
 .tp-ev { font-style: normal; font-size: 9px; color: #9aa5b5; vertical-align: super; margin-left: 1px; }
 /* 硬门槛角标：定性否决，只标注不着色不排序，故用最高对比的红而不是等级色（--bad 那套是给分数用的） */
 .gate-flag { color: #d43b3b; font-size: 12px; margin-left: 3px; cursor: help; }
+/* ST/退市风险预警徽标：高危红底白字（简称还没变色，红要盖过门槛的 ⚑），关注琥珀描边 */
+.st-flag {
+  font-size: 10px; font-weight: 700; line-height: 1;
+  padding: 2px 4px; border-radius: 4px; margin-left: 3px; cursor: help;
+  vertical-align: 1px;
+}
+.st-flag.st-hi { background: #d43b3b; color: #fff; }
+.st-flag.st-lo { color: #b97a13; border: 1px solid #e0b25c; }
 /* 财报期龄超阈标注：比门槛弱一级（多为「新一期年报还没披露」的常态），故灰字不加粗 */
 .stale-flag { color: var(--sub); font-size: 10px; margin-left: 3px; cursor: help; }
 /* 中报恶化徽标：比期龄更刺眼的一档（红棕），但仍是「标注」不改分 */

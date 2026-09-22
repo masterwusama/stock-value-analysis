@@ -158,6 +158,11 @@ class SecurityItem(BaseModel):
     # 中报恶化 dip：最新 interim 扣非（缺则净利）同比。NULL = 最新一期已是年报或双期缺一，
     # 不是「没恶化」；≤ −0.3 前端挂徽标，≤ −0.7 拦下 R（详见 §2.3）
     interim_dip: float | None = None
+    # ST/退市风险预警（scoring._st_risk）：2=高危（亏损+营收低于退市线）1=关注（贴近线/
+    # 负债率>90% 非金融/股价≤1.2 元）0=无旗 NULL=非A股或无年报（判不动≠没风险）。
+    # st_flags 逗号旗串，前端悬浮即时说明用
+    st_risk: int | None = None
+    st_flags: str | None = None
     # 硬门槛（1=触发，0=可判且未触发，null=一个信号都判不了）与命中项，口径见 import_legacy.GATE_FLAGS
     gate: bool | None = None
     gate_flags: list | None = None
@@ -237,6 +242,8 @@ SORT_COLS = {
     "growth": ScoreDaily.growth,
     "value": ScoreDaily.value,
     "recommend": ScoreDaily.recommend,
+    # ST/退市风险预警等级：降序=高危/关注在前（2 与 1 混排时高危不一定最先，靠旗串看明细）
+    "st_risk": ScoreDaily.st_risk,
     # 现价、净现金/市值(后者本身已是比率，跨标的可比，直接按值排)
     "price": QuoteDaily.price,
     "net_cash_ratio": ScoreDaily.net_cash_ratio,
@@ -485,6 +492,10 @@ def list_securities(
     board: Literal["shMain", "szMain", "gem", "star", "bj"] | None = Query(
         None, description="A 股板块(代码前缀):沪主/深主/创业/科创/北交"),
     st: bool | None = Query(None, description="True 仅 ST/*ST,False 排除"),
+    st_risk: str | None = Query(
+        None, pattern="^(ex|on)$",
+        description="ST/退市风险预警（score_daily.st_risk）：ex=排除有旗标的（无旗与港美股保留），"
+                    "on=只看有旗标的（仅 A 股；按 st_risk 降序配 sort 使用即高危在前）"),
     gate: bool | None = Query(
         None,
         description="True 仅触发硬门槛的标的,False 排除它们（审计非标/风险警示/立案处罚/负权益；"
@@ -645,6 +656,12 @@ def list_securities(
     # 这里直接忽略未知值（与特征键同款宽容），避免拼 URL 探库
     if gate_flag in ("audit_qualify", "risk_warning", "case_filed", "neg_equity"):
         conds.append(func.json_contains(ScoreDaily.gate_flags, f'"{gate_flag}"'))
+    # ST/退市风险预警三态：ex 保留无旗与港美股（NULL=非A股/判不动，都不是「有旗」）；
+    # on 只要有旗就命中（≥1，高危 2 与关注 1 都进，排序用 st_risk 降序看高危在前）
+    if st_risk == "ex":
+        conds.append(or_(ScoreDaily.st_risk.is_(None), ScoreDaily.st_risk == 0))
+    elif st_risk == "on":
+        conds.append(ScoreDaily.st_risk >= 1)
     if ex_names:
         # 必须补 IS NULL 那半边：NOT IN 遇 NULL 出 NULL，会把 39 家没有行业标注的标的(38 A + 1 美)
         # 一起静默丢掉，而它们不属于任何被排除的行业。空串在库里不存在(实测 0 家)，不必第三支。
@@ -740,6 +757,8 @@ def list_securities(
             net_cash_w=_f(score.net_cash_w) if score else None,
             net_cash_b=_f(score.net_cash_b) if score else None,
             div_yield=_f(score.div_yield) if score else None,
+            st_risk=score.st_risk if score else None,
+            st_flags=score.st_flags if score else None,
             niche=sec.niche,
             gate=score.gate if score else None,
             gate_flags=score.gate_flags if score else None,
