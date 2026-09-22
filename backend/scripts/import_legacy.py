@@ -340,6 +340,9 @@ def build_score_rows(index, trade_date, db):
             "bm_light": sc.get("bmLight"),
             "bm_pricing": sc.get("bmPricing"),
             "div_yield": sc.get("divYield"),
+            "st_risk": sc.get("stRisk"),
+            # 空串归一成 NULL：无旗就是无旗，别让 '' 和 NULL 两种「无」并存
+            "st_flags": (sc.get("stFlags") or None),
             "interim_dip": sc.get("interimDip"),
             "fair_liq": refs.get("fairLiq"),
             "w_cash": refs.get("wCash"),
@@ -907,25 +910,30 @@ def import_sentiment(db, stats):
         _upsert_daily(daily)
         stats["sentiment_daily"] += 1
         d = parse_date(daily["date"])
+        # 两层板块:broad=证监会大类,fine=东财细分行业;细分层带连板/封单富信息
         keep = set()
-        for e in daily.get("sectors", []):
-            db.execute(mysql_insert(SentimentSector).values(
-                trade_date=d, industry=e["industry"],
-                limit_count=e.get("limit_count"),
-                share_of_industry=e.get("share_of_industry"),
-                amount_yi=e.get("amount_yi"),
-            ).on_duplicate_key_update(
-                limit_count=e.get("limit_count"),
-                share_of_industry=e.get("share_of_industry"),
-                amount_yi=e.get("amount_yi"),
-            ))
-            stats["sentiment_sector"] += 1
-            keep.add(e["industry"])
-        # 当日板块明细是全量重写口径:源里消失的行业跟着删,避免残留
-        for (ind_name,) in db.execute(text(
-                "SELECT industry FROM sentiment_sector WHERE trade_date = :d"),
+        for lvl, items in (("broad", daily.get("sectors", [])),
+                           ("fine", daily.get("sectors_fine", []))):
+            for e in items:
+                vals = dict(
+                    trade_date=d, industry=e["industry"], level=lvl,
+                    limit_count=e.get("limit_count"),
+                    # fine 层的占比键是 share_of_zt(占当日涨停%),broad 是 share_of_industry
+                    share_of_industry=e.get("share_of_zt", e.get("share_of_industry")),
+                    max_streak=e.get("max_streak"),
+                    seal_amount_yi=e.get("seal_yi"),
+                    amount_yi=e.get("amount_yi"),
+                )
+                db.execute(mysql_insert(SentimentSector).values(**vals)
+                           .on_duplicate_key_update(**{k: v for k, v in vals.items()
+                                                       if k not in ("trade_date", "industry")}))
+                stats["sentiment_sector"] += 1
+                keep.add((e["industry"], lvl))
+        # 当日板块明细是全量重写口径:源里消失的(行业,层级)跟着删,避免残留
+        for ind_name, lvl in db.execute(text(
+                "SELECT industry, level FROM sentiment_sector WHERE trade_date = :d"),
                 {"d": d}).fetchall():
-            if ind_name not in keep:
+            if (ind_name, lvl) not in keep:
                 db.execute(text("DELETE FROM sentiment_sector "
                                 "WHERE trade_date = :d AND industry = :i"),
                            {"d": d, "i": ind_name})

@@ -141,8 +141,8 @@ def backfill_pools(days=15):
     return got
 
 
-def build(quotes, uni, sizes, r5):
-    """状态机 + 板块效应 + 三个名单。"""
+def build(quotes, uni, sizes, r5, pool_zt=None):
+    """状态机 + 两层板块效应(大类/细分) + 三个名单。"""
     q = quotes[(quotes["volume"] > 0) & (quotes["price"] > 0) & (quotes["prev_close"] > 0)].copy()
     lim = q["price"] >= q["limit_up"] - EPS
     limdn = q["price"] <= q["limit_dn"] + EPS
@@ -167,7 +167,19 @@ def build(quotes, uni, sizes, r5):
     import pandas as pd
     m = m.merge(pd.DataFrame(uni), on="code", how="left")
     m["industry"] = m["industry"].fillna("未知")
-    lim_rows = m[m["_lim"]]
+    lim_rows = m[m["_lim"]].copy()
+    # 细分行业取涨停池自带的东财行业(比证监会大类细一档,医药拆到化学制药/医疗服务
+    # /医疗器械),顺带把连板数/封单资金并进来——这两项快照里没有
+    if pool_zt is not None and len(pool_zt):
+        pz = pool_zt[["代码", "所属行业", "连板数", "封板资金"]].copy()
+        pz.columns = ["code", "fine_industry", "streak", "seal_yuan"]
+        pz["code"] = pz["code"].astype(str)
+        lim_rows = lim_rows.merge(pz, on="code", how="left")
+    else:
+        for c in ("fine_industry", "streak", "seal_yuan"):
+            lim_rows[c] = None
+    # ①大类:证监会行业,≥5家且≥成分2%(大类粒度差异大,计算机类700家,
+    # 绝对家数对大行业形同虚设,必须带占比)
     eff = []
     for ind_name, g in lim_rows.groupby("industry"):
         size = sizes.get(ind_name, 0)
@@ -177,25 +189,47 @@ def build(quotes, uni, sizes, r5):
                         "amount_yi": round(float(g["amount_wan"].sum()) / 1e4, 1)})
     eff.sort(key=lambda x: -x["limit_count"])
     eff_names = {e["industry"] for e in eff}
-    cand = lim_rows[~lim_rows["_yz"] & lim_rows["industry"].isin(eff_names)]
+    # ②细分:东财行业,≥3家即算(细分盘子小,全市场百余只涨停里同细分扎堆3家
+    # 已经是聚集信号;课程口径的新概念效应本质就是这个粒度)
+    sectors_fine = []
+    fz = lim_rows[lim_rows["fine_industry"].notna()]
+    for ind_name, g in fz.groupby("fine_industry"):
+        if len(g) >= 3:
+            sectors_fine.append({"industry": ind_name, "limit_count": int(len(g)),
+                                 "share_of_zt": round(len(g) / max(1, ind["zt_count"]) * 100, 1),
+                                 "max_streak": int(g["streak"].max()),
+                                 "seal_yi": round(float(g["seal_yuan"].sum()) / 1e8, 1)})
+    sectors_fine.sort(key=lambda x: -x["limit_count"])
+    fine_names = {e["industry"] for e in sectors_fine}
+    cand = lim_rows[~lim_rows["_yz"] &
+                    (lim_rows["industry"].isin(eff_names) | lim_rows["fine_industry"].isin(fine_names))]
     cand = cand.sort_values("amount_wan", ascending=False).head(50)
     blacklist = m[m["_zha"]].sort_values("amount_wan", ascending=False).head(50)
     watch = m[m["_limdn"]].sort_values("amount_wan", ascending=False).head(30)
+
+    import math
 
     def slim(d, cols):
         out = []
         for _, r in d.iterrows():
             row = {}
             for k in cols:
-                v = r[k]
-                row[k] = round(float(v), 2) if isinstance(v, float) else v
+                v = r.get(k)
+                if v is None or (isinstance(v, float) and math.isnan(v)):
+                    # NaN 必须拦在源头:json.dumps 会写出裸 NaN,MySQL JSON 列拒收
+                    row[k] = None
+                elif isinstance(v, float):
+                    row[k] = round(v, 2)
+                else:
+                    row[k] = v
             out.append(row)
         return out
 
     payload = {
         "sectors": eff,
-        "candidates": slim(cand, ["code", "name", "industry", "price", "chg_pct",
-                                  "amount_wan", "float_mcap_yi"]),
+        "sectors_fine": sectors_fine,
+        "candidates": slim(cand, ["code", "name", "industry", "fine_industry", "streak",
+                                  "price", "chg_pct", "amount_wan", "float_mcap_yi"]),
         "blacklist": slim(blacklist, ["code", "name", "price", "chg_pct", "high", "limit_up"]),
         "watch_dt": slim(watch, ["code", "name", "price", "limit_dn", "high", "low"]),
     }
@@ -220,17 +254,26 @@ def render_md(date_s, state, prev_state, ind, r5, trans, trap, payload):
         L += ["> **陷阱日**:昨日极弱、今日转普通——该形态次日涨停溢价实测 +0.55%/胜率50%,全局禁止隔夜。", ""]
     L += ["## 明日预案(转移概率)"]
     L += [f"- P(明日{k})={v*100:.0f}%" for k, v in sorted(trans.items(), key=lambda x: -x[1])]
-    L += ["", f"## 板块效应(涨停≥5家且占行业≥2%,次日溢价档 {P})"]
+    L += ["", "## 细分板块效应(东财行业,涨停≥3家)"]
+    if payload["sectors_fine"]:
+        L += ["| 细分行业 | 涨停家数 | 占涨停% | 最高连板 | 封单合计(亿) |",
+              "|---|---:|---:|---:|---:|"]
+        L += [f"| {e['industry']} | {e['limit_count']} | {e['share_of_zt']} | "
+              f"{e['max_streak']} | {e['seal_yi']} |" for e in payload["sectors_fine"]]
+    else:
+        L.append("- 无")
+    L += ["", f"## 大类板块效应(证监会行业,涨停≥5家且占行业≥2%,次日溢价档 {P})"]
     if payload["sectors"]:
         L += ["| 行业 | 涨停家数 | 占行业% | 成交额(亿) |", "|---|---:|---:|---:|"]
         L += [f"| {e['industry']} | {e['limit_count']} | {e['share_of_industry']} | {e['amount_yi']} |"
               for e in payload["sectors"]]
     else:
         L.append("- 无(散点行情,谨慎追高)")
-    L += ["", f"## 候选池(板块效应行业内自然涨停 {len(payload['candidates'])} 只)",
-          "| 代码 | 名称 | 行业 | 收盘 | 涨跌幅% | 成交额(万) | 流通市值(亿) |",
-          "|---|---|---|---:|---:|---:|---:|"]
-    L += [f"| {c['code']} | {c['name']} | {c['industry']} | {c['price']} | {c['chg_pct']} | "
+    L += ["", f"## 候选池(两类板块效应行业内自然涨停 {len(payload['candidates'])} 只)",
+          "| 代码 | 名称 | 大类行业 | 细分行业 | 连板 | 收盘 | 涨跌幅% | 成交额(万) | 流通市值(亿) |",
+          "|---|---|---|---|---:|---:|---:|---:|---:|"]
+    L += [f"| {c['code']} | {c['name']} | {c['industry']} | {c.get('fine_industry') or '-'} | "
+          f"{c.get('streak') if c.get('streak') is not None else '-'} | {c['price']} | {c['chg_pct']} | "
           f"{c['amount_wan']:.0f} | {c['float_mcap_yi']} |" for c in payload["candidates"][:20]]
     L += ["", f"## 炸板黑名单(次日禁入,实测-1.6%)共 {ind['zha_count']} 只",
           "、".join(b["name"] for b in payload["blacklist"][:15])]
@@ -262,8 +305,12 @@ def main():
         print(f"[sentiment] {date_s} 已生成,跳过(--force 重算)")
         return 0
 
+    # 榜单池先落盘再建日报:细分板块效应就来自池子的「所属行业」字段
+    pool_zt = fetch_pools(snap)["zt"]
+    if pool_zt is not None:
+        pool_zt.to_csv(OUT / f"pool_zt_{snap}.csv", index=False, encoding="utf-8-sig")
     r5 = r5_gz2000()
-    state, ind, payload = build(quotes, uni, sizes, r5)
+    state, ind, payload = build(quotes, uni, sizes, r5, pool_zt)
     # 排除当日自身:--force 重跑最新一天时不能自引用成 prev_state
     prior = [h for h in history if h["date"] != date_s]
     prev_state = prior[-1]["state"] if prior else None

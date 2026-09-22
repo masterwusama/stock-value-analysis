@@ -239,6 +239,12 @@ class ScoreDaily(Base):
     bm_pricing: Mapped[bool | None] = mapped_column(Boolean)
     # 股息率（小数）：近 1 年每股分红 ÷ 深抓快照价（与施洛斯股息率项同源）；区间筛选用
     div_yield: Mapped[float | None] = mapped_column(Double)
+    # ST/退市风险预警（scoring._st_risk，2026-09-20）：2=高危（利润/扣非孰低为负且营收低于
+    # 退市线，*ST 财务类要件原文）1=关注（贴近线/负债率>90% 非金融/股价≤1.2 元）0=无旗
+    # NULL=非A股或无年报（判不动，不是没风险）。旗串供前端悬浮即时说明。
+    # 规则与横截面自检见 scripts/st_validity.py；与 gate 的分工（gate=已发生的定性事实）见其中。
+    st_risk: Mapped[int | None] = mapped_column(SmallInteger)
+    st_flags: Mapped[str | None] = mapped_column(String(64))
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
     buy_graham_agg: Mapped[float | None] = mapped_column(Double)
@@ -534,14 +540,22 @@ class SentimentDaily(Base):
 
 
 class SentimentSector(Base):
-    """情绪日报·板块效应明细:同行业涨停达双门槛(≥5家且≥该行业成分2%)。"""
+    """情绪日报·板块效应明细:同行业涨停达门槛。
+
+    level 两层:broad=证监会大类(≥5家且≥成分2%),fine=东财细分行业(≥3家,来自
+    涨停池自带「所属行业」,带连板/封单富信息)。industry 名在两层间不会撞,
+    PK 保持 (trade_date, industry) 不动。
+    """
 
     __tablename__ = "sentiment_sector"
 
     trade_date: Mapped[date] = mapped_column(Date, primary_key=True)
     industry: Mapped[str] = mapped_column(String(128), primary_key=True)
+    level: Mapped[str | None] = mapped_column(String(8))        # broad / fine
     limit_count: Mapped[int | None] = mapped_column(Integer)
     share_of_industry: Mapped[float | None] = mapped_column(Double)
+    max_streak: Mapped[int | None] = mapped_column(Integer)     # 细分层:最高连板
+    seal_amount_yi: Mapped[float | None] = mapped_column(Double)  # 细分层:封单合计(亿)
     amount_yi: Mapped[float | None] = mapped_column(Double)
 
 

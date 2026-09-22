@@ -142,6 +142,8 @@ CREATE TABLE score_daily (
 	bm_light BOOL, 
 	bm_pricing BOOL, 
 	div_yield DOUBLE, 
+	st_risk SMALLINT, 
+	st_flags VARCHAR(64), 
 	net_cash_ratio DOUBLE, 
 	net_cash_calc JSON, 
 	buy_graham_agg DOUBLE, 
@@ -166,6 +168,20 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
+CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
+
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+
+CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
+
+CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
+
+CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
+
+CREATE INDEX idx_list_value ON score_daily (trade_date, value);
+
+CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
+
 CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
 
 CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
@@ -173,20 +189,6 @@ CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 
 CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
-
-CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
-
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
-
-CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
-
-CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
-
-CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
-
-CREATE INDEX idx_list_value ON score_daily (trade_date, value);
-
-CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -364,8 +366,11 @@ CREATE TABLE sentiment_daily (
 CREATE TABLE sentiment_sector (
 	trade_date DATE NOT NULL, 
 	industry VARCHAR(128) NOT NULL, 
+	level VARCHAR(8), 
 	limit_count INTEGER, 
 	share_of_industry DOUBLE, 
+	max_streak INTEGER, 
+	seal_amount_yi DOUBLE, 
 	amount_yi DOUBLE, 
 	PRIMARY KEY (trade_date, industry)
 );

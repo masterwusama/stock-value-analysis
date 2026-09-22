@@ -57,10 +57,16 @@ def sentiment_daily(d: date_type | None = Query(None, alias="date"),
         .order_by(SentimentSector.limit_count.desc())
     ).scalars().all()
     out = _daily_out(row)
+    # 两层板块:broad=证监会大类(≥5家且≥2%),fine=东财细分行业(≥3家,带连板/封单)
     out["sectors"] = [{
         "industry": s.industry, "limit_count": s.limit_count,
         "share_of_industry": s.share_of_industry, "amount_yi": s.amount_yi,
-    } for s in sectors]
+    } for s in sectors if (s.level or "broad") == "broad"]
+    out["sectors_fine"] = [{
+        "industry": s.industry, "limit_count": s.limit_count,
+        "share_of_zt": s.share_of_industry, "max_streak": s.max_streak,
+        "seal_yi": s.seal_amount_yi,
+    } for s in sectors if s.level == "fine"]
     return out
 
 

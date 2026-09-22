@@ -66,9 +66,27 @@ function fmtAmount(wan) {
         </div>
       </section>
 
-      <!-- ③ 板块效应 -->
+      <!-- ③ 细分板块效应 -->
       <section class="card">
-        <h3>板块效应<span class="sub">同行业涨停≥5家且占该行业成分≥2% · 次日溢价档 {{ daily.report.premium_hint || '-' }}</span></h3>
+        <h3>细分板块效应<span class="sub">东财行业,同行业涨停≥3家 · 比大类细一档(医药→化学制药/医疗服务/医疗器械)</span></h3>
+        <table v-if="(daily.sectors_fine || []).length" class="tbl">
+          <thead><tr><th>细分行业</th><th class="num">涨停家数</th><th class="num">占涨停%</th><th class="num">最高连板</th><th class="num">封单合计(亿)</th></tr></thead>
+          <tbody>
+            <tr v-for="s in daily.sectors_fine" :key="s.industry">
+              <td>{{ s.industry }}</td>
+              <td class="num">{{ s.limit_count }}</td>
+              <td class="num">{{ s.share_of_zt }}%</td>
+              <td class="num">{{ s.max_streak ?? '-' }}</td>
+              <td class="num">{{ s.seal_yi ?? '-' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p v-else class="empty">今日无细分板块聚集。</p>
+      </section>
+
+      <!-- ④ 大类板块效应 -->
+      <section class="card">
+        <h3>大类板块效应<span class="sub">证监会行业,涨停≥5家且占该行业成分≥2% · 次日溢价档 {{ daily.report.premium_hint || '-' }}</span></h3>
         <table v-if="(daily.sectors || []).length" class="tbl">
           <thead><tr><th>行业</th><th class="num">涨停家数</th><th class="num">占行业%</th><th class="num">成交额</th></tr></thead>
           <tbody>
@@ -83,15 +101,17 @@ function fmtAmount(wan) {
         <p v-else class="empty">今日无板块效应行业(散点行情,谨慎追高)。</p>
       </section>
 
-      <!-- ④ 候选池 -->
+      <!-- ⑤ 候选池 -->
       <section class="card">
-        <h3>候选池<span class="sub">板块效应行业内自然涨停 · 预期竞价溢价 {{ daily.report.premium_hint || '-' }}</span></h3>
+        <h3>候选池<span class="sub">两类板块效应行业内自然涨停 · 预期竞价溢价 {{ daily.report.premium_hint || '-' }}</span></h3>
         <table v-if="(daily.report.candidates || []).length" class="tbl">
-          <thead><tr><th>代码/名称</th><th>行业</th><th class="num">收盘</th><th class="num">涨跌幅</th><th class="num">成交额</th><th class="num">流通市值(亿)</th></tr></thead>
+          <thead><tr><th>代码/名称</th><th>大类行业</th><th>细分行业</th><th class="num">连板</th><th class="num">收盘</th><th class="num">涨跌幅</th><th class="num">成交额</th><th class="num">流通市值(亿)</th></tr></thead>
           <tbody>
             <tr v-for="c in daily.report.candidates" :key="c.code">
               <td><router-link :to="'/stock/' + c.code" class="code-link">{{ c.code }} {{ c.name }}</router-link></td>
               <td>{{ c.industry }}</td>
+              <td>{{ c.fine_industry || '-' }}</td>
+              <td class="num">{{ c.streak ?? '-' }}</td>
               <td class="num">{{ c.price }}</td>
               <td class="num">{{ c.chg_pct }}%</td>
               <td class="num">{{ fmtAmount(c.amount_wan) }}</td>
