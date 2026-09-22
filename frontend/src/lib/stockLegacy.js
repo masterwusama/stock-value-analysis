@@ -628,21 +628,37 @@
       '<select id="stock-period"></select></div>' +
       '<table class="stock-table" id="stock-sheet-body"><tr><td class="k">点上方「利润表 / 资产负债表 / 现金流量表」标签加载报表</td></tr></table></div>';
 
-    // 报表延后构建：首次点任一报表标签时才整表构建（含标签绑定）；
-    // 若点的不是利润表，构建后补点该标签
+    // 报表延后构建：首次点任一报表标签时才整表构建（含标签绑定）。
+    // 主包里季报裁到最近 12 期（移动端首开瘦身，见 securities._prune_interims）；
+    // 数据方给了 d._loadStatements（Vue 层注入的完整报表史懒取）就先拉全量再建表，
+    // 期次下拉才回得去老季度。拉失败也照常建（表里是裁剪后的期次，功能不缺）。
+    // ⚠ 绑定必须在 innerHTML 注入之后跑（bindSheetLazy 的调用点在下方赋值行后）——
+    // 之前写在注入前，querySelectorAll 找不到还没进 DOM 的按钮，报表标签整排死键
+    //（dbb7b79 渐进式渲染改造引入、2026-09-23 被「报表点不开」暴露）。
     var sheetBuilt = false;
-    document.querySelectorAll('.stock-tabs button[data-sheet]').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        if (sheetBuilt) return;
-        sheetBuilt = true;
-        initSheet(d);
-        var want = btn.dataset.sheet;
-        if (want && want !== 'income') {
-          var b = document.querySelector('.stock-tabs button[data-sheet="' + want + '"]');
-          if (b) b.click();
-        }
+    function bindSheetLazy() {
+      document.querySelectorAll('.stock-tabs button[data-sheet]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (sheetBuilt) return;
+          sheetBuilt = true;
+          btn.classList.add('active');
+          var buildSheet = function () {
+            initSheet(d);
+            var want = btn.dataset.sheet;
+            if (want && want !== 'income') {
+              var b = document.querySelector('.stock-tabs button[data-sheet="' + want + '"]');
+              if (b) b.click();
+            }
+          };
+          if (typeof d._loadStatements === 'function') {
+            var body0 = $('stock-sheet-body');
+            if (body0) body0.innerHTML = '<tr><td class="k">正在加载完整报表历史…</td></tr>';
+            d._loadStatements().then(function () { buildSheet(); })
+              .catch(function () { buildSheet(); });
+          } else buildSheet();
+        });
       });
-    });
+    }
 
     // 分红历史（全量；移动端默认前 5 条，其余折叠）
     var divs = d.dividends || [];
@@ -802,6 +818,8 @@
     }
 
     $('stock-detail-body').innerHTML = html;
+    // 报表标签绑定必须在按钮进 DOM 之后（见上方 bindSheetLazy 注释）
+    bindSheetLazy();
     // 移动端读法折叠：score-note 常占卡片 40% 高度，窄屏默认收起、点按展开
     // （桌面不受影响：折叠样式只在 ≤600px 媒体查询里生效）
     if (window.innerWidth <= 600) {

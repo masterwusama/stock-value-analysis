@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { get } from '../api/client'
+import { prefetchDetail, getDetail } from '../lib/detailCache'
 import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
 
 const router = useRouter()
@@ -681,10 +682,8 @@ const heroGate = (s) => {
 // 悬停任一主观评价分，浮层给出该家该分的逐项代入过程。数值来自详情接口（与详情页同一份
 // 数据），计算走详情页同一套现算函数——stockLegacy.scoreCalcText 只做文本化，不另设口径，
 // 所以这里显示的过程与详情页评分卡逐字同源。库与数据都懒加载：列表首屏不带 3900 行的
-// legacy 包，单家详情按 hover 拉一次（LRU 缓存，同行 11 个格共用同一份）。
+// legacy 包，单家详情按 hover 拉一次——走 detailCache 共享缓存，悬浮过再点进详情零等待。
 const legacyMod = shallowRef(null)
-const detailCache = new Map()      // code → 详情响应，LRU 触顶先淘汰最旧
-const detailInflight = new Map()   // code → Promise：一行内 11 个格、连扫多行不重复发请求
 const tip = reactive({ show: false, x: 0, y: 0, text: '', loading: false })
 let tipToken = 0
 let tipTimer = null
@@ -698,22 +697,6 @@ async function loadLegacy() {
   if (!legacyMod.value) legacyMod.value = await import('../lib/stockLegacy.js')
   return legacyMod.value
 }
-function fetchDetailForTip(code) {
-  if (detailCache.has(code)) {
-    const v = detailCache.get(code)
-    detailCache.delete(code); detailCache.set(code, v)   // touch：命中也挪到队尾
-    return Promise.resolve(v)
-  }
-  if (detailInflight.has(code)) return detailInflight.get(code)
-  const p = get(`/securities/${code}`).then((j) => {
-    if (detailCache.size >= 24) detailCache.delete(detailCache.keys().next().value)
-    detailCache.set(code, j)
-    detailInflight.delete(code)
-    return j
-  }).catch((e) => { detailInflight.delete(code); throw e })
-  detailInflight.set(code, p)
-  return p
-}
 function scoreHover(evt, s, key) {
   if (isMobile.value) return            // 触屏无悬停：移动卡片本就整卡可点进详情
   if (!TIP_WHICH[key]) return
@@ -724,7 +707,7 @@ function scoreHover(evt, s, key) {
   tipTimer = setTimeout(async () => {
     tip.show = true; tip.loading = true; tip.text = ''
     try {
-      const [legacy, d] = await Promise.all([loadLegacy(), fetchDetailForTip(s.code)])
+      const [legacy, d] = await Promise.all([loadLegacy(), getDetail(s.code)])
       if (my !== tipToken) return       // 等待期间已移到别的格子：这次结果作废
       let text = legacy.scoreCalcText(d, TIP_WHICH[key])
       // Wind 增强档下格子里是叠加分，代入式是基础分——补一行换算，两边对得上
@@ -747,6 +730,20 @@ function hideScoreTip() {
   tipToken++
   if (tipTimer) { clearTimeout(tipTimer); tipTimer = null }
   tip.show = false
+}
+// 移动卡片点按预取：touchend 与起点距离 <12px 才算点按意图（滚动松手不触发），
+// 抢在 click 出发路由前把详情请求发出去——点进详情时包多半已在途/已在缓存
+let touchStart = null
+function cardTouchStart(e) {
+  const t = e.changedTouches && e.changedTouches[0]
+  touchStart = t ? { x: t.clientX, y: t.clientY } : null
+}
+function cardTouch(s, e) {
+  if (!touchStart) return
+  const t = e.changedTouches && e.changedTouches[0]
+  const moved = t ? Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) : 999
+  touchStart = null
+  if (moved < 12) prefetchDetail(s.code)
 }
 // 视口跨过移动断点时表格与卡片互换，桌面悬浮格随之消失——浮层还开着就成了孤儿
 watch(isMobile, () => hideScoreTip())
@@ -1029,6 +1026,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <div v-if="isMobile" class="stock-cards">
         <div v-for="s in data.items" :key="s.sid" class="stock-card" tabindex="0" role="link"
              @click="router.push(`/stock/${s.code}`)"
+             @touchstart="cardTouchStart($event)" @touchend="cardTouch(s, $event)"
              @keyup.enter="router.push(`/stock/${s.code}`)">
           <!-- 第一层：身份与价格（首屏固定） -->
           <div class="sc-head">
@@ -1149,7 +1147,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         </thead>
         <tbody>
           <tr v-for="s in data?.items" :key="s.sid" @click="router.push(`/stock/${s.code}`)">
-            <td class="l stick name-cell">
+            <td class="l stick name-cell" @mouseenter="prefetchDetail(s.code)">
               <div class="nm-row"><b>{{ s.name }}</b><span class="badge">{{ MARKET_NAME[s.market] }}</span><span class="cd">{{ s.code }}</span></div>
               <div class="nm-sub">
                 <span class="ind" :title="s.industry">{{ s.industry || '-' }}</span>

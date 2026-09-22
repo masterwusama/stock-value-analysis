@@ -6,6 +6,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import * as echarts from 'echarts'
 import { get } from '../api/client'
+import { getDetail } from '../lib/detailCache'
 import '../assets/stock.css'
 
 window.echarts = echarts
@@ -13,7 +14,8 @@ window.echarts = echarts
 const route = useRoute()
 const router = useRouter()
 const error = ref('')
-// 详情加载中：数据 453KB + 全模块同步构建，手机上有可感知的等待期——给个可见状态
+// 详情加载中：数据包已瘦身（季报裁剪+gzip≈27KB）+ 列表悬浮/点按预取命中时零等待，
+// 剩余等待主要是手机端的解析与渲染——保留可见状态兜底
 const loading = ref(false)
 let legacy = null
 
@@ -35,10 +37,19 @@ async function render(code) {
   const el = document.getElementById('stock-detail-body')
   if (el) el.innerHTML = ''
   try {
-    const d = await get(`/securities/${encodeURIComponent(code)}`)
+    const d = await getDetail(code)
     if (!alive || seq !== renderSeq) return
     // 原页面事件层结构:renderEvents 消费 {events, holders},挂在 _events
     d._events = d.events || null
+    // 主包季报裁到最近 12 期（移动端瘦身）：报表标签页首次点开时懒取完整历史，
+    // 拉回来的全量三表就地并回这份数据（期次下拉回得去老季度）
+    d._loadStatements = async () => {
+      const full = await get(`/securities/${encodeURIComponent(code)}/statements`)
+      if (alive && seq === renderSeq) {
+        d.income = full.income; d.balance = full.balance; d.cashflow = full.cashflow
+      }
+      return full
+    }
     const L = await ensureLegacy()
     if (!alive || seq !== renderSeq) return
     // Wind 事件覆盖层接管:API scores.wind 即原 events/index.json byCode 条目全量

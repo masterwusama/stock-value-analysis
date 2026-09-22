@@ -965,11 +965,50 @@ def _load_seo_history(db: Session, sec: Security) -> list | None:
     ]
 
 
+# 详情包的季报裁剪：评分消费的季报窗口全在「最近 8 季」内（TTM 4~5 期、中报恶化同比
+# 跨年 4~5 期、单季环比 2 期，且都按日期索引不按行序），留 12 期余量；更老的季报只服务
+# 报表标签页的期次下拉，那条路走 /{code}/statements 懒取全量。实测把详情包从 462KB
+# 砍到约 1/2（gzip 54→27KB），手机上首开详情的主要等待就是这段传输加解析。
+INTERIM_KEEP = 12
+
+
+def _prune_interims(rows: list[dict]) -> list[dict]:
+    """保留全部年报行 + 最近 INTERIM_KEEP 个季报行，合并后按报告日倒序。"""
+    def day(r: dict) -> str:
+        return str(r.get("报告日") or r.get("报告期") or "")
+    annual = [r for r in rows if day(r)[5:7] == "12"]
+    interim = [r for r in rows if day(r)[5:7] != "12"][:INTERIM_KEEP]
+    return sorted(annual + interim, key=day, reverse=True)
+
+
+@router.get("/{code}/statements")
+def get_security_statements(code: str, db: Session = Depends(get_session)):
+    """三大报表完整历史（含裁掉的旧季报）——详情页报表标签页首次打开时懒取。"""
+    sec = db.execute(
+        select(Security).where(Security.code == code).order_by(Security.sid)
+    ).scalars().first()
+    if not sec:
+        raise HTTPException(status_code=404, detail=f"security {code} not found")
+
+    def fin_rows(model):
+        rows = db.execute(
+            select(model).where(model.sid == sec.sid).order_by(model.report_date.desc())
+        ).scalars().all()
+        return [restore_row(r) for r in rows]
+
+    return {"code": sec.code,
+            "income": fin_rows(FinIncome),
+            "balance": fin_rows(FinBalance),
+            "cashflow": fin_rows(FinCashflow)}
+
+
 @router.get("/{code}")
 def get_security_detail(code: str, db: Session = Depends(get_session)):
     """单证券详情:结构与原 companies/{code}.json 对齐 + scores/events 扩展。
 
     财务行由 核心列 + extras JSON 还原为中文键原样行(见 app/fin_columns.py)。
+    四张财务表做过季报裁剪（见 _prune_interims），报表标签页的完整历史走
+    /{code}/statements 懒取——详情首开包是移动端的主要等待，不为期次下拉扛全量。
     """
     sec = db.execute(
         select(Security).where(Security.code == code).order_by(Security.sid)
@@ -1090,10 +1129,10 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         "info": {"行业": sec.industry, "股票简称": sec.name, "上市日期": _d(sec.list_date)},
         "niche": {"name": sec.niche, "src": sec.niche_src},
         "snapshot": snapshot,
-        "indicators": fin_rows(FinIndicator),
-        "income": fin_rows(FinIncome),
-        "balance": fin_rows(FinBalance),
-        "cashflow": fin_rows(FinCashflow),
+        "indicators": _prune_interims(fin_rows(FinIndicator)),
+        "income": _prune_interims(fin_rows(FinIncome)),
+        "balance": _prune_interims(fin_rows(FinBalance)),
+        "cashflow": _prune_interims(fin_rows(FinCashflow)),
         "dividends": dividends,
         "reports": reports,
         "notes": notes,
