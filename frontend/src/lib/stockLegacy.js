@@ -554,45 +554,19 @@
       divBox +
       '</div></div>';
 
-    // 主营构成（东财 F10，产品/行业/地区三维度，最新报告期；fetch_zygc 采集）
-    var zygc = d.zygc;
-    if (zygc && zygc.sections && zygc.sections.length) {
-      var zygcHtml = '<div class="stock-section-head" style="margin-top:16px">' +
-        '<h3>主营业务构成（' + zygc.reportDate + ' 报告期）</h3></div><div class="zygc-grid">';
-      zygc.sections.forEach(function (sec) {
-        zygcHtml += '<div class="zygc-tbl"><h4>' + sec.label + '</h4>' +
-          '<table class="stock-compare"><thead><tr><th>构成项</th><th>收入(亿)</th><th>占比</th><th>毛利率</th></tr></thead><tbody>';
-        sec.rows.forEach(function (r) {
-          zygcHtml += '<tr><td class="zygc-name" title="' + esc(r.name) + '">' + esc(r.name) + '</td>' +
-            '<td class="v">' + (r.income == null ? '-' : fmtNum(r.income / 1e8)) + '</td>' +
-            '<td class="v">' + (r.ratio == null ? '-' : (r.ratio * 100).toFixed(1) + '%') + '</td>' +
-            '<td class="v">' + (r.gm == null ? '-' : (r.gm * 100).toFixed(1) + '%') + '</td></tr>';
-        });
-        zygcHtml += '</tbody></table></div>';
-      });
-      zygcHtml += '</div>' +
-        '<p class="score-note">来源：东方财富 F10 主营构成，按公司披露口径分维度（缺哪个维度就是不披露，不是没有）。' +
-        '毛利率为东财披露的分部毛利率；「其他(补充)」类行是公司兜底项，占比小可忽略。</p>';
-      html += zygcHtml;
-    }
-
-    // 商业模式特征芯片（有构成数据时紧随主营构成；无构成但财报可算时独立成行）
-    var bmRow = bmChips(d, zygc);
-    if (bmRow.length) {
-      html += '<div class="bm-chips"><span class="bm-cap">商业模式特征</span>' +
-        bmRow.map(function (c) {
-          var cls = c.backed ? (c.on ? 'bm-on' : 'bm-off') : 'bm-obs';
-          var mark = c.backed ? (c.on ? '✓' : '✗') : '•';
-          return '<span class="bm-chip ' + cls + '" title="' + esc(c.tip) + '">' + mark + ' ' + c.label + '</span>';
-        }).join('') +
-        '<span class="bm-note">✓/✗＝回测背书标签（bm_validity）；•＝观察项</span></div>';
-    }
+    // 主营构成 + 商业模式芯片：懒模块（滚动到才渲染）。zygc 已移出首开包
+    //（/securities/{code}/zygc 懒取），数据方注入 d._loadZygc；无数据也占位
+    html += '<div class="stock-section" data-lazy="zygc" style="min-height:96px">' +
+      '<h3>主营业务构成<span class="s-ccy-note">（东财 F10，滚动到本区自动加载）</span></h3>' +
+      '<div data-lazy-body="zygc"><p class="empty">下滑加载…</p></div>' +
+      '<div data-lazy-body="bmchips"></div></div>';
 
     // （价值分析五大区块：价值体检/股东回报/现金流质量/杜邦分析/成长性已移至模块二）
 
-    // 指标趋势图（按指标分 3 个独立图表；支持季/年视图切换）
+    // 指标趋势图（按指标分 3 个独立图表；支持季/年视图切换）——懒模块：
+    // 壳与图容器先进 DOM，滚动到才 renderCharts + 绑视图切换（手机上 echarts init 不便宜）
     var indCount = (d.indicators || []).length;
-    html += '<div class="stock-section"><div class="stock-section-head">' +
+    html += '<div class="stock-section" data-lazy="charts" style="min-height:300px"><div class="stock-section-head">' +
       '<h3 id="stock-chart-title">关键指标趋势（近 ' + indCount + ' 期）</h3>' +
       '<div class="stock-view-toggle">' +
       '<button data-view="quarter">季</button>' +
@@ -610,8 +584,8 @@
           ? '；本公司财年截至 ' + fe + '，下面的 12-31 只是对齐日历年的报告期标签' : '';
       })() + '</p></div>';
 
-    // 财务对比（年报/季报，任意两个报告期可对比）
-    html += '<div class="stock-section"><div class="stock-section-head">' +
+    // 财务对比（年报/季报，任意两个报告期可对比）——懒模块：表体滚动到才构建
+    html += '<div class="stock-section" data-lazy="compare" style="min-height:140px"><div class="stock-section-head">' +
       '<h3>财务对比</h3>' +
       '<div class="stock-compare-pick">' +
       '<select id="stock-compare-a"></select>' +
@@ -660,50 +634,15 @@
       });
     }
 
-    // 分红历史（全量；移动端默认前 5 条，其余折叠）
+    // 分红历史（全量；移动端默认前 5 条，其余折叠）——懒模块：行列表滚动到才渲染
     var divs = d.dividends || [];
-    var foldDivs = mqMobile.matches && !state.detailExpanded;
-    html += '<div class="stock-section"><h3>分红历史（' + divs.length + ' 条）</h3>';
-    divs.forEach(function (r, i) {
-      var desc = r.description || '';
-      var extra = '';
-      if (r.pay_date) extra += '派息日 ' + fmtDate(r.pay_date);
-      html += '<div class="stock-list-item' + (foldDivs && i >= 5 ? ' d-more' : '') + '">' +
-        '<span class="d-year">' + (r.year || '-') + '</span>' +
-        '<span class="stock-badge">' + (r.type || '') + '</span>' +
-        '<span class="d-desc">' + desc + '</span>' +
-        (extra ? '<span class="d-date">' + extra + '</span>' : '') +
-        '</div>';
-    });
-    if (foldDivs && divs.length > 5) {
-      html += '<button type="button" class="d-more-btn" id="stock-divs-more">展开全部 ' + divs.length + ' 条</button>';
-    }
-    html += '</div>';
+    html += '<div class="stock-section" data-lazy="divs" style="min-height:56px">' +
+      '<h3>分红历史（' + divs.length + ' 条）</h3><div data-lazy-body="divs"><p class="empty">下滑加载…</p></div></div>';
 
-    // 定期报告（移动端默认前 5 份，其余折叠）
+    // 定期报告（移动端默认前 5 份，其余折叠）——懒模块
     var reports = d.reports || [];
-    var foldReps = mqMobile.matches && !state.detailExpanded;
-    html += '<div class="stock-section"><h3>定期报告（' + reports.length + ' 份）</h3>';
-    reports.forEach(function (r, i) {
-      var audit = '';
-      // 审计信息：年报/半年报附事务所与意见类型（季报不审计，无该字段）
-      if (r.audit_firm || r.audit_opinion) {
-        audit = '<span class="d-audit">审计：' + (r.audit_firm || '—') +
-          (r.audit_opinion ? ' · ' + r.audit_opinion : '') + '</span>';
-      }
-      html += '<div class="stock-list-item' + (foldReps && i >= 5 ? ' d-more' : '') + '">' +
-        '<span class="stock-badge">' + r.category + '</span>' +
-        '<span class="d-year">' + r.title + '</span>' +
-        '<span class="d-date">' + fmtDate(r.date) + '</span>' +
-        audit +
-        '<a href="' + r.pdf_url + '" target="_blank" rel="noopener">PDF 原文</a>' +
-        '<a href="' + r.detail_url + '" target="_blank" rel="noopener">详情</a>' +
-        '</div>';
-    });
-    if (foldReps && reports.length > 5) {
-      html += '<button type="button" class="d-more-btn" id="stock-reports-more">展开全部 ' + reports.length + ' 份</button>';
-    }
-    html += '</div>';
+    html += '<div class="stock-section" data-lazy="reports" style="min-height:56px">' +
+      '<h3>定期报告（' + reports.length + ' 份）</h3><div data-lazy-body="reports"><p class="empty">下滑加载…</p></div></div>';
     html += '</section>'; // 模块一结束
 
     // ---- 模块二：通用价值标准（体检/股东回报/现金流/杜邦/成长）----
@@ -806,20 +745,169 @@
 
     // ---- 模块十二：公司事件与股东结构（仅当有 Wind 事件明细时展示；港美股/未抓公司自动隐藏）----
     if (hasEvents) {
-      html += '<section id="sec-events" class="stock-section va-module"><h2 class="va-module-title"><span>⑫</span>公司事件与股东结构</h2>' +
-        renderEvents(d._events, ovD) + '</section>';
+      html += '<section id="sec-events" class="stock-section va-module" data-lazy="events" style="min-height:80px">' +
+        '<h2 class="va-module-title"><span>⑫</span>公司事件与股东结构</h2>' +
+        '<div data-lazy-body="events"><p class="empty">下滑加载…</p></div></section>';
     }
 
     // ---- 模块⑫/⑬：股本事件（定增 / 回购，东财全市场快照；港美股不采，整节不出）----
     // 编号跟着 ⑫ 的有无走：没有 Wind 事件明细时 ⑫ 这个位子空着，由本节顶上
     if (hasAct) {
-      html += '<section id="sec-actions" class="stock-section va-module"><h2 class="va-module-title"><span>' + actNo + '</span>股本事件 · 定增与回购</h2>' +
-        renderActions(d.actions) + '</section>';
+      html += '<section id="sec-actions" class="stock-section va-module" data-lazy="actions" style="min-height:80px">' +
+        '<h2 class="va-module-title"><span>' + actNo + '</span>股本事件 · 定增与回购</h2>' +
+        '<div data-lazy-body="actions"><p class="empty">下滑加载…</p></div></section>';
     }
 
     $('stock-detail-body').innerHTML = html;
     // 报表标签绑定必须在按钮进 DOM 之后（见上方 bindSheetLazy 注释）
     bindSheetLazy();
+
+    // ---- 懒模块：占位壳 → 进入视口前 200px 构建（滚动到哪建到哪，手机首屏只建评分卡）----
+    // buildLazy 可被锚点跳转强制调用（bindVaNav）：跳到未构建的目标时先建再滚，不跳空壳
+    var lazyDone = {};
+    function buildLazy(key) {
+      if (lazyDone[key]) return;
+      lazyDone[key] = true;
+      var host = function (name) { return document.querySelector('[data-lazy-body="' + name + '"]'); };
+      try {
+        if (key === 'charts') {
+          renderCharts(d.indicators || []);
+          renderVaCharts(va);          // ②的两张图依赖 state.charts（见 renderValueAnalysis 注释）
+          bindViewToggle();
+        } else if (key === 'compare') {
+          renderCompare(d);
+          bindComparePicks();
+        } else if (key === 'divs' || key === 'reports') {
+          buildList(key, host(key));
+          bindMoreButtons();
+        } else if (key === 'zygc') {
+          buildZygc(host('zygc'), host('bmchips'));
+        } else if (key === 'events') {
+          var ev = host('events'); if (ev) ev.innerHTML = renderEvents(d._events, ovD);
+        } else if (key === 'actions') {
+          var ac = host('actions'); if (ac) ac.innerHTML = renderActions(d.actions);
+        }
+      } catch (e) { /* 单模块构建失败不影响其余：占位文案保留 */ }
+      var shell = document.querySelector('#stock-detail-body [data-lazy="' + key + '"]');
+      if (shell) shell.style.minHeight = '';
+    }
+
+    // 分红/定期报告行列表（从同步 html 挪来；折叠口径不变）
+    function buildList(key, hostEl) {
+      var fold = mqMobile.matches && !state.detailExpanded;
+      var out = '';
+      if (key === 'divs') {
+        (d.dividends || []).forEach(function (r, i) {
+          var extra = r.pay_date ? '派息日 ' + fmtDate(r.pay_date) : '';
+          out += '<div class="stock-list-item' + (fold && i >= 5 ? ' d-more' : '') + '">' +
+            '<span class="d-year">' + (r.year || '-') + '</span>' +
+            '<span class="stock-badge">' + (r.type || '') + '</span>' +
+            '<span class="d-desc">' + (r.description || '') + '</span>' +
+            (extra ? '<span class="d-date">' + extra + '</span>' : '') + '</div>';
+        });
+      } else {
+        (d.reports || []).forEach(function (r, i) {
+          var audit = (r.audit_firm || r.audit_opinion)
+            ? '<span class="d-audit">审计：' + (r.audit_firm || '—') + (r.audit_opinion ? ' · ' + r.audit_opinion : '') + '</span>' : '';
+          out += '<div class="stock-list-item' + (fold && i >= 5 ? ' d-more' : '') + '">' +
+            '<span class="stock-badge">' + r.category + '</span>' +
+            '<span class="d-year">' + r.title + '</span>' +
+            '<span class="d-date">' + fmtDate(r.date) + '</span>' + audit +
+            '<a href="' + r.pdf_url + '" target="_blank" rel="noopener">PDF 原文</a>' +
+            '<a href="' + r.detail_url + '" target="_blank" rel="noopener">详情</a></div>';
+        });
+      }
+      var n = key === 'divs' ? (d.dividends || []).length : (d.reports || []).length;
+      if (fold && n > 5) {
+        out += '<button type="button" class="d-more-btn" id="' + (key === 'divs' ? 'stock-divs-more' : 'stock-reports-more') +
+          '">展开全部 ' + n + ' ' + (key === 'divs' ? '条' : '份') + '</button>';
+      }
+      if (hostEl) hostEl.innerHTML = out;
+    }
+
+    // 主营构成 + 商业模式芯片（zygc 懒取；失败/无数据给占位文案，芯片按可算项独立成行）
+    function buildZygc(hostEl, chipsHost) {
+      var done = function (zg) {
+        var out = '';
+        if (zg && zg.sections && zg.sections.length) {
+          out += '<div class="stock-section-head" style="margin-top:8px">' +
+            '<h3>主营业务构成（' + zg.reportDate + ' 报告期）</h3></div><div class="zygc-grid">';
+          zg.sections.forEach(function (sec) {
+            out += '<div class="zygc-tbl"><h4>' + sec.label + '</h4>' +
+              '<table class="stock-compare"><thead><tr><th>构成项</th><th>收入(亿)</th><th>占比</th><th>毛利率</th></tr></thead><tbody>';
+            sec.rows.forEach(function (r) {
+              out += '<tr><td class="zygc-name" title="' + esc(r.name) + '">' + esc(r.name) + '</td>' +
+                '<td class="v">' + (r.income == null ? '-' : fmtNum(r.income / 1e8)) + '</td>' +
+                '<td class="v">' + (r.ratio == null ? '-' : (r.ratio * 100).toFixed(1) + '%') + '</td>' +
+                '<td class="v">' + (r.gm == null ? '-' : (r.gm * 100).toFixed(1) + '%') + '</td></tr>';
+            });
+            out += '</tbody></table></div>';
+          });
+          out += '</div><p class="score-note">来源：东方财富 F10 主营构成，按公司披露口径分维度（缺哪个维度就是不披露，不是没有）。' +
+            '毛利率为东财披露的分部毛利率；「其他(补充)」类行是公司兜底项，占比小可忽略。</p>';
+        } else {
+          out += '<p class="empty">无主营构成数据（不披露或未采集）。</p>';
+        }
+        if (hostEl) hostEl.innerHTML = out;
+        if (!chipsHost) return;
+        var bmRow = bmChips(d, zg);
+        chipsHost.innerHTML = bmRow.length
+          ? '<div class="bm-chips"><span class="bm-cap">商业模式特征</span>' +
+            bmRow.map(function (c) {
+              var cls = c.backed ? (c.on ? 'bm-on' : 'bm-off') : 'bm-obs';
+              var mark = c.backed ? (c.on ? '✓' : '✗') : '•';
+              return '<span class="bm-chip ' + cls + '" title="' + esc(c.tip) + '">' + mark + ' ' + c.label + '</span>';
+            }).join('') +
+            '<span class="bm-note">✓/✗＝回测背书标签（bm_validity）；•＝观察项</span></div>'
+          : '';
+      };
+      if (d.zygc) done(d.zygc);
+      else if (typeof d._loadZygc === 'function') d._loadZygc().then(done).catch(function () { done(null); });
+      else done(null);
+    }
+
+    if ('IntersectionObserver' in window) {
+      if (state.lazyIO) state.lazyIO.disconnect();
+      state.lazyIO = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (!en.isIntersecting) return;
+          buildLazy(en.target.dataset.lazy);
+          state.lazyIO.unobserve(en.target);
+        });
+      }, { rootMargin: '200px 0px' });
+      // 视口内（含 200px 预建带）的懒壳同步建一遍：IO 的回调跟着渲染帧走，
+      // 后台页签/省电模式下会迟迟不来，可见区的内容不能赌它
+      document.querySelectorAll('#stock-detail-body [data-lazy]').forEach(function (el) {
+        var r = el.getBoundingClientRect();
+        if (r.top < window.innerHeight + 200 && r.bottom > -200) buildLazy(el.dataset.lazy);
+        else state.lazyIO.observe(el);
+      });
+    } else {
+      ['charts', 'compare', 'divs', 'reports', 'zygc', 'events', 'actions'].forEach(buildLazy);
+    }
+    // 滚动兜底：部分 WebView/后台页签的 IO 回调不可靠，滚动时节流 200ms 补一遍
+    // 视口检查；全部建完自摘监听。重渲染时先摘旧监听再挂新的
+    if (state.lazyScrollFn) window.removeEventListener('scroll', state.lazyScrollFn);
+    var lazyScrollT = null;
+    state.lazyScrollFn = function () {
+      if (lazyScrollT) return;
+      lazyScrollT = setTimeout(function () {
+        lazyScrollT = null;
+        var left = document.querySelectorAll('#stock-detail-body [data-lazy]');
+        if (!left.length) {
+          window.removeEventListener('scroll', state.lazyScrollFn);
+          state.lazyScrollFn = null;
+          return;
+        }
+        left.forEach(function (el) {
+          if (el.style.minHeight === '') return;   // 已构建（buildLazy 完成时清掉占位高）
+          var r = el.getBoundingClientRect();
+          if (r.top < window.innerHeight + 200 && r.bottom > -200) buildLazy(el.dataset.lazy);
+        });
+      }, 200);
+    };
+    window.addEventListener('scroll', state.lazyScrollFn, { passive: true });
+
     // 移动端读法折叠：score-note 常占卡片 40% 高度，窄屏默认收起、点按展开
     // （桌面不受影响：折叠样式只在 ≤600px 媒体查询里生效）
     if (window.innerWidth <= 600) {
@@ -827,9 +915,7 @@
         n.addEventListener('click', function () { n.classList.toggle('open'); });
       });
     }
-    bindViewToggle();
-    bindComparePicks();
-    bindVaNav();
+    bindVaNav(buildLazy);
 
     // ---- 渐进式渲染：重活逐个让出主线程，手机上页面先可用、模块依次点亮 ----
     // 顺序即视觉顺序（图表 → 价值/评分卡 → 造假/管理/周期 → 综合分/陷阱）；
@@ -837,8 +923,9 @@
     // 且报表标签页默认并不展开）。桌面同样走这条队列——每个任务之间只让出一帧。
     var fa = null, ma = null, ca = null, vv = null, gg = null, tpD = null, dip = null;
     var tasks = [
-      function () { renderCharts(d.indicators || []); },
-      function () { renderCompare(d); renderValueAnalysis(va); renderScores(sc); },
+      // 趋势图表与财务对比已改视口懒构建（charts/compare 两个懒模块），不占任务帧；
+      // 队列只跑首屏评分内容：价值/评分卡 → 造假/管理/周期 → 综合分/陷阱
+      function () { renderValueAnalysis(va); renderScores(sc); },
       function () {
         fa = fraudAnalysis(d);
         var el = $('stock-score-fraud');
@@ -1085,12 +1172,14 @@
     };
   }
 
-  // 渲染价值分析各区块（体检表 + 现金流表 + 杜邦表 + 2 张图）
+  // 渲染价值分析各区块（体检表 + 现金流表 + 杜邦表）。两张图（每股派息/净现比）不在
+  // 这里画——renderVaCharts 有「state.charts 为空即跳过」守卫，而 state.charts 由
+  // renderCharts（①指标趋势，已改视口懒构建）填充；调用点跟着挪进 charts 懒构建器，
+  // 否则懒构建前 runs 一遍被守卫吞掉，②的两张图永远出不来。
   function renderValueAnalysis(va) {
     renderHealth(va);
     renderCfTable(va);
     renderDuPont(va);
-    renderVaCharts(va);
   }
 
   function renderHealth(va) {
@@ -3576,12 +3665,18 @@
   }
 
   // 模块锚点导航：平滑滚动（避免与 #/code 路由冲突）
-  function bindVaNav() {
+  function bindVaNav(buildLazy) {
     document.querySelectorAll('.va-nav a').forEach(function (a) {
       a.addEventListener('click', function (e) {
         e.preventDefault();
         var el = $(a.getAttribute('data-scroll'));
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (!el) return;
+        // 目标在懒模块里且还没构建：先同步构建再滚，不跳空壳。目标本身是懒壳
+        //（⑫⑬ 整节）与目标内含懒壳（① 里的图表/对比/分红/报告/主营）都要覆盖
+        var targets = el.matches('[data-lazy]') ? [el]
+          : Array.prototype.slice.call(el.querySelectorAll('[data-lazy]'));
+        targets.forEach(function (lz) { if (buildLazy) buildLazy(lz.dataset.lazy); });
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       });
     });
   }

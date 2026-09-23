@@ -969,6 +969,40 @@ def _load_seo_history(db: Session, sec: Security) -> list | None:
 # 跨年 4~5 期、单季环比 2 期，且都按日期索引不按行序），留 12 期余量；更老的季报只服务
 # 报表标签页的期次下拉，那条路走 /{code}/statements 懒取全量。实测把详情包从 462KB
 # 砍到约 1/2（gzip 54→27KB），手机上首开详情的主要等待就是这段传输加解析。
+def _load_zygc(db, sid):
+    """东财 F10 主营构成：最新报告期的产品/行业/地区三维度（各按收入降序，最多 8 项）。"""
+    rows = db.execute(
+        select(MainBusiness).where(MainBusiness.sid == sid)
+    ).scalars().all()
+    if not rows:
+        return None
+    latest = max(r.report_date for r in rows)
+    labels = {2: "产品构成", 1: "行业构成", 3: "地区构成"}
+    sections = []
+    for tp in (2, 1, 3):
+        sub = sorted((r for r in rows if r.report_date == latest and r.mainop_type == tp),
+                     key=lambda r: (-(r.income or 0), r.rank or 999))
+        if not sub:
+            continue
+        sections.append({"type": tp, "label": labels[tp], "rows": [
+            {"name": r.item_name, "income": _f(r.income), "ratio": _f(r.income_ratio),
+             "gm": _f(r.gross_margin)}
+            for r in sub[:8]
+        ]})
+    # 主业演变（观察芯片用）：各报告期占比最高的构成项（产品维度优先、剔除子项与兜底行）
+    tops = {}
+    for r in rows:
+        if r.mainop_type in (2, 1) and "其中" not in r.item_name and "补充" not in r.item_name:
+            k = r.report_date.isoformat()
+            cur = tops.get(k)
+            if cur is None or (r.income or 0) > (cur["income"] or 0):
+                tops[k] = {"date": k, "name": r.item_name,
+                           "income": _f(r.income), "ratio": _f(r.income_ratio)}
+    history = sorted(tops.values(), key=lambda x: x["date"])[-8:]
+    return {"reportDate": latest.isoformat(), "sections": sections,
+            "historyTop1": history} if sections else None
+
+
 INTERIM_KEEP = 12
 
 
@@ -1090,38 +1124,6 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         }
 
 
-    def _load_zygc(sid):
-        """东财 F10 主营构成：最新报告期的产品/行业/地区三维度（各按收入降序，最多 8 项）。"""
-        rows = db.execute(
-            select(MainBusiness).where(MainBusiness.sid == sid)
-        ).scalars().all()
-        if not rows:
-            return None
-        latest = max(r.report_date for r in rows)
-        labels = {2: "产品构成", 1: "行业构成", 3: "地区构成"}
-        sections = []
-        for tp in (2, 1, 3):
-            sub = sorted((r for r in rows if r.report_date == latest and r.mainop_type == tp),
-                         key=lambda r: (-(r.income or 0), r.rank or 999))
-            if not sub:
-                continue
-            sections.append({"type": tp, "label": labels[tp], "rows": [
-                {"name": r.item_name, "income": _f(r.income), "ratio": _f(r.income_ratio),
-                 "gm": _f(r.gross_margin)}
-                for r in sub[:8]
-            ]})
-        # 主业演变（观察芯片用）：各报告期占比最高的构成项（产品维度优先、剔除子项与兜底行）
-        tops = {}
-        for r in rows:
-            if r.mainop_type in (2, 1) and "其中" not in r.item_name and "补充" not in r.item_name:
-                k = r.report_date.isoformat()
-                cur = tops.get(k)
-                if cur is None or (r.income or 0) > (cur["income"] or 0):
-                    tops[k] = {"date": k, "name": r.item_name,
-                               "income": _f(r.income), "ratio": _f(r.income_ratio)}
-        history = sorted(tops.values(), key=lambda x: x["date"])[-8:]
-        return {"reportDate": latest.isoformat(), "sections": sections,
-                "historyTop1": history} if sections else None
 
     return {
         "code": sec.code, "name": sec.name, "market": sec.market, "currency": sec.currency,
@@ -1141,5 +1143,17 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         "seo_actions": _load_seo_history(db, sec),
         "scores": _load_scores(db, sec.sid),
         "events": _load_events(db, sec.sid, sec.name),
-        "zygc": _load_zygc(sec.sid),
+        # zygc（主营构成）移出到 /{code}/zygc 懒取：首开包只为评分卡与快照服务，
+        # 构成表属于下滑才看的内容（2026-09-23 模块化懒渲染重构）
     }
+
+
+@router.get("/{code}/zygc")
+def get_security_zygc(code: str, db: Session = Depends(get_session)):
+    """主营构成（东财 F10 三维度 + 主业演变）——详情页主营构成模块懒取。"""
+    sec = db.execute(
+        select(Security).where(Security.code == code).order_by(Security.sid)
+    ).scalars().first()
+    if not sec:
+        raise HTTPException(status_code=404, detail=f"security {code} not found")
+    return _load_zygc(db, sec.sid)

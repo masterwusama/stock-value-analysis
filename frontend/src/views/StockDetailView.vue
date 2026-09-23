@@ -50,6 +50,8 @@ async function render(code) {
       }
       return full
     }
+    // 主营构成懒取：zygc 已移出首开包，模块滚动到才拉
+    d._loadZygc = async () => await get(`/securities/${encodeURIComponent(code)}/zygc`)
     const L = await ensureLegacy()
     if (!alive || seq !== renderSeq) return
     // Wind 事件覆盖层接管:API scores.wind 即原 events/index.json byCode 条目全量
