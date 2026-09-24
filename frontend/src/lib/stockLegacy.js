@@ -74,41 +74,15 @@ import zygcMod from './detail/modules/zygc.js';
 import { evHasAny } from './detail/modules/events.js';
 import { hasActions } from './detail/modules/actions.js';
 import { createLazyMount } from './detail/lazyMount.js';
+import { state, mqMobile } from './detail/state.js';
+import { renderCharts, bindViewToggle, unbindResize } from './detail/modules/charts.js';
+import { renderCompare, bindComparePicks } from './detail/modules/compare.js';
+import { buildList } from './detail/modules/lists.js';
+import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './detail/format.js';
 
   var DATA_BASE = './data/';
 
   var $ = function (id) { return document.getElementById(id); };
-
-  var state = { current: null, charts: [], view: 'year', details: {},
-    // 事件覆盖层（events/index.json byCode）：由 fetchOverlayOnce 拉取，或 StockDetailView 从接口数据直接注入
-    eventOverlay: null, overlayLoaded: false };
-
-  // 移动端断点（与 CSS @media max-width:600px 保持一致）：详情长列表折叠 + 图表 grid 收紧
-
-  var mqMobile = window.matchMedia('(max-width: 600px)');
-
-  // 10年期国债收益率参考值（用于股债利差对比，需手动定期更新）
-
-  function detailMarket() { return (state.current && state.current.market) || 'A'; }
-
-  function yiUnit() { return detailMarket() === 'US' ? '亿美元' : '亿元'; }
-
-  function yuanUnit() { return detailMarket() === 'US' ? '美元' : '元'; }
-  // 市值本币后缀（拼在 fmtMoney 的「亿」后面）：A 股留空，与列表页 USD/HKD 角标同一套语义
-
-  function fmtCap(v) {
-    if (v == null || isNaN(v)) return '-';
-    return fmtMoney(v) + (detailMarket() === 'US' ? '美元' : detailMarket() === 'HK' ? '港元' : '');
-  }
-
-  // 小数 → "12.34"
-
-  function cls(v) {
-    if (v == null || isNaN(v) || v === 0) return 'flat';
-    return v > 0 ? 'up' : 'down';
-  }
-
-  // 最近一年分红记录（按派息日/公告日 ≥ 一年前，数据已按日期倒序）
 
   function show(id) {
     ['stock-loading', 'stock-error', 'stock-list', 'stock-detail'].forEach(function (n) {
@@ -214,6 +188,29 @@ import { createLazyMount } from './detail/lazyMount.js';
   // 带实测 lift），主营集中/出海/主业变更/分部毛利差为观察项（只陈列事实，不判好坏）。
   // 全部客户端现算，输入 = 财报 + d.zygc，零接口新增。scoring.py 不含此逻辑（不进评分）。
 
+  // ---- SECTION_DEFS：详情各节的单一事实源（顺序＝视觉顺序＝编号顺序） ----
+  // 加新节 = 在这里插一行（html 为 section 内部内容；评分卡节给 card 即可，
+  // 壳与填充 id 约定 stock-score-<key>）。①② 因内容依赖 ctx 在 renderDetail 内联，
+  // 但仍在此登记 nav 顺序——编号/锚点永不散落两处。
+  var SECTION_DEFS = [
+    { key: 'basic', no: '①', navTitle: '基础财务信息' },
+    { key: 'value', no: '②', navTitle: '通用价值标准' },
+    { key: 'graham', no: '③', navTitle: '格雷厄姆烟蒂', title: '格雷厄姆烟蒂标准评判',
+      html: '<div class="score-grid"><div class="score-card" id="stock-score-graham-agg"></div><div class="score-card" id="stock-score-graham-def"></div></div>' },
+    { key: 'schloss', no: '④', navTitle: '施洛斯烟蒂', title: '施洛斯烟蒂标准评判', card: 'stock-score-schloss' },
+    { key: 'buffett', no: '⑤', navTitle: '巴菲特芒格', title: '巴菲特芒格价值标准评判', card: 'stock-score-buffett' },
+    { key: 'fraud', no: '⑥', navTitle: '造假风险', title: '财务报表造假可能性分析', card: 'stock-score-fraud' },
+    { key: 'mgmt', no: '⑦', navTitle: '管理水平', title: '管理层管理水平评分', card: 'stock-score-mgmt' },
+    { key: 'cycle', no: '⑧', navTitle: '周期位置', title: '周期位置 · 周期性行业判定', card: 'stock-score-cycle',
+      tail: '<div class="stock-chart-block" id="stock-cycle-chart-block" style="display:none"><h4>历年财报周期位置评分趋势（分数越低越接近周期底部）</h4>' +
+        '<div class="stock-chart" id="stock-chart-cycle"></div>' +
+        '<p class="stock-chart-note">逐年回溯：以各年报年为窗口末尾取最近 8 年年报，按与当期相同的 8 维逻辑打分；单季环比逐年参与（历史年用该年自身单季营收环比，末年用最新单季环比），各年均为满 8 维、同口径可比。</p></div>' },
+    { key: 'value-score', no: '⑨', navTitle: '价值综合分', title: '价值综合分 · 便宜与质量的证据', card: 'stock-score-value' },
+    { key: 'recommend', no: 'R', navTitle: '综合推荐', title: '综合推荐分 · 门槛内的价值×成长合成', card: 'stock-score-recommend' },
+    { key: 'growth', no: '⑩', navTitle: '成长综合分', title: '成长综合分 · 过去五年的增长证据', card: 'stock-score-growth' },
+    { key: 'trap', no: '⑪', navTitle: '价值陷阱分', title: '价值陷阱分 · 坏消息证据', card: 'stock-score-trap' },
+  ];
+
   function renderDetail(d) {
     state.current = d;
     // 详情页 DOM 重建前释放旧图表实例
@@ -253,22 +250,11 @@ import { createLazyMount } from './detail/lazyMount.js';
     var hasAct = acMod.has(d);
     // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑪ 恒在，⑫ ⑬ 按有无数据出
     html += '<nav class="va-nav" aria-label="详情模块导航">' +
-      '<a href="#sec-basic" data-scroll="sec-basic">① 基础财务信息</a>' +
-      '<a href="#sec-value" data-scroll="sec-value">② 通用价值标准</a>' +
-      '<a href="#sec-graham" data-scroll="sec-graham">③ 格雷厄姆烟蒂</a>' +
-      '<a href="#sec-schloss" data-scroll="sec-schloss">④ 施洛斯烟蒂</a>' +
-      '<a href="#sec-buffett" data-scroll="sec-buffett">⑤ 巴菲特芒格</a>' +
-      '<a href="#sec-fraud" data-scroll="sec-fraud">⑥ 造假风险</a>' +
-      '<a href="#sec-mgmt" data-scroll="sec-mgmt">⑦ 管理水平</a>' +
-      '<a href="#sec-cycle" data-scroll="sec-cycle">⑧ 周期位置</a>' +
-      '<a href="#sec-value-score" data-scroll="sec-value-score">⑨ 价值综合分</a>' +
-      '<a href="#sec-recommend" data-scroll="sec-recommend">R 综合推荐</a>' +
-      '<a href="#sec-growth" data-scroll="sec-growth">⑩ 成长综合分</a>' +
-      '<a href="#sec-trap" data-scroll="sec-trap">⑪ 价值陷阱分</a>' +
-      tailMods.filter(function (m) { return m.no; }).map(function (m) {
+      SECTION_DEFS.concat(tailMods).filter(function (m) {
+        return m.navTitle && (!m.has || m.has(d));   // 无 has＝恒出（①②与评分卡节）
+      }).map(function (m) {
         return '<a href="#sec-' + m.key + '" data-scroll="sec-' + m.key + '">' + m.no + ' ' + m.navTitle + '</a>';
-      }).join('') +
-      '</nav>';
+      }).join('') + '</nav>';
 
     // ---- 模块一：基础财务信息（估值快照/趋势图/财务对比/报表/分红/定期报告）----
     html += '<section id="sec-basic" class="stock-section va-module"><h2 class="va-module-title"><span>①</span>基础财务信息</h2>';
@@ -465,51 +451,15 @@ import { createLazyMount } from './detail/lazyMount.js';
       '<p class="stock-chart-note">CAGR 基于 ' + va.growthNote + '；PEG = PE(TTM) / 净利5年CAGR，&lt;1 低估、1~2 合理、&gt;2 偏贵。</p></div>';
     html += '</section>'; // 模块二结束
 
-    // ---- 模块三：格雷厄姆烟蒂标准评判（进取型 + 防御型两张评分卡）----
-    html += '<section id="sec-graham" class="stock-section va-module"><h2 class="va-module-title"><span>③</span>格雷厄姆烟蒂标准评判</h2>' +
-      '<div class="score-grid">' +
-      '<div class="score-card" id="stock-score-graham-agg"></div>' +
-      '<div class="score-card" id="stock-score-graham-def"></div>' +
-      '</div></section>';
+    // ---- 评分卡各节（③~⑪ + R）：壳由 SECTION_DEFS 生成，内容经下方任务队列填充 ----
+    SECTION_DEFS.forEach(function (m) {
+      if (!m.title) return;   // ①② 在上面内联构建（依赖 ctx），这里只出评分卡节
+      html += '<section id="sec-' + m.key + '" class="stock-section va-module">' +
+        '<h2 class="va-module-title"><span>' + m.no + '</span>' + m.title + '</h2>' +
+        (m.html || '<div class="score-card" id="' + m.card + '"></div>') +
+        (m.tail || '') + '</section>';
+    });
 
-    // ---- 模块四：施洛斯烟蒂标准评判 ----
-    html += '<section id="sec-schloss" class="stock-section va-module"><h2 class="va-module-title"><span>④</span>施洛斯烟蒂标准评判</h2>' +
-      '<div class="score-card" id="stock-score-schloss"></div></section>';
-
-    // ---- 模块五：巴菲特芒格价值标准评判 ----
-    html += '<section id="sec-buffett" class="stock-section va-module"><h2 class="va-module-title"><span>⑤</span>巴菲特芒格价值标准评判</h2>' +
-      '<div class="score-card" id="stock-score-buffett"></div></section>';
-
-    // ---- 模块六：财务报表造假可能性分析（量化红旗筛查，百分制越高风险越大）----
-    html += '<section id="sec-fraud" class="stock-section va-module"><h2 class="va-module-title"><span>⑥</span>财务报表造假可能性分析</h2>' +
-      '<div class="score-card" id="stock-score-fraud"></div></section>';
-
-    // ---- 模块七：管理层管理水平评分（8 维百分制加权，越高越好）----
-    html += '<section id="sec-mgmt" class="stock-section va-module"><h2 class="va-module-title"><span>⑦</span>管理层管理水平评分</h2>' +
-      '<div class="score-card" id="stock-score-mgmt"></div></section>';
-
-    // ---- 模块八：周期位置（周期性判定 + 底部概率，分数越低越接近底部，非周期不打分）----
-    html += '<section id="sec-cycle" class="stock-section va-module"><h2 class="va-module-title"><span>⑧</span>周期位置 · 周期性行业判定</h2>' +
-      '<div class="score-card" id="stock-score-cycle"></div>' +
-      '<div class="stock-chart-block" id="stock-cycle-chart-block" style="display:none"><h4>历年财报周期位置评分趋势（分数越低越接近周期底部）</h4>' +
-      '<div class="stock-chart" id="stock-chart-cycle"></div>' +
-      '<p class="stock-chart-note">逐年回溯：以各年报年为窗口末尾取最近 8 年年报，按与当期相同的 8 维逻辑打分；单季环比逐年参与（历史年用该年自身单季营收环比，末年用最新单季环比），各年均为满 8 维、同口径可比。</p></div></section>';
-
-    // ---- 模块九：价值综合分 V（七项便宜 + 质量证据加权，分高＝又便宜又赚得到钱；全市场可算）----
-    html += '<section id="sec-value-score" class="stock-section va-module"><h2 class="va-module-title"><span>⑨</span>价值综合分 · 便宜与质量的证据</h2>' +
-      '<div class="score-card" id="stock-score-value"></div></section>';
-
-    // ---- R 综合推荐分（不带编号：它是 ⑨⑩ 与门槛的合成入口，不与 ⑨~⑪ 抢轴位）----
-    html += '<section id="sec-recommend" class="stock-section va-module"><h2 class="va-module-title"><span>R</span>综合推荐分 · 门槛内的价值×成长合成</h2>' +
-      '<div class="score-card" id="stock-score-recommend"></div></section>';
-
-    // ---- 模块十：成长综合分 G（七项过去五年的增长证据加权，分高＝更能长；全市场可算）----
-    html += '<section id="sec-growth" class="stock-section va-module"><h2 class="va-module-title"><span>⑩</span>成长综合分 · 过去五年的增长证据</h2>' +
-      '<div class="score-card" id="stock-score-growth"></div></section>';
-
-    // ---- 模块十一：价值陷阱分 T（七项坏消息证据的加权合计，分高＝坏消息堆得多；口径只覆盖 A 股）----
-    html += '<section id="sec-trap" class="stock-section va-module"><h2 class="va-module-title"><span>⑪</span>价值陷阱分 · 坏消息证据</h2>' +
-      '<div class="score-card" id="stock-score-trap"></div></section>';
 
     // ---- 模块十二：公司事件与股东结构（仅当有 Wind 事件明细时展示；港美股/未抓公司自动隐藏）----
     // 尾部整节模块统一编排：has 门控、编号标题、懒壳全部由注册表描述
@@ -547,7 +497,7 @@ import { createLazyMount } from './detail/lazyMount.js';
           renderCompare(d);
           bindComparePicks();
         } else if (key === 'divs' || key === 'reports') {
-          buildList(key, host(key));
+          buildList(d, key, host(key));
           bindMoreButtons();
         } else {
           // 注册表模块（zygc 子块 / ⑫⑬ 整节）：build 接 (d, ctx, hostEl)，宿主节点
@@ -568,37 +518,6 @@ import { createLazyMount } from './detail/lazyMount.js';
     }
 
     // 分红/定期报告行列表（从同步 html 挪来；折叠口径不变）
-    function buildList(key, hostEl) {
-      var fold = mqMobile.matches && !state.detailExpanded;
-      var out = '';
-      if (key === 'divs') {
-        (d.dividends || []).forEach(function (r, i) {
-          var extra = r.pay_date ? '派息日 ' + fmtDate(r.pay_date) : '';
-          out += '<div class="stock-list-item' + (fold && i >= 5 ? ' d-more' : '') + '">' +
-            '<span class="d-year">' + (r.year || '-') + '</span>' +
-            '<span class="stock-badge">' + (r.type || '') + '</span>' +
-            '<span class="d-desc">' + (r.description || '') + '</span>' +
-            (extra ? '<span class="d-date">' + extra + '</span>' : '') + '</div>';
-        });
-      } else {
-        (d.reports || []).forEach(function (r, i) {
-          var audit = (r.audit_firm || r.audit_opinion)
-            ? '<span class="d-audit">审计：' + (r.audit_firm || '—') + (r.audit_opinion ? ' · ' + r.audit_opinion : '') + '</span>' : '';
-          out += '<div class="stock-list-item' + (fold && i >= 5 ? ' d-more' : '') + '">' +
-            '<span class="stock-badge">' + r.category + '</span>' +
-            '<span class="d-year">' + r.title + '</span>' +
-            '<span class="d-date">' + fmtDate(r.date) + '</span>' + audit +
-            '<a href="' + r.pdf_url + '" target="_blank" rel="noopener">PDF 原文</a>' +
-            '<a href="' + r.detail_url + '" target="_blank" rel="noopener">详情</a></div>';
-        });
-      }
-      var n = key === 'divs' ? (d.dividends || []).length : (d.reports || []).length;
-      if (fold && n > 5) {
-        out += '<button type="button" class="d-more-btn" id="' + (key === 'divs' ? 'stock-divs-more' : 'stock-reports-more') +
-          '">展开全部 ' + n + ' ' + (key === 'divs' ? '条' : '份') + '</button>';
-      }
-      if (hostEl) hostEl.innerHTML = out;
-    }
 
     // 主营构成 + 商业模式芯片（zygc 懒取；失败/无数据给占位文案，芯片按可算项独立成行）
 
@@ -1203,407 +1122,6 @@ import { createLazyMount } from './detail/lazyMount.js';
       }]
     });
   }
-
-  function kv(k, v) {
-    return '<div class="kv"><div class="k">' + k + '</div><div class="v">' + v + '</div></div>';
-  }
-
-  function sheetTab(key, label) {
-    return '<button data-sheet="' + key + '">' + label + '</button>';
-  }
-
-  /* ---------------- 指标趋势图（3 个独立图表，支持季/年视图切换） ---------------- */
-
-  // 具名监听 + 守卫：早先这里是 window.onresize 赋值，会直接覆盖农化/EDB 模块挂的 resize 处理
-
-  var resizeBound = false;
-
-  var wasNarrow = null;
-
-  function resizeStockCharts() {
-    state.charts.forEach(function (c) { try { c.resize(); } catch (e) {} });
-  }
-
-  function onStockResize() {
-    // 推进宏任务：图表容器高度与折叠标记都要等这一轮 DOM 落地后再量
-    setTimeout(function () {
-      if (!resizeBound || !state.current) return;
-      var n = mqMobile.matches;
-      // grid 边距与移动端折叠结构都是渲染期烘死的，跨断点必须整体重建，单靠 resize 会留下桌面边距
-      if (n !== wasNarrow) {
-        wasNarrow = n;
-        if ($('stock-detail-body')) renderDetail(state.current);
-        return;
-      }
-      resizeStockCharts();
-    }, 0);
-  }
-
-  // 详情路由卸载后容器消失，必须摘掉监听（StockDetailView 的 onBeforeUnmount 调用）
-
-  function unbindResize() {
-    if (!resizeBound) return;
-    resizeBound = false;
-    window.removeEventListener('resize', onStockResize);
-  }
-
-  function renderCharts(indicators) {
-    if (typeof echarts === 'undefined') {
-      $('stock-chart-revenue').innerHTML = '<p class="stock-hint">图表库加载失败（ECharts CDN 不可用）</p>';
-      return;
-    }
-    var isYear = state.view === 'year';
-    var rows = indicators.slice().reverse(); // 升序排列
-    // 年视图仅保留年报（12-31）报告期
-    var data = isYear
-      ? rows.filter(function (r) { return String(r['报告期']).indexOf('12-31') >= 0; })
-      : rows;
-    var dates = data.map(function (r) { return fmtDate(r['报告期']); });
-
-    // 标题与注释随视图切换
-    $('stock-chart-title').textContent = isYear
-      ? '关键指标趋势（年度口径）'
-      : '关键指标趋势（近 ' + indicators.length + ' 期）';
-    $('stock-chart-revenue-title').textContent = '营业总收入 & 净利润（' + (isYear ? '全年' : '单季') + '，' + yiUnit() + '）';
-    $('stock-chart-margin-title').textContent = '销售毛利率 & 销售净利率（' + (isYear ? '年度' : '报告期') + '口径）';
-    $('stock-chart-roe-title').textContent = '净资产收益率（' + (isYear ? '年度' : '各期累计') + '）';
-    $('stock-chart-note').textContent = isYear
-      ? '年度口径：柱为全年累计值，折线为年度同比（右轴 %）'
-      : '季度口径：柱为单季值（本期累计 - 上期累计），折线为同比/环比（右轴 %，虚线=环比）；ROE 为报告期累计值';
-
-    // 首次渲染创建实例，切换视图时复用并整体替换 option
-    if (!state.charts.length) {
-      ['stock-chart-revenue', 'stock-chart-margin', 'stock-chart-roe'].forEach(function (id) {
-        state.charts.push(echarts.init($(id)));
-      });
-      wasNarrow = mqMobile.matches;
-      if (!resizeBound) { resizeBound = true; window.addEventListener('resize', onStockResize); }
-    }
-
-    // 通用配置：图例 + 缩放条 + 双 Y 轴（左=指标值，右=增长率 %）
-    // 默认显示窗口：年度=最近 3 年，季度=最近 8 个季度（可拖动缩放条查看全部）
-    var zoomN = isYear ? 3 : 8;
-    function baseOption(legendData, yName, yFormatter) {
-      return {
-        tooltip: {
-          trigger: 'axis',
-          valueFormatter: function (v) { return v == null ? '-' : (yFormatter ? yFormatter(v) : v); }
-        },
-        legend: { data: legendData, top: 0 },
-        // bottom 两端都留 46：dataZoom 滑块要占位；移动端只收紧左右与顶部
-        grid: mqMobile.matches ? { left: 46, right: 44, top: 30, bottom: 46 }
-          : { left: 60, right: 56, top: 34, bottom: 46 },
-        xAxis: { type: 'category', data: dates, axisLabel: { fontSize: 11 } },
-        yAxis: [
-          { type: 'value', name: yName, axisLabel: { fontSize: 11, formatter: yFormatter } },
-          {
-            type: 'value', name: '增长率',
-            axisLabel: { fontSize: 11, formatter: fmtPctAxis },
-            splitLine: { show: false }
-          }
-        ],
-        dataZoom: [
-          { type: 'inside', startValue: data.length - zoomN, endValue: data.length - 1 },
-          { type: 'slider', height: 14, bottom: 6, startValue: data.length - zoomN, endValue: data.length - 1 }
-        ],
-        series: []
-      };
-    }
-
-    // 金额系列（亿元柱状；年视图取累计字段，季视图取单季字段）
-    function barYiSeries(name, key, color) {
-      return {
-        name: name, type: 'bar', barMaxWidth: 22,
-        itemStyle: { color: color },
-        data: data.map(function (r) {
-          return r[key] == null ? null : +(r[key] / 1e8).toFixed(2);
-        })
-      };
-    }
-
-    // 比率系列（% 折线，服务端已是小数）
-    function pctLineSeries(name, key, color) {
-      return {
-        name: name, type: 'line', smooth: true,
-        itemStyle: { color: color },
-        data: data.map(function (r) {
-          return r[key] == null ? null : +(r[key] * 100).toFixed(2);
-        })
-      };
-    }
-
-    function fmtPctAxis(v) { return v + '%'; }
-
-    // 增长率折线（右轴 %）：同比=隔 N 期，环比=隔 1 期；虚线为环比
-    function growthLine(name, field, color, step, dashed) {
-      return {
-        name: name, type: 'line', smooth: true, yAxisIndex: 1,
-        symbolSize: 4,
-        itemStyle: { color: color },
-        lineStyle: { color: color, width: 1.5, type: dashed ? 'dashed' : 'solid' },
-        data: data.map(function (r, i) {
-          if (i < step) return null;
-          var cur = r[field], prev = data[i - step][field];
-          if (cur == null || prev == null || prev === 0) return null;
-          return +((cur - prev) / Math.abs(prev) * 100).toFixed(1);
-        })
-      };
-    }
-
-    // 图 1：营业总收入 & 净利润（柱）+ 同比/环比增长率（折线，右轴 %）
-    var revKey = isYear ? '营业总收入' : '营业总收入_单季';
-    var netKey = isYear ? '净利润' : '净利润_单季';
-    var opt1Legend = isYear
-      ? ['营业总收入', '净利润', '营收同比', '净利同比']
-      : ['营业总收入', '净利润', '营收同比', '净利同比', '营收环比', '净利环比'];
-    var opt1 = baseOption(opt1Legend, yiUnit());
-    opt1.series = [
-      barYiSeries('营业总收入', revKey, '#5b8ff9'),
-      barYiSeries('净利润', netKey, '#61c0a8'),
-      growthLine('营收同比', revKey, '#5b8ff9', isYear ? 1 : 4, false),
-      growthLine('净利同比', netKey, '#61c0a8', isYear ? 1 : 4, false)
-    ];
-    if (!isYear) {
-      opt1.series.push(growthLine('营收环比', revKey, '#5b8ff9', 1, true));
-      opt1.series.push(growthLine('净利环比', netKey, '#61c0a8', 1, true));
-    }
-    state.charts[0].setOption(opt1, true);
-
-    // 图 2：销售毛利率 & 销售净利率
-    var opt2 = baseOption(['销售毛利率', '销售净利率'], '%', fmtPctAxis);
-    opt2.series = [
-      pctLineSeries('销售毛利率', '销售毛利率', '#f6bd16'),
-      pctLineSeries('销售净利率', '销售净利率', '#e8684a')
-    ];
-    state.charts[1].setOption(opt2, true);
-
-    // 图 3：净资产收益率
-    var opt3 = baseOption(['净资产收益率'], '%', fmtPctAxis);
-    opt3.series = [pctLineSeries('净资产收益率', '净资产收益率', '#5b8ff9')];
-    state.charts[2].setOption(opt3, true);
-  }
-
-  /* ---------------- 季/年视图切换 ---------------- */
-
-  function bindViewToggle() {
-    var btns = document.querySelectorAll('.stock-view-toggle button');
-    btns.forEach(function (b) {
-      b.addEventListener('click', function () {
-        if (b.classList.contains('active')) return;
-        btns.forEach(function (x) { x.classList.toggle('active', x === b); });
-        state.view = b.dataset.view;
-        if (state.current) renderCharts(state.current.indicators || []);
-      });
-    });
-  }
-
-  /* ---------------- 财务对比（年报/季报，任意两个报告期） ---------------- */
-
-  // 对比指标配置（type: amount=亿元相对变化, pct=百分点差, ratio/yuan=绝对差, days=天数差）
-  // keySingle: 金额类在季报对比时改用单季字段（与图表季视图口径一致）
-  // src: 数据来源（缺省 indicators；income/balance/cashflow 三大报表按报告日关联）
-  //      金额类在季报对比时自动单季化（本期累计 - 上期累计），single:false 为时点值不单季化
-
-  var ANNUAL_METRICS = [
-    { group: '规模与成长', key: '营业总收入', keySingle: '营业总收入_单季', label: '营业总收入', type: 'amount' },
-    { group: '规模与成长', key: '净利润', keySingle: '净利润_单季', label: '净利润', type: 'amount' },
-    { group: '规模与成长', key: '扣非净利润', label: '扣非净利润', type: 'amount' },
-    { group: '成长能力', key: '营业总收入同比增长率', label: '营收同比增长率', type: 'pct' },
-    { group: '成长能力', key: '净利润同比增长率', label: '净利同比增长率', type: 'pct' },
-    { group: '成长能力', key: '扣非净利润同比增长率', label: '扣非净利同比增长率', type: 'pct' },
-    { group: '盈利能力', key: '销售毛利率', label: '销售毛利率', type: 'pct' },
-    { group: '盈利能力', key: '销售净利率', label: '销售净利率', type: 'pct' },
-    { group: '盈利能力', key: '净资产收益率', label: '净资产收益率', type: 'pct' },
-    { group: '盈利能力', key: '净资产收益率-摊薄', label: '净资产收益率(摊薄)', type: 'pct' },
-    { group: '偿债能力', key: '资产负债率', label: '资产负债率', type: 'pct' },
-    { group: '偿债能力', key: '产权比率', label: '产权比率', type: 'ratio' },
-    { group: '偿债能力', key: '流动比率', label: '流动比率', type: 'ratio' },
-    { group: '偿债能力', key: '速动比率', label: '速动比率', type: 'ratio' },
-    { group: '偿债能力', key: '保守速动比率', label: '保守速动比率', type: 'ratio' },
-    { group: '费用与利润', src: 'income', key: '营业总成本', label: '营业总成本', type: 'amount' },
-    { group: '费用与利润', src: 'income', key: '营业成本', label: '营业成本', type: 'amount' },
-    { group: '费用与利润', src: 'income', key: '销售费用', label: '销售费用', type: 'amount' },
-    { group: '费用与利润', src: 'income', key: '管理费用', label: '管理费用', type: 'amount' },
-    { group: '费用与利润', src: 'income', key: '财务费用', label: '财务费用', type: 'amount' },
-    { group: '费用与利润', src: 'income', key: '研发费用', label: '研发费用', type: 'amount' },
-    { group: '费用与利润', src: 'income', key: '营业利润', label: '营业利润', type: 'amount' },
-    { group: '费用与利润', src: 'income', key: '利润总额', label: '利润总额', type: 'amount' },
-    { group: '资产与负债', src: 'balance', key: '资产总计', label: '资产总计', type: 'amount', single: false },
-    { group: '资产与负债', src: 'balance', key: '负债合计', label: '负债合计', type: 'amount', single: false },
-    { group: '资产与负债', src: 'balance', key: '所有者权益(或股东权益)合计', label: '所有者权益合计', type: 'amount', single: false },
-    { group: '资产与负债', src: 'balance', key: '归属于母公司股东权益合计', label: '归母股东权益', type: 'amount', single: false },
-    { group: '资产与负债', src: 'balance', key: '货币资金', label: '货币资金', type: 'amount', single: false },
-    { group: '资产与负债', src: 'balance', key: '存货', label: '存货', type: 'amount', single: false },
-    { group: '资产与负债', src: 'balance', key: '应收账款', label: '应收账款', type: 'amount', single: false },
-    { group: '现金流量', src: 'cashflow', key: '经营活动产生的现金流量净额', label: '经营现金流净额', type: 'amount' },
-    { group: '现金流量', src: 'cashflow', key: '投资活动产生的现金流量净额', label: '投资现金流净额', type: 'amount' },
-    { group: '现金流量', src: 'cashflow', key: '筹资活动产生的现金流量净额', label: '筹资现金流净额', type: 'amount' },
-    { group: '现金流量', src: 'cashflow', key: '销售商品、提供劳务收到的现金', label: '销售商品收到现金', type: 'amount' },
-    { group: '现金流量', src: 'cashflow', key: '期末现金及现金等价物余额', label: '期末现金及等价物', type: 'amount', single: false },
-    { group: '每股与营运', key: '基本每股收益', label: '基本每股收益', type: 'yuan' },
-    { group: '每股与营运', key: '每股净资产', label: '每股净资产', type: 'yuan' },
-    { group: '每股与营运', key: '每股经营现金流', label: '每股经营现金流', type: 'yuan' },
-    { group: '每股与营运', key: '每股未分配利润', label: '每股未分配利润', type: 'yuan' },
-    { group: '每股与营运', key: '每股资本公积金', label: '每股资本公积金', type: 'yuan' },
-    { group: '每股与营运', key: '存货周转率', label: '存货周转率', type: 'ratio' },
-    { group: '每股与营运', key: '存货周转天数', label: '存货周转天数', type: 'days' },
-    { group: '每股与营运', key: '应收账款周转天数', label: '应收账款周转天数', type: 'days' },
-    { group: '每股与营运', key: '营业周期', label: '营业周期', type: 'days' }
-  ];
-
-  function periodLabel(p) {
-    var names = { '03': '一季报', '06': '半年报', '09': '三季报', '12': '年报' };
-    return String(p).slice(0, 4) + (names[String(p).slice(5, 7)] || '');
-  }
-
-  function bindComparePicks() {
-    var selA = $('stock-compare-a');
-    var selB = $('stock-compare-b');
-    if (!selA || !selB) return;
-    var refresh = function () {
-      if (selA.value && selA.value === selB.value) return; // 两选同一报告期时忽略
-      if (state.current) renderCompare(state.current);
-    };
-    selA.onchange = refresh;
-    selB.onchange = refresh;
-  }
-
-  function renderCompare(d) {
-    var rows = ((d && d.indicators) || []).slice(); // 保持倒序（最新报告期在前）
-    if (!rows.length) return;
-    var selA = $('stock-compare-a');
-    var selB = $('stock-compare-b');
-    if (!selA || !selB) return;
-
-    // 三大报表按报告日升序（金额项单季化：本期累计 - 上期累计）
-    var rpt = {};
-    ['income', 'balance', 'cashflow'].forEach(function (sec) {
-      rpt[sec] = ((d[sec] || []).slice()).sort(function (x, y) {
-        return cmpKey(x['报告日'], y['报告日']);
-      });
-    });
-    var indBy = {};
-    rows.forEach(function (r) { indBy[r['报告期']] = r; });
-
-    // 首次填充报告期下拉（按年份分组），默认最新年报 vs 上一年报
-    if (!selA.options.length) {
-      var lastYear = null, ogA = null, ogB = null;
-      rows.forEach(function (r) {
-        var y = String(r['报告期']).slice(0, 4);
-        if (y !== lastYear) {
-          lastYear = y;
-          ogA = document.createElement('optgroup');
-          ogA.label = y + ' 年';
-          selA.appendChild(ogA);
-          ogB = document.createElement('optgroup');
-          ogB.label = y + ' 年';
-          selB.appendChild(ogB);
-        }
-        ogA.appendChild(new Option(periodLabel(r['报告期']), r['报告期']));
-        ogB.appendChild(new Option(periodLabel(r['报告期']), r['报告期']));
-      });
-      var annual = rows.filter(function (r) { return String(r['报告期']).indexOf('12-31') >= 0; });
-      selA.value = annual[0] ? annual[0]['报告期'] : rows[0]['报告期'];
-      selB.value = annual[1] ? annual[1]['报告期'] : selA.value;
-    }
-
-    var a = selA.value, b = selB.value;
-    // 两期均为年报时用累计值（全年），否则用单季值（与图表季视图口径一致）
-    var isAnnualCmp = a.indexOf('12-31') >= 0 && b.indexOf('12-31') >= 0;
-
-    // 取数：indicators 直接取值；报表按报告日关联，非年报对比时金额类单季化（时点值除外）
-    function valOf(period, m) {
-      if (m.src && m.src !== 'indicator') {
-        var list = rpt[m.src];
-        for (var i = 0; i < list.length; i++) {
-          if (list[i]['报告日'] === period) {
-            var v = list[i][m.key];
-            if (v == null) return null;
-            if (m.type === 'amount' && !isAnnualCmp && m.single !== false) {
-              // 一季报累计即当季值，无需差分；其余季度单季 = 本期累计 - 上期累计
-              if (String(period).slice(5, 7) !== '03' && i > 0) {
-                var pv = list[i - 1][m.key];
-                return pv == null ? null : v - pv;
-              }
-              return v;
-            }
-            return v;
-          }
-        }
-        return null;
-      }
-      var row = indBy[period];
-      if (!row) return null;
-      var k = (m.type === 'amount' && !isAnnualCmp && m.keySingle) ? m.keySingle : m.key;
-      return row[k] == null ? null : row[k];
-    }
-
-    var html = '<thead><tr><th>指标</th><th>' + periodLabel(a) + '</th><th>' + periodLabel(b) +
-      '</th><th>变化</th></tr></thead><tbody>';
-
-    var curGroup = null, gIdx = -1;
-    // 移动端默认只展开前 2 组核心指标（规模成长/成长能力），其余折叠；桌面端全量；展开过则记住
-    var fold = mqMobile.matches && !state.compareExpanded;
-    ANNUAL_METRICS.forEach(function (m) {
-      if (m.group !== curGroup) {
-        curGroup = m.group;
-        gIdx++;
-        html += '<tr class="cmp-group' + (fold && gIdx >= 2 ? ' cmp-more' : '') + '"><td colspan="4">' + m.group + '</td></tr>';
-      }
-      var va = valOf(a, m), vb = valOf(b, m);
-      html += '<tr' + (fold && gIdx >= 2 ? ' class="cmp-more"' : '') + '><td>' + m.label + '</td>' +
-        '<td>' + fmtMetric(va, m) + '</td>' +
-        '<td>' + fmtMetric(vb, m) + '</td>' +
-        '<td>' + fmtChange(va, vb, m) + '</td></tr>';
-    });
-    html += '</tbody>';
-    if (fold) html += '<button type="button" class="cmp-more-btn" id="stock-compare-more">展开全部指标</button>';
-
-    $('stock-compare-body').innerHTML = html;
-    var moreBtn = $('stock-compare-more');
-    if (moreBtn) {
-      moreBtn.addEventListener('click', function () {
-        state.compareExpanded = true;
-        $('stock-compare-body').querySelectorAll('.cmp-more').forEach(function (tr) { tr.classList.remove('cmp-more'); });
-        moreBtn.parentNode.removeChild(moreBtn);
-      });
-    }
-  }
-
-  function fmtMetric(v, m) {
-    if (v == null) return '-';
-    if (m.type === 'amount') return (v / 1e8).toFixed(1) + '亿';
-    if (m.type === 'pct') return (v * 100).toFixed(1) + '%';
-    if (m.type === 'days') return (+v).toFixed(1) + '天';
-    return (+v).toFixed(2); // ratio / yuan
-  }
-
-  // 变化列：A 相对 B（红涨绿跌；比率用 pp，倍数/每股/天数用绝对差）
-
-  function fmtChange(va, vb, m) {
-    if (va == null || vb == null || vb === 0) return '-';
-    var d, cls, txt;
-    if (m.type === 'amount') {
-      d = (va - vb) / Math.abs(vb) * 100;
-      txt = (d >= 0 ? '+' : '') + d.toFixed(1) + '%';
-    } else if (m.type === 'pct') {
-      d = (va - vb) * 100;
-      txt = (d >= 0 ? '+' : '') + d.toFixed(1) + 'pp';
-    } else if (m.type === 'days') {
-      d = va - vb;
-      txt = (d >= 0 ? '+' : '') + d.toFixed(1) + '天';
-    } else if (m.type === 'yuan') {
-      d = va - vb;
-      txt = (d >= 0 ? '+' : '') + d.toFixed(2) + yuanUnit();
-    } else {
-      d = va - vb;
-      txt = (d >= 0 ? '+' : '') + d.toFixed(2);
-    }
-    cls = d >= 0 ? 'up' : 'down';
-    return '<span class="cmp-' + cls + '">' + txt + '</span>';
-  }
-
-  /* ---------------- 三大报表 ---------------- */
 
   function initSheet(d) {
     var body = $('stock-sheet-body');

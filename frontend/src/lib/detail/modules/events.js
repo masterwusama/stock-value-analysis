@@ -176,7 +176,7 @@ import { esc, fmtMoney, fmtNum, fmtPct, fmtDate } from '../../scoring.js'
 
   // 三笔里任一笔有值就出这一节；港美股与源侧无记录的公司 actions 整体为 null，整节不出
 
-export { evHasAny }
+export { evHasAny, evTable }
 
 export default {
   key: 'events', no: '⑫', title: '公司事件与股东结构', lazy: true,

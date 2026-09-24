@@ -2,6 +2,7 @@
  * 编号跟随 events 有无（无 Wind 事件时本节顶 ⑫ 的位子）——由注册表编排。
  */
 import { esc, fmtMoney, fmtNum, fmtDate } from '../../scoring.js'
+import { evTable } from './events.js'
 
   function hasActions(a) {
     return !!a && !!(a.seo || a.buy_latest || a.buy_done);
