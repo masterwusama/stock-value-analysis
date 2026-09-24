@@ -732,7 +732,8 @@ function hideScoreTip() {
   tip.show = false
 }
 // 移动卡片点按预取：touchend 与起点距离 <12px 才算点按意图（滚动松手不触发），
-// 抢在 click 出发路由前把详情请求发出去——点进详情时包多半已在途/已在缓存
+// 抢在 click 出发路由前把详情数据与视图 chunk 都发出去——点进详情时数据和代码
+// 多半已在途/已就绪（代码预热与 detailCache 的数据预取是两条线）
 let touchStart = null
 function cardTouchStart(e) {
   const t = e.changedTouches && e.changedTouches[0]
@@ -743,8 +744,18 @@ function cardTouch(s, e) {
   const t = e.changedTouches && e.changedTouches[0]
   const moved = t ? Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) : 999
   touchStart = null
-  if (moved < 12) prefetchDetail(s.code)
+  if (moved < 12) {
+    prefetchDetail(s.code)
+    import('../views/StockDetailView.vue').catch(() => {})
+  }
 }
+// 空闲预热 legacy（46KB gz）：手机没有 hover，首次点进详情不再付这笔解析钱；
+// 桌面首个悬浮也会触发同一缓存。requestIdleCallback 缺席时退化为 setTimeout
+onMounted(() => {
+  const warm = () => { import('../lib/stockLegacy.js').catch(() => {}) }
+  if ('requestIdleCallback' in window) requestIdleCallback(warm, { timeout: 3000 })
+  else setTimeout(warm, 1500)
+})
 // 视口跨过移动断点时表格与卡片互换，桌面悬浮格随之消失——浮层还开着就成了孤儿
 watch(isMobile, () => hideScoreTip())
 // 浮层定位：先按鼠标右下放；渲染后量实际高度，底部出屏就整体上移，还放不下就贴顶

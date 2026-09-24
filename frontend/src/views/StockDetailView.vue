@@ -4,12 +4,16 @@
  */
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import * as echarts from 'echarts'
 import { get } from '../api/client'
 import { getDetail } from '../lib/detailCache'
+import { ensureEcharts } from '../lib/echartsLoader'
 import '../assets/stock.css'
 
-window.echarts = echarts
+// echarts 不进关键路径：详情的图表全是懒模块（滚动到才建），legacy 的 charts 构建器
+// 经 window.__ensureEcharts 拿到 Promise 后再 renderCharts。这里挂载即后台预热，
+// 与首屏评分卡的阅读时间重叠——1MB 的 echarts 下载解析不再挡「点进详情」
+window.__ensureEcharts = ensureEcharts
+ensureEcharts()
 
 const route = useRoute()
 const router = useRouter()

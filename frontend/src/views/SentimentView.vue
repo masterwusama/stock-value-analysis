@@ -6,7 +6,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, nextTick } from 'vue'
 import { get } from '../api/client'
-import * as echarts from 'echarts'
+import { ensureEcharts } from '../lib/echartsLoader'
 
 const daily = ref(null)
 const history = ref([])          // 升序(旧→新),来自 /sentiment/history
@@ -14,6 +14,7 @@ const error = ref('')
 const loadMsg = ref('')          // 历史日期切换时的瞬时提示
 const trendEl = ref(null)
 let chart = null
+let echarts = null   // ensureEcharts() 注入（window.echarts 同一份）
 
 const TREND_DAYS = 120           // 走势卡取数窗口
 const VISIBLE_DAYS = 60          // dataZoom 默认露出的天数(其余拖滚动条看)
@@ -27,6 +28,8 @@ onMounted(async () => {
   }
   if (daily.value && history.value.length) {
     await nextTick()
+    // echarts 动态加载（1MB 不进页面关键路径）；失败也照常渲染其余卡片
+    try { echarts = await ensureEcharts() } catch (e) { /* 走势卡空着 */ }
     renderTrend()
     window.addEventListener('resize', onResize)
   }

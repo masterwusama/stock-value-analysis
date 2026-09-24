@@ -3,11 +3,10 @@
  * 渲染整体复用 legacy 链(agroLegacy.js + edbLegacy.js),数据源 /api/agro/*
  */
 import { nextTick, onBeforeUnmount, onMounted } from 'vue'
-import * as echarts from 'echarts'
+import { ensureEcharts } from '../lib/echartsLoader'
 import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
 import '../assets/agro.css'
 
-window.echarts = echarts
 const isMobile = useMediaQuery(MOBILE_QUERY)
 let mods = null
 // 卸载竞态：onMounted 里两个 await import 期间切走路由时，onBeforeUnmount 见到的
@@ -18,8 +17,13 @@ let alive = true
 
 onMounted(async () => {
   await nextTick()
-  const agro = await import('../lib/agroLegacy.js')
-  const edb = await import('../lib/edbLegacy.js')
+  // echarts 后台加载（不阻塞骨架与数据请求）；本页图表主体是农化价格曲线，
+  // legacy 渲染层读 window.echarts——ensureEcharts 完成前若已到画图步，等它
+  const [agro, edb] = await Promise.all([
+    import('../lib/agroLegacy.js'),
+    import('../lib/edbLegacy.js'),
+    ensureEcharts(),
+  ])
   if (!alive) return
   mods = { agro, edb }
   agro.init() // 拉 /api/agro/products 渲染农化视图

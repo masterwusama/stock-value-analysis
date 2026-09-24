@@ -771,9 +771,16 @@
       var host = function (name) { return document.querySelector('[data-lazy-body="' + name + '"]'); };
       try {
         if (key === 'charts') {
-          renderCharts(d.indicators || []);
-          renderVaCharts(va);          // ②的两张图依赖 state.charts（见 renderValueAnalysis 注释）
-          bindViewToggle();
+          // echarts 动态加载（见 echartsLoader）：图表模块本就在视口外，1MB 的
+          // 下载解析与阅读评分卡的时间重叠；ensure 失败也照常渲染（图表区留空）
+          var go = function () {
+            renderCharts(d.indicators || []);
+            renderVaCharts(va);          // ②的两张图依赖 state.charts（见 renderValueAnalysis 注释）
+            bindViewToggle();
+          };
+          if (typeof window.__ensureEcharts === 'function') {
+            window.__ensureEcharts().then(go).catch(function () { try { go(); } catch (e2) {} });
+          } else go();
         } else if (key === 'compare') {
           renderCompare(d);
           bindComparePicks();
