@@ -4306,11 +4306,14 @@
     if (prof != null && prof < 0 && rev != null) {
       var line = stBoardLine(code);
       if (rev < line) {
-        flags.push('loss_rev');
+        // 豁免窗内的双创未盈利：旗名带 _ex 后缀、等级降关注（与 scoring._st_risk 同款）
+        var ex = '';
         if (code.slice(0, 3) === '688' || code.slice(0, 3) === '689' || code.slice(0, 2) === '30') {
           var ly = parseInt(String(info['上市日期'] || '').slice(0, 4), 10);
-          if (ly && parseInt(String(last['报告期'] || '').slice(0, 4), 10) - ly < 4) exempt = true;
+          if (ly && parseInt(String(last['报告期'] || '').slice(0, 4), 10) - ly < 4) ex = '_ex';
         }
+        flags.push('loss_rev' + ex);
+        exempt = !!ex;
       } else if (rev < 2 * line) {
         flags.push('loss_rev_near');
       }
@@ -4325,7 +4328,8 @@
     if (price == null) price = (d.snapshot || {}).price;
     if (price != null && price > 0 && price <= 1.2) flags.push('price_low');
     if (!flags.length) return { risk: 0, flags: '' };
-    return { risk: (flags.indexOf('loss_rev') >= 0 && !exempt) ? 2 : 1, flags: flags.join(',') };
+    var hit = flags.indexOf('loss_rev') >= 0 || flags.indexOf('loss_rev_ex') >= 0;
+    return { risk: (hit && !exempt) ? 2 : 1, flags: flags.join(',') };
   }
 
   /* ---------------- 启动(已移交 Vue 组件) ---------------- */

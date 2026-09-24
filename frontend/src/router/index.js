@@ -15,6 +15,13 @@ const router = createRouter({ history: createWebHashHistory(), routes })
 router.onError((error, to) => {
   const msg = String(error?.message || error)
   if (/importing module|Failed to fetch dynamically|Loading chunk|error loading dynamically/.test(msg) && to) {
+    // 10 秒防抖：部署出一半（新 hash 也 404）时 reload 会再触发 onError，不设防
+    // 就是无限刷新；窗口内只自愈一次，第二次把错误留在控制台可见
+    try {
+      const last = Number(sessionStorage.getItem('va_chunk_heal') || 0)
+      if (Date.now() - last < 10000) return
+      sessionStorage.setItem('va_chunk_heal', String(Date.now()))
+    } catch (e) { /* 无痕模式写不进：宁可冒险也不放弃自愈 */ }
     window.location.assign(`#${to.fullPath}`)
     window.location.reload()
   }

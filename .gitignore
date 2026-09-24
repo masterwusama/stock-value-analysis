@@ -33,6 +33,7 @@ backend/collector/data/universe_hk.json
 backend/collector/data/universe_us.json
 backend/collector/data/.fetch.lock
 backend/collector/data/case/
+backend/collector/data/sentiment/
 backend/collector/data/crawl_failed.json
 backend/collector/data/_index_backup_*
 backend/collector/data/*.err

@@ -72,15 +72,33 @@ def check_company(code):
     assert api["snapshot"]["pe_ttm"] == exp["pe_ttm"], "pe mismatch"
     assert float(api["snapshot"]["market_cap"]) == float(exp["market_cap"]), "mcap mismatch"
 
-    # 财务四表:行数一致
+    # 财务四表:行数按裁剪口径核对(2026-09-23 起 API 详情包=全部年报+最近12个季报行,
+    # securities._prune_interims;报表标签页的完整历史走 /statements 端点,下方单独比)
+    def _pruned_rows(rows):
+        def day(r):
+            return str(r.get("报告日") or r.get("报告期") or "")
+        annual = [r for r in rows if day(r)[5:7] == "12"]
+        interim = [r for r in rows if day(r)[5:7] != "12"][:12]
+        return sorted(annual + interim, key=day, reverse=True)
+
     for key in ("indicators", "income", "balance", "cashflow"):
-        assert len(api[key]) == len(src[key]), f"{key} rows {len(api[key])} != {len(src[key])}"
+        want = _pruned_rows(src[key])
+        assert len(api[key]) == len(want), f"{key} rows {len(api[key])} != pruned {len(want)}"
+        for a, w in zip(api[key], want):
+            ad = str(a.get("报告日") or a.get("报告期"))
+            wd = str(w.get("报告日") or w.get("报告期"))
+            assert ad == wd, f"{key} 期次错位 {ad} != {wd}"
+    full = get(f"/api/securities/{code}/statements")
+    for key in ("income", "balance", "cashflow"):
+        assert len(full[key]) == len(src[key]), f"statements.{key} rows {len(full[key])} != {len(src[key])}"
 
     # 整行键集合/值对比(抽样 3 期;核心科目还原可能用首选键,允许键名替换但值必须在)
     diffs = 0
     for key, date_k in (("indicators", "报告期"), ("income", "报告日"), ("balance", "报告日")):
-        for i in (0, len(src[key]) // 2, len(src[key]) - 1):
-            sa, ss = api[key][i], src[key][i]
+        # 比对基准改裁剪后的源(与 API 同序),抽样的头/中/尾都在裁剪窗口内
+        pruned = _pruned_rows(src[key])
+        for i in (0, len(pruned) // 2, len(pruned) - 1):
+            sa, ss = api[key][i], pruned[i]
             for k, v in ss.items():
                 if k == date_k:
                     continue

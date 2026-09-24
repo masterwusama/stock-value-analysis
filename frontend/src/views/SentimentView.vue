@@ -28,10 +28,13 @@ onMounted(async () => {
   }
   if (daily.value && history.value.length) {
     await nextTick()
-    // echarts 动态加载（1MB 不进页面关键路径）；失败也照常渲染其余卡片
-    try { echarts = await ensureEcharts() } catch (e) { /* 走势卡空着 */ }
-    renderTrend()
-    window.addEventListener('resize', onResize)
+    // echarts 动态加载（1MB 不进页面关键路径）；失败则跳过建图（renderTrend 里
+    // echarts 还是 null，硬跑会 null.init 抛未捕获异常），走势卡留占位高度
+    try {
+      echarts = await ensureEcharts()
+      renderTrend()
+      window.addEventListener('resize', onResize)
+    } catch (e) { /* 走势卡空着：其余卡片照常 */ }
   }
 })
 onBeforeUnmount(() => {

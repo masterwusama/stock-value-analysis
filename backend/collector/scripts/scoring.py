@@ -2064,14 +2064,18 @@ def _st_risk(company):
     if prof is not None and prof < 0 and rev is not None:
         line = _st_board_line(code)
         if rev < line:
-            flags.append('loss_rev')
+            # 豁免窗内的双创未盈利（上市不满 4 个完整会计年度）：旗名带 _ex 后缀，
+            # 等级降为关注——旗串自解释（前端悬停文案区分），不用再猜这 1 分从哪来
+            _ex = ''
             if code[:3] in ('688', '689') or code[:2] == '30':
                 try:
                     list_y = int(str(info.get('上市日期') or '')[:4] or 0)
                 except ValueError:
                     list_y = 0
                 if list_y and int(str(last.get('报告期') or '')[:4] or 0) - list_y < 4:
-                    exempt = True
+                    _ex = '_ex'
+            flags.append('loss_rev' + _ex)
+            exempt = bool(_ex)
         elif rev < 2 * line:
             flags.append('loss_rev_near')
     dr = last.get('资产负债率')
@@ -2087,7 +2091,7 @@ def _st_risk(company):
         flags.append('price_low')
     if not flags:
         return 0, ''
-    risk = 2 if ('loss_rev' in flags and not exempt) else 1
+    risk = 2 if (('loss_rev' in flags or 'loss_rev_ex' in flags) and not exempt) else 1
     return risk, ','.join(flags)
 
 

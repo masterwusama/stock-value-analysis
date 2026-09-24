@@ -457,7 +457,7 @@ if _v_bad:
 # 三态写反这类错一条都拦不住。
 from sqlalchemy import and_, func, select         # noqa: E402
 from app.db import SessionLocal                      # noqa: E402
-from app.models import FinBalance, PeriodicReport, Security, WindEvent  # noqa: E402
+from app.models import CaseEvent, FinBalance, PeriodicReport, Security, WindEvent  # noqa: E402
 
 _AUDIT_CLEAN = {"标准无保留意见", "无保留意见"}   # 与 import_legacy.AUDIT_CLEAN 同集，刻意重写一份
 _dbs = SessionLocal()
@@ -501,13 +501,25 @@ for sid, parent, total in _dbs.execute(
     if eq is not None and float(eq) < 0:
         _exp_flags.setdefault(code, set()).add("neg_equity")
 
-# 3) Wind 违规/立案/处罚事件（覆盖极窄，实测只 1 家，但不能因此就不校验）
+# 3) case_filed 两个数据源（与 import_legacy.load_gate_facts 同口径）：
+#    a. Wind 违规/立案/处罚事件（覆盖极窄，但不能因此就不校验）
+#    b. case_event 近 3 年 self 立案（巨潮公告面，2026-09-22 起的主源——wind_event
+#       只覆盖 16 家、立案分支原本是空的）
 for (sid,) in _dbs.execute(select(WindEvent.sid).where(
         WindEvent.etype.in_(["违规", "立案", "处罚", "ST"])).distinct()):
     code = _code_by_sid.get(sid)
     if code:
         _judgeable.add(code)
         _exp_flags.setdefault(code, set()).add("case_filed")
+from datetime import date as _date, timedelta as _td  # noqa: E402
+_cut3y = _date.today() - _td(days=3 * 365)
+for code, in _dbs.execute(
+        select(Security.code).distinct()
+        .join(CaseEvent, CaseEvent.code == Security.code)
+        .where(CaseEvent.kind == "立案", CaseEvent.subject == "self",
+               CaseEvent.announce_date >= _cut3y)):
+    _judgeable.add(code)
+    _exp_flags.setdefault(code, set()).add("case_filed")
 
 # 4) 风险警示：只有 A 股有 ST 制度（美股简称带 ST 的实测 88 家，全是 STAR/Stifel 之类）
 for code, mkt, name in _dbs.execute(select(Security.code, Security.market, Security.name)):
