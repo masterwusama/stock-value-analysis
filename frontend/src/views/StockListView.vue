@@ -695,7 +695,7 @@ const TIP_WHICH = {
   trap: 'trap', growth: 'growth', value: 'value', recommend: 'recommend',
 }
 async function loadLegacy() {
-  if (!legacyMod.value) legacyMod.value = await import('../lib/stockLegacy.js')
+  if (!legacyMod.value) legacyMod.value = await import('../lib/scoring.js')
   return legacyMod.value
 }
 function scoreHover(evt, s, key) {
