@@ -127,9 +127,21 @@ async function main() {
     const cfBM = (d.cashflow || []).filter(r => String(r['报告日'] || '').includes('-12-31'))
       .sort((a, b) => String(a['报告日']) < String(b['报告日']) ? -1 : 1);
     const lastCfBM = ldBM ? (cfBM.find(r => String(r['报告日']).slice(0, 10) === ldBM) || null) : null;
-    const cxBM = lastCfBM ? lastCfBM['购建固定资产、无形资产和其他长期资产所支付的现金'] : null;
-    const ocBM = lastCfBM ? lastCfBM['经营活动产生的现金流量净额'] : null;
-    out[code].bmLight = (cxBM != null && ocBM != null && ocBM > 0) ? (cxBM / ocBM <= 0.6) : null;
+    // 与 scoring.compute_scores 同批的 3 年合计口径（缺年退单年）；parity 才能对上
+    const annCfBM = cfBM.slice(-3);
+    let cxs3 = [], ocs3 = [];
+    for (const r of annCfBM) {
+      const c = r['购建固定资产、无形资产和其他长期资产所支付的现金'];
+      const o = r['经营活动产生的现金流量净额'];
+      if (c != null && o != null) { cxs3.push(c); ocs3.push(o); }
+    }
+    if (annCfBM.length >= 3 && cxs3.length >= 3 && ocs3.reduce((a, b) => a + b, 0) > 0) {
+      out[code].bmLight = cxs3.reduce((a, b) => a + b, 0) / ocs3.reduce((a, b) => a + b, 0) <= 0.6;
+    } else {
+      const cxBM = lastCfBM ? lastCfBM['购建固定资产、无形资产和其他长期资产所支付的现金'] : null;
+      const ocBM = lastCfBM ? lastCfBM['经营活动产生的现金流量净额'] : null;
+      out[code].bmLight = (cxBM != null && ocBM != null && ocBM > 0) ? (cxBM / ocBM <= 0.6) : null;
+    }
     const gmNowBM = lastBM ? lastBM['销售毛利率'] : null;
     let gmOldBM = null;
     if (ldBM) {

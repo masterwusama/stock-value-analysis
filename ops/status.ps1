@@ -75,3 +75,8 @@ if ($Jobs) {
     Push-Location $Backend
     try { & $Python -X utf8 -m scripts.job_status } finally { Pop-Location }
 }
+
+# 运维盲区兜底（2026-09-28）：job 最近状态 + 外网 serve 指向，默认输出
+Write-Host "`n-- 运维自检（job 状态 + 外网入口） --"
+Push-Location $Backend
+try { & $Python -X utf8 ..\ops\_status_extra.py } finally { Pop-Location }

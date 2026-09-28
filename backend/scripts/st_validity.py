@@ -81,19 +81,39 @@ def main():
         print(f"当前 ST 简称家里，本预警亮旗的 {st_flagged}/{n_st} 家——其余多经审计非标/立案/"
               f"资金占用等 gate 侧要件进入警示（gate_flags 已单独覆盖），不表")
 
-    # 规则自检：裸函数对 3 家手工样例
-    sample = {"688197": 1, "000001": 0, "00700": None}
-    ok = True
-    for code, want in sample.items():
-        f = DATA / "companies" / f"{code}.json"
+    # 规则形状自检（2026-09-28 起不做具体家期望——规则改动时硬编码期望极易失效成假绿，
+    # 改验值域与不变量：risk∈{None,0,1,2}；risk=2 必含 loss_rev/case 类旗；
+    # flags 非空必有 risk≥1；非 A 股恒 None；有旗必有对应旗名）
+    VALID_FLAGS = {"loss_rev", "loss_rev_ex", "loss_rev_near", "debt90", "price_low", "case"}
+    bad = 0
+    n_checked = 0
+    for c in idx.get("companies") or []:
+        if (c.get("market") or "A") != "A":
+            continue
+        f = DATA / "companies" / f"{c['code']}.json"
         if not f.exists():
             continue
         got, flags = _st_risk(json.loads(f.read_text(encoding="utf-8")))
-        mark = "OK" if got == want else "MISMATCH"
-        if got != want:
-            ok = False
-        print(f"  样例 {code}: risk={got} flags='{flags}' 期望 {want} [{mark}]")
-    return 0 if ok else 1
+        n_checked += 1
+        fl = [x for x in flags.split(",") if x]
+        errs = []
+        if got not in (None, 0, 1, 2):
+            errs.append(f"risk 值域外 {got}")
+        if fl and got == 0:
+            errs.append("有旗却 risk=0")
+        if not fl and got == 1:
+            errs.append("risk=1 却无旗")
+        if got == 2 and not any(k in fl for k in ("loss_rev", "case")):
+            errs.append(f"高危却无 loss_rev/case 旗: {flags}")
+        for k in fl:
+            if k not in VALID_FLAGS:
+                errs.append(f"未知旗名 {k}")
+        if errs:
+            bad += 1
+            if bad <= 5:
+                print(f"  ✗ {c['code']}: {'; '.join(errs)}")
+    print(f"形状自检: {n_checked} 家, 违反不变量 {bad} 家")
+    return 0 if bad == 0 else 1
 
 
 if __name__ == "__main__":

@@ -512,7 +512,16 @@ for (sid,) in _dbs.execute(select(WindEvent.sid).where(
         _judgeable.add(code)
         _exp_flags.setdefault(code, set()).add("case_filed")
 from datetime import date as _date, timedelta as _td  # noqa: E402
-_cut3y = _date.today() - _td(days=3 * 365)
+# 窗口锚定最新批次日（与 import_legacy.load_gate_facts 同口径）：立案旗随批次快照，
+# 用 today 重算会因滚动窗漂移误报（2026-09-28 实测 000688 立案掉出窗被标不一致）
+_batch_day = max(all_items.values(), key=lambda it: str(it.get("score_date") or "")).get("score_date")
+_bd = str(_batch_day or "")[:10]
+if _bd >= "2000-01-01":
+    y, m, dd = int(_bd[:4]), int(_bd[5:7]), int(_bd[8:10])
+    _cut3y = _date(y - 3, m, dd)   # 日历三年，对齐 SQL 的 INTERVAL 3 YEAR
+    # 3*365 天在闰年边界会差一天（实测 000688 立案 2023-09-28 卡缝），必须日历运算
+else:
+    _cut3y = _date.today() - _td(days=3 * 365 + 1)
 for code, in _dbs.execute(
         select(Security.code).distinct()
         .join(CaseEvent, CaseEvent.code == Security.code)

@@ -670,7 +670,10 @@ function rTitle(s) {
   const ing = []
   if (s.value != null) ing.push('V ' + s.value.toFixed(1))
   if (s.growth != null) ing.push('G ' + s.growth.toFixed(1))
-  return `${R_TIP}｜本标的：${label}${ing.length ? ' · ' + ing.join(' · ') : ''}`
+  const mkt = s.market && s.market !== 'A'
+    ? '⚠ 港美股：三道门槛在本市场实际只剩「造假 ≤ 40」一道（陷阱口径只在 A 股成立、扣非不披露），排雷保护弱于 A 肎——读分时把造假分与 ⚑ 一并看。'
+    : ''
+  return `${R_TIP}｜本标的：${label}${ing.length ? ' · ' + ing.join(' · ') : ''}${mkt ? '｜' + mkt : ''}`
 }
 // 移动卡片第二层：推荐格无分时的门槛原因速记（与详情 R 卡一致，缩写版）
 const HERO_GATE = { fraud: '造假', trap: '陷阱', interim: '中报', nodata: '无数据' }

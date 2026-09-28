@@ -581,7 +581,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         var el = $('stock-score-recommend');
         if (el) el.innerHTML = recommendCard(recommendScore(vv.total, gg.total,
                                                        fa ? fa.total : null, tpD.total, dip),
-                                             vv.total, gg.total, dip);
+                                             vv.total, gg.total, dip, d.market);
       },
       function () {
         var el = $('stock-score-trap');
@@ -879,7 +879,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
    * 门槛外的公司没有 R：列表 `-` 是「不过资格线」，不是 0 分。
    */
 
-  function recommendCard(r, vTot, gTot, dip) {
+  function recommendCard(r, vTot, gTot, dip, market) {
     var band = r.total == null ? null : rBandOf(r.total);
     var g = band ? band.grade : 'na';
     var head = '<div class="score-card-head"><h4>综合推荐分 R</h4>' +
@@ -890,6 +890,11 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       '（本标的：V ' + (vTot == null ? '-' : fmtNum(vTot)) + ' · G ' + (gTot == null ? '-' : fmtNum(gTot)) +
       '）；发分前置三道门槛——造假 ≤ 40 · 陷阱 ≤ 20 · 中报恶化 dip ≤ −70%，判不动的门槛输入按' +
       '「无证据」放行（港美股陷阱整列不适用、扣非缺失侧 dip 判不动，靠这条拿得到 R）。' +
+      (market && market !== 'A'
+        ? '<br><b style="color:#c2571a">⚠ 港美股注意：三道门槛在本市场实际只剩「造假 ≤ 40」一道' +
+          '（陷阱口径只在 A 股成立、扣非科目港美股不披露）——本列在此市场的排雷保护弱于 A 股，' +
+          '读分时请把造假分与 ⚑ 硬门槛一并看。</b>'
+        : '') +
       '门槛外的公司整格 `-`，那是「不过资格线」，不是 0 分。</p>';
     // 中报恶化警示：评分轴只吃年报，这里把年报盲区亮出来（不改分，600866 式实例）
     if (dip != null && dip <= INTERIM_DIP_NOTE) {

@@ -99,9 +99,17 @@ def bm_tags(f, yrs):
     ct = cur.get("contract")
     if ct is not None and rev:
         out["prepay"] = ct / rev
-    cx, ocf = cur.get("capex"), cur.get("ocf")
-    if cx is not None and ocf and ocf > 0:
-        out["light"] = cx / ocf
+    # light 改 3 年合计口径（2026-09-28）：单年 capex 脉冲（投产年）让标签闪烁——
+    # 抽样 388 家单年 vs 3 年口径不一致率 14.4%。3 年合计 capex / 3 年合计 OCF，
+    # 任一年缺数则退回单年口径（不因窗口缺年整项判不动）。
+    cxs = [f.get(y, {}).get("capex") for y in (ay, ay - 1, ay - 2)]
+    ocfs = [f.get(y, {}).get("ocf") for y in (ay, ay - 1, ay - 2)]
+    if all(v is not None for v in cxs) and all(v is not None for v in ocfs) and sum(ocfs) > 0:
+        out["light"] = sum(cxs) / sum(ocfs)
+    else:
+        cx, ocf = cur.get("capex"), cur.get("ocf")
+        if cx is not None and ocf and ocf > 0:
+            out["light"] = cx / ocf
     ar = cur.get("ar")
     if ar is not None and rev:
         out["ar_low"] = ar / rev

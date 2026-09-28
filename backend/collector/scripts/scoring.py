@@ -9,11 +9,12 @@
 
 from datetime import datetime, timedelta, timezone
 import math
+import os
 
 from equity import equity_of
 
 # 10年期国债收益率参考值（与 stock.js BOND_10Y 一致，仅用于股债利差展示，不影响评分）
-BOND_10Y = 0.017
+BOND_10Y = float(os.getenv('BOND_10Y', '0.017'))  # 与后端 .env 同名同默认；仅影响股债利差展示
 
 
 def ssum(vals):
@@ -246,8 +247,11 @@ def value_analysis(d, now=None):
     per_share_y = per_share_div(divs, last_year) if last_year is not None else None
     eps_y = last.get('基本每股收益') if last else None
     payout = per_share_y / eps_y if (per_share_y is not None and eps_y is not None and eps_y > 0) else None
-    # 断档锚定只在 A 股传（分红史全量可查，停派是公开事实）；港美覆盖不全，见函数头
-    div_anchor = last_year if (d.get('market') or 'A') == 'A' else None
+    # 断档锚定：A 股传年报年（停派 ≥2 年清零，分红史全量可查）；港美股传宽锚
+    # （年报年+2＝停派 ≥4 年才清零）——那侧分红源覆盖不全，紧锚会把「没抓到」误判成
+    # 「没派过」，宽锚是源缺陷与万科式盲区之间的折中（2026-09-28 起，此前完全不锚）
+    mkt = d.get('market') or 'A'
+    div_anchor = last_year if mkt == 'A' else (last_year + 2 if last_year is not None else None)
     div_consecutive = consecutive_div_years(divs, div_anchor)
 
     # ---- 现金流质量（近 5 年年报）----
@@ -1659,7 +1663,7 @@ def recommend_score(v_total, g_total, fraud, trap_total, dip=None):
 def management_analysis(d):
     """对应 JS managementAnalysis —— 管理层管理水平评分（0~100，越高越好）。
     融合 DEA 投入产出效率思想的 8 维透明加权：费用纪律/资产周转/资本回报/成长质量/
-    营运资金/现金流质量/股东回报/治理诚信；数据不足项不计分不误伤。"""
+    营运资金/现金流质量/股东回报（7 项制，治理诚信项 2026-09-28 删除——与造假分同源）；数据不足项不计分不误伤。"""
     annual = annual_rows(d.get('indicators') or [])
     last = annual[-1] if annual else None
     last_date = str(last.get('报告期') or '')[:10] if last else None
@@ -1747,12 +1751,9 @@ def management_analysis(d):
         payout = per_share_y / eps
         if payout > 1.5:
             payout = None
-    # 8. 治理诚信：造假风险分反向（越低越诚信）；异常只丢该维度不影响其余 7 项（与 JS try/catch 一致）
-    try:
-        fraud = fraud_analysis(d)
-    except Exception:                                       # noqa: BLE001
-        fraud = None
-
+    # 第 8 项「治理诚信=造假分反向」已删（2026-09-28）：它与造假分列同一信号两面，
+    # 两列并排读会被当成互相印证的独立证据；诚信维度归造假分列与 gate 定性否决管，
+    # 管理分回归纯经营效率（7 项，满分 90，加权总分按有效满分归一仍 0~100）。
     scores = [
         lerp_score(fee_ratio, 0.10, 0.30, 15, 0),   # 费用纪律，15 分（越低越好）
         lerp_score(turnover, 0.2, 1.0, 0, 10),      # 资产周转，10 分（越高越好）
@@ -1761,10 +1762,9 @@ def management_analysis(d):
         lerp_score(wc, 0.15, 0.45, 10, 0),          # 营运资金占用，10 分（越低越好）
         lerp_score(cash_ratio, 0, 1.0, 0, 15),      # 现金流质量，15 分（越高越好）
         lerp_score(payout, 0, 0.50, 0, 10),         # 股东回报，10 分（越高越好）
-        None if fraud is None else lerp_score(fraud, 0, 100, 10, 0),  # 治理诚信，10 分（造假分越低越好）
     ]
     # 归一化：本分越高越好，缺项若只是少几笔加分，数据不全的公司就被系统性压低
-    total = _weighted_total(list(zip(scores, (15, 10, 20, 10, 10, 15, 10, 10))))
+    total = _weighted_total(list(zip(scores, (15, 10, 20, 10, 10, 15, 10))))
     if total is None:
         return None
     # 与 JS Math.round(total*10)/10 一致（Python round 为银行家舍入，不能直接用）
@@ -1883,14 +1883,21 @@ def cycle_analysis(d):
         capex_avg = sum(capex_prev) / len(capex_prev)
         if capex_avg > 0:
             capex_ratio = capex_now / capex_avg
-    # 最新单季营收环比（仍在回落 → 未到底；环比回升 → 开始离开底部）
+    # 最新单季营收同比（2026-09-28 起由环比改同比）：环比=最新季/上一季，强季节行业
+    # （白酒 Q1 备货、零售 Q4 旺季）会被季节差主导——Q1 环比深负不代表探底。同比对齐
+    # 去年同季，季节性天然相消。锚点按单季同比的量级放宽：≤-30% 仍在恶化 0 分，
+    # ≥+10% 明确回升满分（原环比锚 -10%/+5% 对同比过紧）。
     q_rows = sorted([r for r in (d.get('indicators') or [])
                      if str(r.get('报告期') or '')[5:] != '12-31'],
                     key=lambda r: str(r.get('报告期') or ''))
-    qrev = [r.get('营业总收入_单季') for r in q_rows]
+    qrev = {str(r.get('报告期') or '')[:10]: r.get('营业总收入_单季') for r in q_rows}
     qoq = None
-    if len(qrev) >= 2 and qrev[-2] is not None and qrev[-2] > 0 and qrev[-1] is not None:
-        qoq = qrev[-1] / qrev[-2] - 1.0
+    qdates = sorted(qrev)
+    if qdates:
+        qd = qdates[-1]
+        qprev = str(int(qd[:4]) - 1) + qd[4:]
+        if qrev.get(qd) is not None and qrev.get(qprev) is not None and qrev[qprev] > 0:
+            qoq = qrev[qd] / qrev[qprev] - 1.0
 
     scores = [
         None if net_pct is None else net_pct * 25,                 # 利润位置，25 分（越低越近底部）
@@ -1900,7 +1907,7 @@ def cycle_analysis(d):
         lerp_score(ncr, 0, 1.2, 0, 10),                            # 现金流压力，10 分（≤ 0 底部）
         lerp_score(inv_grow, -0.10, 0.20, 0, 10),                  # 库存周期，10 分（去库存→底部）
         lerp_score(capex_ratio, 0.7, 1.3, 0, 10),                  # 资本开支周期，10 分（收缩→出清）
-        lerp_score(qoq, -0.10, 0.05, 0, 10),                       # 单季环比，10 分（仍在探底→低分）
+        lerp_score(qoq, -0.30, 0.10, 0, 10),                       # 单季同比，10 分（仍在探底→低分）
     ]
     # 归一化：本分越低越接近底部，缺项若只是少扣一笔，数据不全的公司就被判成“更接近底部”。
     # 顺带去掉旧代码的 min(100, sum) 硬夹 —— 8 维权重合计 105，归一化后天然不越界
@@ -1925,20 +1932,24 @@ def cycle_history(d):
     q_rows = sorted([r for r in (d.get('indicators') or [])
                      if str(r.get('报告期') or '')[5:] != '12-31'],
                     key=lambda r: str(r.get('报告期') or ''))
-    qrev = [r.get('营业总收入_单季') for r in q_rows]
+    # 单季同比（2026-09-28 与 cycle_analysis 同批改）：末年取全局最新单季 vs 去年同季；
+    # 历史年取该年最后一个单季 vs 去年同季——季节性天然相消（白酒 Q1 备货不再误判探底）
+    q_by_date = {str(r.get('报告期') or '')[:10]: r.get('营业总收入_单季') for r in q_rows}
     qoq = None
-    if len(qrev) >= 2 and qrev[-2] is not None and qrev[-2] > 0 and qrev[-1] is not None:
-        qoq = qrev[-1] / qrev[-2] - 1.0
-    # 按年归档单季营收（升序，保留 None），供逐年环比：各年取该年最后两个单季（Q3/Q2）
-    interim_by_year = {}
-    for r in q_rows:
-        yr = str(r.get('报告期') or '')[:4]
-        interim_by_year.setdefault(yr, []).append(r.get('营业总收入_单季'))
+    if q_by_date:
+        qd = max(q_by_date)
+        qp = str(int(qd[:4]) - 1) + qd[4:]
+        if q_by_date.get(qd) is not None and q_by_date.get(qp) is not None and q_by_date[qp] > 0:
+            qoq = q_by_date[qd] / q_by_date[qp] - 1.0
 
     def year_qoq(yr):
-        vals = interim_by_year.get(str(yr), [])
-        if len(vals) >= 2 and vals[-2] is not None and vals[-2] > 0 and vals[-1] is not None:
-            return vals[-1] / vals[-2] - 1.0
+        dates = sorted(k for k in q_by_date if k[:4] == str(yr))
+        if not dates:
+            return None
+        qd = dates[-1]
+        qp = str(int(qd[:4]) - 1) + qd[4:]
+        if q_by_date.get(qd) is not None and q_by_date.get(qp) is not None and q_by_date[qp] > 0:
+            return q_by_date[qd] / q_by_date[qp] - 1.0
         return None
 
     def pct_of(v, arr):
@@ -1985,7 +1996,7 @@ def cycle_history(d):
             lerp_score(ncr, 0, 1.2, 0, 10),
             lerp_score(inv_grow, -0.10, 0.20, 0, 10),
             lerp_score(capex_ratio, 0.7, 1.3, 0, 10),
-            lerp_score(qoq_i, -0.10, 0.05, 0, 10),
+            lerp_score(qoq_i, -0.30, 0.10, 0, 10),
         ]
         # 与阶段二同口径归一化：各年可用维度数不同，不归一就没法逐年比（cycle_trend 正是逐年比）
         total = _weighted_total(list(zip(scores, CYCLE_POS_W)))
@@ -2133,15 +2144,31 @@ def compute_scores(company, now=None):
     # 商业模式特征（bm_validity 过线标签，2026-09-19 上线）：布尔入库，列表「特征」筛选用。
     # 轻资产自供：capex÷经营现金流 ≤0.6（OCF>0，年报行）；定价权：毛利率较 5 年前降幅 ≤3pp
     # （与 bmChips 同一规则）。原料缺失 → None（判不动），筛选不命中也不误显。
+    # 轻资产自供改 3 年合计口径（2026-09-28，bm_validity 重跑 lift 0.60 反优于单年 0.57）：
+    # 单年 capex 脉冲（投产年）让标签闪烁（抽样 388 家两口径不一致率 14.4%）。3 年合计
+    # capex ÷ 3 年合计 OCF ≤ 0.6；窗口任一年缺数退回单年口径（不整项判不动）。
     _bm_ld = va.get('annualDate')
-    _bm_cf = sheet_row_by_date(
-        annual_balance_rows(company.get('cashflow') or []), _bm_ld) if _bm_ld else None
-    _bm_cx = _bm_cf.get('购建固定资产、无形资产和其他长期资产所支付的现金') if _bm_cf else None
-    _bm_ocf = _bm_cf.get('经营活动产生的现金流量净额') if _bm_cf else None
-    if _bm_cx is not None and _bm_ocf is not None and _bm_ocf > 0:
-        scores['bmLight'] = _bm_cx / _bm_ocf <= 0.6
+    _bm_cf_annual = annual_balance_rows(company.get('cashflow') or [])
+    _bm_ys = [str(r.get('报告日') or '')[:10] for r in _bm_cf_annual][-3:]
+    _bm_cxs, _bm_ocfs = [], []
+    for _y in _bm_ys:
+        _r = sheet_row_by_date(_bm_cf_annual, _y)
+        if _r:
+            _cx = _r.get('购建固定资产、无形资产和其他长期资产所支付的现金')
+            _oc = _r.get('经营活动产生的现金流量净额')
+            if _cx is not None and _oc is not None:
+                _bm_cxs.append(_cx)
+                _bm_ocfs.append(_oc)
+    if len(_bm_ys) >= 3 and len(_bm_cxs) >= 3 and sum(_bm_ocfs) > 0:
+        scores['bmLight'] = sum(_bm_cxs) / sum(_bm_ocfs) <= 0.6
     else:
-        scores['bmLight'] = None
+        _bm_cf = sheet_row_by_date(_bm_cf_annual, _bm_ld) if _bm_ld else None
+        _bm_cx = _bm_cf.get('购建固定资产、无形资产和其他长期资产所支付的现金') if _bm_cf else None
+        _bm_ocf = _bm_cf.get('经营活动产生的现金流量净额') if _bm_cf else None
+        if _bm_cx is not None and _bm_ocf is not None and _bm_ocf > 0:
+            scores['bmLight'] = _bm_cx / _bm_ocf <= 0.6
+        else:
+            scores['bmLight'] = None
     _bm_annual = annual_rows(company.get('indicators') or [])
     _bm_gm_now = _bm_annual[-1].get('销售毛利率') if _bm_annual else None
     _bm_gm_old = None

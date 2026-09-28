@@ -374,7 +374,7 @@ def build_score_rows(index, trade_date, db):
                 score_rows[code]["wind_overlay"] = ov
 
     # 硬门槛：拿库里已导入的定性事实贴标，不改任何分数（见 GATE_FLAGS）
-    hits, judgeable = load_gate_facts(db)
+    hits, judgeable = load_gate_facts(db, trade_date)
     for code, row in score_rows.items():
         flags = hits.get(code)
         row["gate_flags"] = flags or None
@@ -511,7 +511,10 @@ WHERE w.etype IN ('违规', '立案', '处罚', 'ST')
 GATE_NAME_SQL = "SELECT code, market, name FROM security"
 
 
-def load_gate_facts(db):
+def load_gate_facts(db, batch_day=None):
+    """gate 旗按「批次日」判定而非当天（2026-09-28）：立案的 3 年窗用 CURRENT_DATE 滚动时，
+    旗会随批次日期自然漂移——verify 在非批次日重算就会与库内批次旗对不上。锚定批次日
+    （index.updated_at 即本批评分日）后旗只随数据动、不随日历动。"""
     """库里的定性事实 → (命中标记 {code: [GATE_FLAGS 键]}, 至少有一个可判信号的 code 集)。
 
     本函数在两条回灌路径里都在财务表回灌**之前**跑（评分行要先建好），所以用的是上一轮的
@@ -541,10 +544,12 @@ def load_gate_facts(db):
     # 立案（巨潮公告面，fetch_case → case_event）：wind_event 只覆盖 16 家、立案分支原本
     # 是空的，换公告面补齐——近 3 年 self 主体收到立案告知书即 ⚑「违规/立案」（更早的
     # 基本已了结，不追诉）。只有 self 算：子公司/控股股东被立案是另一回事，不挂公司旗
-    for (code,) in db.execute(text(
-            "SELECT DISTINCT code FROM case_event "
-            "WHERE kind='立案' AND subject='self' "
-            "AND announce_date >= CURRENT_DATE - INTERVAL 3 YEAR")):
+    win = (batch_day.isoformat() if batch_day else None)
+    sql = ("SELECT DISTINCT code FROM case_event "
+           "WHERE kind='立案' AND subject='self' "
+           "AND announce_date >= " +
+           ("DATE('{}') - INTERVAL 3 YEAR".format(win) if win else "CURRENT_DATE - INTERVAL 3 YEAR"))
+    for (code,) in db.execute(text(sql)):
         mark(code, 'case_filed')
 
     order = {k: i for i, k in enumerate(GATE_FLAGS)}

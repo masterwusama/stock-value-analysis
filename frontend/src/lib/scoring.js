@@ -341,7 +341,9 @@
     var epsY = last ? last['基本每股收益'] : null;
     var payout = (perShareY != null && epsY != null && epsY > 0) ? perShareY / epsY : null;
     // 断档锚定只在 A 股传（分红史全量可查，停派是公开事实）；港美覆盖不全，见函数头
-    var divAnchor = (String(d.market || 'A') === 'A' && lastYear != null) ? lastYear : null;
+    // 港美股传宽锚（+2＝停派 ≥4 年才清零）：分红源覆盖不全，紧锚会把「没抓到」误判成
+    // 「没派过」（scoring.py 同批，2026-09-28；此前港美股完全不锚）
+    var divAnchor = lastYear != null ? (String(d.market || 'A') === 'A' ? lastYear : lastYear + 2) : null;
     var divConsecutive = consecutiveDivYears(divs, divAnchor);
     var cumPerShare = null, hitCum = false;
     divs.forEach(function (r) {
@@ -1897,10 +1899,8 @@
       if (payout > 1.5) payout = null;
     }
 
-    // 8. 治理与诚信（造假风险反向）：造假分越低越诚信，管理越透明
-    var fraud = null;
-    try { fraud = fraudAnalysis(d).total; } catch (e) { /* 造假分缺失不影响其余维度 */ }
-
+    // 第 8 项「治理诚信=造假分反向」已删（2026-09-28，与 scoring.py 同批）：与造假分列
+    // 同一信号两面，两列并排会被误读为独立印证；诚信归造假分列与 gate，本分纯看经营效率
     var items = [
       it(feeLabel, fmtPct(feeRatio), '≤ 10%', 15, lerpScore(feeRatio, 0.10, 0.30, 15, 0)),
       it('资产运营：总资产周转率（营收÷总资产）', turnover == null ? '-' : fmtNum(turnover), '≥ 1.0', 10, lerpScore(turnover, 0.2, 1.0, 0, 10)),
@@ -1908,8 +1908,7 @@
       it('成长质量：营收约5年CAGR', fmtPct(revCagr), '≥ 10%', 10, lerpScore(revCagr, 0, 0.10, 0, 10)),
       it('营运资金：（应收＋存货）÷营收', fmtPct(wc), '≤ 15%', 10, lerpScore(wc, 0.15, 0.45, 10, 0)),
       it('现金流质量：近5年累计净现比（经营现金流÷净利润）', cashRatio == null ? '-' : fmtNum(cashRatio), '≥ 1.0', 15, lerpScore(cashRatio, 0, 1.0, 0, 15)),
-      it('股东回报：现金分红率（每股分红÷每股收益）', fmtPct(payout), '≥ 50%', 10, lerpScore(payout, 0, 0.50, 0, 10)),
-      it('治理诚信：财报造假风险反向（100−造假分）', fraud == null ? '-' : fmtNum(fraud), '造假分 0（最诚信）', 10, fraud == null ? null : lerpScore(fraud, 0, 100, 10, 0))
+      it('股东回报：现金分红率（每股分红÷每股收益）', fmtPct(payout), '≥ 50%', 10, lerpScore(payout, 0, 0.50, 0, 10))
     ];
     // 归一化：本分越高越好，缺项若只是少几笔加分，数据不全的公司就被系统性压低
     var total = weightedTotal(items.map(function (x) { return [x.score, x.max]; }));
@@ -1918,7 +1917,7 @@
       basis: '评分基准：' + (lastYear || '-') + ' 年报（比率类按年报口径，成长/现金流按近5年累计，资本回报取近5年ROE中位，分红取归属年合计）',
       total: total == null ? null : Math.round(total * 10) / 10,
       items: items,
-      note: '借鉴 DEA 数据包络分析的“投入→产出”效率思想，将管理层能力拆为 8 个可量化维度加权 0~100 分：费用纪律/资产周转/资本回报/成长质量/营运资金/现金流质量/股东回报/治理诚信，分数越高管理水平越好。纯 DEA 相对效率依赖同行业大样本且为黑盒、无法逐项展示，故采用其效率内核的透明加权替代；总分按“可算出的项”归一，缺数据的项不会把公司整体压低。本分为量化参考，需结合公司治理结构、股权激励、管理层履历等定性信息综合判断。'
+      note: '借鉴 DEA 数据包络分析的“投入→产出”效率思想，将管理层能力拆为 7 个可量化维度加权 0~100 分：费用纪律/资产周转/资本回报/成长质量/营运资金/现金流质量/股东回报，分数越高管理水平越好（「治理诚信」项 2026-09-28 删除——它与造假分列同源）。纯 DEA 相对效率依赖同行业大样本且为黑盒、无法逐项展示，故采用其效率内核的透明加权替代；总分按“可算出的项”归一，缺数据的项不会把公司整体压低。本分为量化参考，需结合公司治理结构、股权激励、管理层履历等定性信息综合判断。'
     };
   }
 
@@ -2030,9 +2029,18 @@
     // 2h 最新单季营收环比（仍在回落 → 未到底；环比回升 → 开始离开底部）
     var qRows = (d.indicators || []).filter(function (r) { return String(r['报告期'] || '').slice(5) !== '12-31'; })
       .sort(function (a, b) { return cmpKey(String(a['报告期']), String(b['报告期'])); });
-    var qrev = qRows.map(function (r) { return r['营业总收入_单季']; });
-    var qoq = (qrev.length >= 2 && qrev[qrev.length - 2] != null && qrev[qrev.length - 2] > 0 && qrev[qrev.length - 1] != null)
-      ? qrev[qrev.length - 1] / qrev[qrev.length - 2] - 1 : null;
+    // 单季同比（2026-09-28 由环比改同比）：环比被季节差主导（白酒 Q1 备货 Q1 环比深负≠探底），
+    // 同比对齐去年同季季节性相消；锚点放宽到 -30%/+10%（同比量级比环比宽）
+    var qByDate = {};
+    qRows.forEach(function (r) { qByDate[String(r['报告期'] || '').slice(0, 10)] = r['营业总收入_单季']; });
+    var qoq = null;
+    (function () {
+      var dates = Object.keys(qByDate).sort();
+      if (!dates.length) return;
+      var qd = dates[dates.length - 1];
+      var qp = (Number(qd.slice(0, 4)) - 1) + qd.slice(4);
+      if (qByDate[qd] != null && qByDate[qp] != null && qByDate[qp] > 0) qoq = qByDate[qd] / qByDate[qp] - 1;
+    })();
 
     var items = [
       it('利润位置：最新年报净利在近' + w8.length + '年区间的位置', netLast == null ? '-' : fmtMoney(netLast), '接近最低分→底部', 25, netPct == null ? null : netPct * 25),
@@ -2042,7 +2050,7 @@
       it('现金流压力：最新年报净现比（经营现金流÷净利润）', ncr == null ? '-' : fmtNum(ncr), '≤ 0 底部', 10, lerpScore(ncr, 0, 1.2, 0, 10)),
       it('库存周期：存货同比（去库存→接近底部）', invGrow == null ? '-' : fmtPct(invGrow), '≤ -10% 去库存', 10, lerpScore(invGrow, -0.10, 0.20, 0, 10)),
       it('资本开支周期：当年购建支出÷近3年均值（收缩→出清）', capexRatio == null ? '-' : fmtNum(capexRatio), '≤ 0.7 收缩', 10, lerpScore(capexRatio, 0.7, 1.3, 0, 10)),
-      it('单季环比：最新单季营收环比（回升→离开底部）', qoq == null ? '-' : fmtPct(qoq), '≤ -10% 仍在探底', 10, lerpScore(qoq, -0.10, 0.05, 0, 10))
+      it('单季同比：最新单季营收同比（回升→离开底部）', qoq == null ? '-' : fmtPct(qoq), '≤ -30% 仍在探底', 10, lerpScore(qoq, -0.30, 0.10, 0, 10))
     ];
     // 归一化：本分越低越接近底部，缺项若只是少扣一笔，数据不全的公司就被判成“更接近底部”。
     // 顺带去掉旧代码的 Math.min(100, sum) 硬夹 —— 8 维权重合计 105，归一化后天然不越界
@@ -2077,19 +2085,24 @@
     var annualCf = cfList.filter(function (r) { return String(r['报告日'] || '').slice(5) === '12-31'; });
     var qRows = (d.indicators || []).filter(function (r) { return String(r['报告期'] || '').slice(5) !== '12-31'; })
       .sort(function (a, b) { return cmpKey(String(a['报告期']), String(b['报告期'])); });
-    var qrev = qRows.map(function (r) { return r['营业总收入_单季']; });
-    var qoq = (qrev.length >= 2 && qrev[qrev.length - 2] != null && qrev[qrev.length - 2] > 0 && qrev[qrev.length - 1] != null)
-      ? qrev[qrev.length - 1] / qrev[qrev.length - 2] - 1 : null;
-    // 按年归档单季营收（升序，保留 null），供逐年环比：各年取该年最后两个单季（Q3/Q2）
-    var interimByYear = {};
-    qRows.forEach(function (r) {
-      var yr = String(r['报告期'] || '').slice(0, 4);
-      (interimByYear[yr] = interimByYear[yr] || []).push(r['营业总收入_单季']);
-    });
+    var qByDate = {};
+    qRows.forEach(function (r) { qByDate[String(r['报告期'] || '').slice(0, 10)] = r['营业总收入_单季']; });
+    var qoq = null;
+    (function () {
+      var dates = Object.keys(qByDate).sort();
+      if (!dates.length) return;
+      var qd = dates[dates.length - 1];
+      var qp = (Number(qd.slice(0, 4)) - 1) + qd.slice(4);
+      if (qByDate[qd] != null && qByDate[qp] != null && qByDate[qp] > 0) qoq = qByDate[qd] / qByDate[qp] - 1;
+    })();
+    // 逐年单季同比（与 cycleAnalysis 同批改）：历史年取该年最后一个单季 vs 去年同季
     function yearQoq(yr) {
-      var vals = interimByYear[String(yr)] || [];
-      if (vals.length >= 2 && vals[vals.length - 2] != null && vals[vals.length - 2] > 0 && vals[vals.length - 1] != null) {
-        return vals[vals.length - 1] / vals[vals.length - 2] - 1;
+      var dates = Object.keys(qByDate).filter(function (k) { return k.slice(0, 4) === String(yr); }).sort();
+      if (!dates.length) return null;
+      var qd = dates[dates.length - 1];
+      var qp = (Number(qd.slice(0, 4)) - 1) + qd.slice(4);
+      if (qByDate[qd] != null && qByDate[qp] != null && qByDate[qp] > 0) {
+        return qByDate[qd] / qByDate[qp] - 1;
       }
       return null;
     }
@@ -2135,7 +2148,7 @@
         lerpScore(ncr, 0, 1.2, 0, 10),
         lerpScore(invGrow, -0.10, 0.20, 0, 10),
         lerpScore(capexRatio, 0.7, 1.3, 0, 10),
-        lerpScore(qoqI, -0.10, 0.05, 0, 10)
+        lerpScore(qoqI, -0.30, 0.10, 0, 10)
       ];
       // 与阶段二同口径归一化：各年可用维度数不同，不归一就没法逐年比（cycleTrendOf 正是逐年比）
       var tot = weightedTotal(scores.map(function (s, j) { return [s, CYCLE_POS_W[j]]; }));

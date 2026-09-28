@@ -10,13 +10,32 @@ import { esc, fmtNum, cmpKey, annualRows, sheetRowByDate } from '../../scoring.j
     var last = annual.length ? annual[annual.length - 1] : null;
     var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
     var cfList = (d.cashflow || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
-    var lastCf = lastDate ? sheetRowByDate(cfList, lastDate) : null;
-    var cx = lastCf ? lastCf['购建固定资产、无形资产和其他长期资产所支付的现金'] : null;
-    var ocf = lastCf ? lastCf['经营活动产生的现金流量净额'] : null;
-    if (cx != null && ocf != null && ocf > 0) {
-      var rL = cx / ocf;
-      chips.push({ key: 'light', label: '轻资产自供', on: rL <= 0.6, backed: true,
-        tip: 'capex÷经营现金流 = ' + (rL * 100).toFixed(0) + '%（阈值 ≤60%）。回测（A 股 21,926 观测，bm_validity）：亮灯组其后转亏率 7.9% vs 其余 13.8%（lift 0.57）' });
+    // 轻资产自供 3 年合计口径（2026-09-28，与 scoring.compute_scores 同批；bm_validity
+    // 重跑 lift 0.60 反优于单年 0.57，且消掉投产年 capex 脉冲的标签闪烁）；缺年退单年
+    var annDates = cfList.filter(function (r) { return String(r['报告日'] || '').slice(5) === '12-31'; })
+      .map(function (r) { return String(r['报告日']).slice(0, 10); });
+    var last3 = annDates.slice(-3);
+    var cxs = [], ocfs = [];
+    last3.forEach(function (yd) {
+      var r = sheetRowByDate(cfList, yd);
+      if (r) {
+        var c = r['购建固定资产、无形资产和其他长期资产所支付的现金'];
+        var o = r['经营活动产生的现金流量净额'];
+        if (c != null && o != null) { cxs.push(c); ocfs.push(o); }
+      }
+    });
+    var ratio = null, calibre = '3年合计';
+    if (last3.length >= 3 && cxs.length >= 3 && ocfs.reduce(function (a, b) { return a + b; }, 0) > 0) {
+      ratio = cxs.reduce(function (a, b) { return a + b; }, 0) / ocfs.reduce(function (a, b) { return a + b; }, 0);
+    } else {
+      var lastCf = lastDate ? sheetRowByDate(cfList, lastDate) : null;
+      var cx = lastCf ? lastCf['购建固定资产、无形资产和其他长期资产所支付的现金'] : null;
+      var ocf = lastCf ? lastCf['经营活动产生的现金流量净额'] : null;
+      if (cx != null && ocf != null && ocf > 0) { ratio = cx / ocf; calibre = '单年'; }
+    }
+    if (ratio != null) {
+      chips.push({ key: 'light', label: '轻资产自供', on: ratio <= 0.6, backed: true,
+        tip: '近3年 capex 合计÷经营现金流合计 = ' + (ratio * 100).toFixed(0) + '%（' + calibre + '口径，阈值 ≤60%）。回测（A 股 21,926 观测，bm_validity 3 年口径重跑）：亮灯组其后转亏率 8.1% vs 其余 13.6%（lift 0.60）' });
     }
     var gmNow = last ? last['销售毛利率'] : null;
     var oldY = lastDate ? Number(lastDate.slice(0, 4)) - 5 : null;
