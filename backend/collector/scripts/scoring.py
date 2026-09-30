@@ -1662,8 +1662,8 @@ def recommend_score(v_total, g_total, fraud, trap_total, dip=None):
 
 def management_analysis(d):
     """对应 JS managementAnalysis —— 管理层管理水平评分（0~100，越高越好）。
-    融合 DEA 投入产出效率思想的 8 维透明加权：费用纪律/资产周转/资本回报/成长质量/
-    营运资金/现金流质量/股东回报（7 项制，治理诚信项 2026-09-28 删除——与造假分同源）；数据不足项不计分不误伤。"""
+    融合 DEA 投入产出效率思想的透明加权，7 项制：费用纪律/资产周转/资本回报/成长质量/
+    营运资金/现金流质量/股东回报（治理诚信项 2026-09-28 删除——与造假分同源）；数据不足项不计分不误伤。"""
     annual = annual_rows(d.get('indicators') or [])
     last = annual[-1] if annual else None
     last_date = str(last.get('报告期') or '')[:10] if last else None

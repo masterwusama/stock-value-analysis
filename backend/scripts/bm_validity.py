@@ -194,8 +194,10 @@ def main():
         for th in ths:
             flag = [o for o in obs if o["tags"][key] is not None
                     and ((o["tags"][key] >= th) if direc == "ge" else (o["tags"][key] <= th))]
-            rest = [o for o in obs if o["tags"][key] is None
-                    or not ((o["tags"][key] >= th) if direc == "ge" else (o["tags"][key] <= th))]
+            # 对照组同样剔除判不动（tags None＝原料缺失无证据）：混进分母会污染 lift
+            #（2026-09-30 自检项；trap/fraud 有效性对结局分母早已是这条纪律）
+            rest = [o for o in obs if o["tags"][key] is not None
+                    and not ((o["tags"][key] >= th) if direc == "ge" else (o["tags"][key] <= th))]
             share = len(flag) / max(1, len(obs))
 
             def loss_rate(rs):
@@ -244,8 +246,6 @@ def main():
 
     l0, n0, e0 = band_stats(0, 0)
     l3, n3, e3 = band_stats(3, 5)
-    ok_comp = (l0 is not None and l3 is not None
-               and ((l0 - l3) >= 0.05 or (e0 is not None and e3 is not None and e3 - e0 >= 0.03)))
     print(f"  持 0 枚：转亏 {l0 * 100 if l0 is not None else 0:.1f}%（n={n0}） 1y超额 "
           f"{e0 * 100 if e0 is not None else 0:+.1f}%")
     print(f"  持 ≥3 枚：转亏 {l3 * 100 if l3 is not None else 0:.1f}%（n={n3}） 1y超额 "

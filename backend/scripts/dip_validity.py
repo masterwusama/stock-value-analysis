@@ -200,10 +200,11 @@ def main():
     if picked is not None:
         print(f"⇒ 采用线（转亏 lift ≥{LINE['loss_lift']}、复证 lift ≥{LINE['ann_lift']}、"
               f"旗占比 ≤{LINE['flag_max'] * 100:.0f}%）在给定档位里取最深：X = {picked * 100:.0f}%")
-        if abs(picked - (-0.50)) < 1e-9:
-            print("  回测采用该阈值，落地 recommend_score（常量 INTERIM_DIP_GATE 同步）。")
+        if abs(picked - (-0.70)) < 1e-9:
+            print("  回测复现已落地阈值（scoring.py INTERIM_DIP_GATE = −0.70），无需改动。")
         else:
-            print(f"  预声明常量为 −0.50，回测取 {picked * 100:.0f}%——落地前先改 scoring.py 常量并双侧同步。")
+            print(f"  已落地常量为 −0.70（INTERIM_DIP_GATE），回测取 {picked * 100:.0f}%——"
+                  "若确认改线，先改 scoring.py 常量并双侧同步、本回执随之更新。")
     else:
         print("⇒ 无档位同时满足采用线：不上门槛，interim_dip 只做列表标注（Phase 1 现状）。")
     return 0

@@ -84,6 +84,8 @@ def main():
     # 规则形状自检（2026-09-28 起不做具体家期望——规则改动时硬编码期望极易失效成假绿，
     # 改验值域与不变量：risk∈{None,0,1,2}；risk=2 必含 loss_rev/case 类旗；
     # flags 非空必有 risk≥1；非 A 股恒 None；有旗必有对应旗名）
+    # case 不由 scoring._st_risk 产生：import_legacy 落库侧按 case_event override 进
+    # st_flags（该注释明说不进 parity），白名单收它只为对账最终发布形态
     VALID_FLAGS = {"loss_rev", "loss_rev_ex", "loss_rev_near", "debt90", "price_low", "case"}
     bad = 0
     n_checked = 0

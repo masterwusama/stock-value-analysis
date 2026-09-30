@@ -521,7 +521,12 @@ if _bd >= "2000-01-01":
     _cut3y = _date(y - 3, m, dd)   # 日历三年，对齐 SQL 的 INTERVAL 3 YEAR
     # 3*365 天在闰年边界会差一天（实测 000688 立案 2023-09-28 卡缝），必须日历运算
 else:
-    _cut3y = _date.today() - _td(days=3 * 365 + 1)
+    # score_date 全缺时同样按日历回退（本文件主路径注释：3*365 在闰年边界差一天）
+    _t = _date.today()
+    try:
+        _cut3y = _date(_t.year - 3, _t.month, _t.day)
+    except ValueError:          # 2/29 起跑退 2/28
+        _cut3y = _date(_t.year - 3, _t.month, 28)
 for code, in _dbs.execute(
         select(Security.code).distinct()
         .join(CaseEvent, CaseEvent.code == Security.code)
