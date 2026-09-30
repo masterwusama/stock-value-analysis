@@ -109,6 +109,12 @@ def main():
     tmp.write_text(json.dumps(idx, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     os.replace(tmp, INDEX_PATH)
     print(f"已写回 {INDEX_PATH}（{len(changed)} 家分数更新）")
+    # exit=3（对齐 fetch_prices 的「有料但有异常」语义）：算失败保留旧分的那几家不进
+    # etl_job_log 就成了「旧分保留掩盖错误」——2026-09-30 自检项。run.py 会把 job 染红，
+    # 家数与异常明细看本轮子进程日志。
+    if failed:
+        print(f"exit=3：{failed} 家 compute_scores 失败，保留旧分")
+        return 3
     return 0
 
 

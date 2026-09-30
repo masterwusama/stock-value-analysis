@@ -271,6 +271,8 @@ def main():
             note = _stale_note(e.returncode)
             if note:
                 messages.append(note)
+            if script == "_refresh_scores.py" and e.returncode == 3:
+                messages.append("有公司 compute_scores 失败保留旧分（家数/异常看本轮日志）")
             traceback.print_exc()
             break  # 抓取失败不再跑链上后续脚本,但仍回灌已落盘数据
         except Exception:
@@ -284,6 +286,26 @@ def main():
     except Exception as e:
         status = "failed"
         messages.append(f"import_db failed: {e}")
+
+    # 口径改了只动一侧是这套双实现架构最安静的坏法(2026-09-30 自检项)：公式探针
+    # 秒级(0.3s/79 组合)，挂在动了 fetch/评分的 job 尾上当闸门；红了一条独立
+    # etl_job_log(job_name=parity)，status.ps1 的运维自检会盯它——不把采集 job 本身
+    # 染红，采集成功与口径漂移是两个信号。
+    if args.job in ("stock", "deep"):
+        try:
+            subprocess.run(
+                [sys.executable, "-X", "utf8", str(SCRIPTS / "_score_formula_check.py")],
+                cwd=str(BACKEND), timeout=300, check=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            name = getattr(e, "returncode", None)
+            note = f"exit={name}" if name else str(e)[:200]
+            db.add(EtlJobLog(job_name="parity", started_at=datetime.now(),
+                             finished_at=datetime.now(), status="failed",
+                             message=f"{args.job} 链尾公式探针未过({note})；评分双实现口径漂移，跑 _score_check.py 定位"))
+            db.commit()
+            print(f"[collector] 公式探针未过({note})——已记 parity failed", flush=True)
 
     log.finished_at = datetime.now()
     log.status = status

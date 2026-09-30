@@ -68,10 +68,13 @@ def load_universe():
     """宇宙与行业口径唯一来自 index.json(A股),与列表页同源。"""
     idx = json.loads((DATA / "index.json").read_text(encoding="utf-8"))
     rows = [c for c in idx["companies"] if c.get("market") == "A"]
+    # 腾讯接口要交易所前缀:A 股宇宙含 339 只北交所(4/8/92 开头,前缀 bj)——老写法
+    # 只认 sh/sz,北交所快照拉不到被整只丢弃,红盘率/涨停数少了它们而行业分母仍计
+    # (板块效应被系统性压低)。前缀规则统一复用 universe.exchange_symbol。
+    import universe as uni_mod
     uni = [{"code": c["code"], "industry": c.get("industry") or "未知",
-            # 腾讯接口要交易所前缀:6 开头沪市,0/3 开头深市(A股宇宙里只有这两类);
             # name 不带(腾讯快照 field1 自带,merge 会撞列)
-            "tc": ("sh" if c["code"].startswith("6") else "sz") + c["code"]}
+            "tc": uni_mod.exchange_symbol(c["code"])}
            for c in rows]
     sizes = {}
     for u in uni:

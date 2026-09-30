@@ -521,13 +521,13 @@ def list_securities(
     ncr_max: FiniteF | None = Query(None, description="净现金/市值≤(小数比率,0.35=35%;用于专门捞净负债标的;含边界)"),
     niche: str | None = Query(None, max_length=32, description="细分行业精确匹配（主营造入词典归属，/securities/niches 枚举）"),
     bm: str | None = Query(None, max_length=32, description="商业模式特征多选（逗号分隔 light/pricing，AND 语义：所勾标签全部亮灯才命中；判不动不命中）"),
-    recommend_min: float | None = Query(None, description="综合推荐分 ≥（NULL=横杆的公司自动排除）"),
-    pe_min: float | None = Query(None, description="PE(TTM) ≥（负数=亏损股的真实值，会命中 ≤ 区间，说明书 §10.1）"),
-    pe_max: float | None = Query(None, description="PE(TTM) ≤"),
-    pb_min: float | None = Query(None, description="PB ≥"),
-    pb_max: float | None = Query(None, description="PB ≤"),
-    div_min: float | None = Query(None, description="股息率 ≥（小数比率，0.04=4%；NULL=无分红数据的公司自动排除）"),
-    liq_disc_max: float | None = Query(None, description="清算折价 ≤（百分比，80=现价≤清算价值×80%；现价/清算均缺的公司不进区间）"),
+    recommend_min: FiniteF | None = Query(None, description="综合推荐分 ≥（NULL=横杆的公司自动排除）"),
+    pe_min: FiniteF | None = Query(None, description="PE(TTM) ≥（负数=亏损股的真实值，会命中 ≤ 区间，说明书 §10.1）"),
+    pe_max: FiniteF | None = Query(None, description="PE(TTM) ≤"),
+    pb_min: FiniteF | None = Query(None, description="PB ≥"),
+    pb_max: FiniteF | None = Query(None, description="PB ≤"),
+    div_min: FiniteF | None = Query(None, description="股息率 ≥（小数比率，0.04=4%；NULL=无分红数据的公司自动排除）"),
+    liq_disc_max: FiniteF | None = Query(None, description="清算折价 ≤（百分比，80=现价≤清算价值×80%；现价/清算均缺的公司不进区间）"),
     buyback_days: int | None = Query(None, description="近 N 天有回购（公告日或完成日落窗内；无回购记录的公司不命中）"),
     seo_days: int | None = Query(None, description="近 N 天有定增发行（发行日落窗内；发行日缺失取上市日的采集约定）"),
     gate_flag: str | None = Query(None, description="硬门槛单项反查：audit_qualify/risk_warning/case_filed/neg_equity（命中该项目的公司）"),
@@ -786,7 +786,11 @@ def list_securities(
             buy_buffett=_f(score.buy_buffett) if score else None,
             sell_cons_buffett=_f(score.sell_cons_buffett) if score else None,
             sell_fair_buffett=_f(score.sell_fair_buffett) if score else None,
-            actions=_actions_cell(act_picks[sec.sid]) if sec.sid in act_picks else None,
+            # 三态契约（见 ActionsCell 注释）：港美股无此源 → null；A 股但一笔都没有 →
+            # 空 cell（seo/buy 全 None）。只收录有行的 sid 是历史写法，A 股零行与港美股
+            # 同形，前端无法区分「没有这笔」与「这个市场没这个源」
+            actions=(_actions_cell(act_picks[sec.sid]) if sec.sid in act_picks
+                     else (ActionsCell() if sec.market == "A" else None)),
         )
         for sec, quote, score, val in rows
     ]
@@ -1004,15 +1008,28 @@ def _load_zygc(db, sid):
 
 
 INTERIM_KEEP = 12
+CYCLE_Q3_YEARS = 8
 
 
 def _prune_interims(rows: list[dict]) -> list[dict]:
-    """保留全部年报行 + 最近 INTERIM_KEEP 个季报行，合并后按报告日倒序。"""
+    """保留全部年报行 + 最近 INTERIM_KEEP 个季报行 + 近 CYCLE_Q3_YEARS 年的三季报行。
+
+    Q3 那部分是给前端 cycleHistory 的 yearQoq：历史年「该年最后单季 vs 去年同季」
+    这一维（10 分权）逐年要读该年与上年的 09-30 行，只留最近 12 个季报会把 3 年前的
+    历史年全部打成缺维（实测 600019 的 2018-2022 全 null），与趋势图「各年均为满
+    8 维」的图注不符。后端 cycle_history 用全量行算分，不受本裁剪影响。
+    """
     def day(r: dict) -> str:
         return str(r.get("报告日") or r.get("报告期") or "")
     annual = [r for r in rows if day(r)[5:7] == "12"]
-    interim = [r for r in rows if day(r)[5:7] != "12"][:INTERIM_KEEP]
-    return sorted(annual + interim, key=day, reverse=True)
+    interim = [r for r in rows if day(r)[5:7] != "12"]
+    keep = interim[:INTERIM_KEEP]
+    kept = {day(r) for r in keep}
+    years = [int(day(r)[:4]) for r in interim if day(r)[:4].isdigit()]
+    q3_floor = f"{(max(years) if years else 0) - CYCLE_Q3_YEARS + 1}-09-30"
+    extra = [r for r in interim if day(r)[5:10] == "09-30"
+             and day(r) >= q3_floor and day(r) not in kept]
+    return sorted(annual + keep + extra, key=day, reverse=True)
 
 
 @router.get("/{code}/statements")

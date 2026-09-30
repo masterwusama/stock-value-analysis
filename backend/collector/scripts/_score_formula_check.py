@@ -576,6 +576,7 @@ if not ALT:
     # 抽取采集函数隔离网络与 PDF 依赖，仍执行实际映射和公司组装代码。
     tree = ast.parse((HERE / 'fetch_data.py').read_text(encoding='utf-8'))
     names = {'HK_BALANCE_MAP', 'HK_INCOME_MAP', 'HK_CASHFLOW_MAP',
+             'fiscal_year_end', 'us_report_period',
              'fetch_hk_report', 'fetch_company_hk'}
     nodes = [n for n in tree.body if
              (isinstance(n, ast.FunctionDef) and n.name in names) or
