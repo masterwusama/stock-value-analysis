@@ -61,6 +61,7 @@ import {
   priceReferences,
   scoreCalcText,
   stRiskOf,
+  bmFeatures,
   R_FRAUD_GATE,
   R_TRAP_GATE,
   INTERIM_DIP_GATE
@@ -213,6 +214,9 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
 
   function renderDetail(d) {
     state.current = d;
+    // 跨断点整体重建由 charts.js 的 resize 监听触发；renderDetail 在本闭包内，
+    // 子模块反向 import 会成环，故经 state 单例回挂（state.js 头注释即为此约定）
+    state.rebuildDetail = renderDetail;
     // 详情页 DOM 重建前释放旧图表实例
     state.charts.forEach(function (c) { try { c.dispose(); } catch (e) {} });
     state.charts = [];
@@ -585,7 +589,8 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       },
       function () {
         var el = $('stock-score-trap');
-        if (el) el.innerHTML = trapCard(trapScore(d));
+        // 复用 R 步已算的 tpD：trapScore 内部还带一遍 fraudAnalysis，重算纯属白烧
+        if (el) el.innerHTML = trapCard(tpD);
         bindMoreButtons();
       },
     ];
@@ -1019,13 +1024,21 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
     var block = $('stock-cycle-chart-block');
     var el = $('stock-chart-cycle');
     if (!block || !el) return;
-    if (!ca.cyclical || typeof echarts === 'undefined') { block.style.display = 'none'; return; }
+    if (!ca.cyclical) { block.style.display = 'none'; return; }
     var hist = cycleHistory(d).filter(function (x) { return x.score != null; });
     if (hist.length < 2) { block.style.display = 'none'; return; }
     block.style.display = '';
-    var chart = echarts.init(el);
-    state.charts.push(chart);
-    chart.setOption({
+    // echarts 全站动态加载（cd074e6）后，评分卡渐进队列先于脚本就位：这里等加载器
+    // 再画。老写法 undefined 就 display:none 且无人再调，周期图首次进详情必消失
+    var draw = function () {
+      if (typeof echarts === 'undefined' || $('stock-cycle-chart-block') !== block) {
+        // 等待期页面已重渲染/离开：旧 el 已分离，画上去只会泄漏实例
+        block.style.display = 'none';
+        return;
+      }
+      var chart = echarts.init(el);
+      state.charts.push(chart);
+      chart.setOption({
       grid: mqMobile.matches ? { left: 38, right: 14, top: 28, bottom: 26 } : { left: 44, right: 18, top: 32, bottom: 30 },
       tooltip: { trigger: 'axis', valueFormatter: function (v) { return v == null ? '-' : v + ' 分'; } },
       xAxis: { type: 'category', data: hist.map(function (x) { return x.year; }) },
@@ -1039,7 +1052,17 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
           lineStyle: { color: '#1e7e44', type: 'dashed' }, data: [{ yAxis: 30 }] },
         markArea: { silent: true, itemStyle: { color: 'rgba(30,126,68,0.08)' }, data: [[{ yAxis: 0 }, { yAxis: 30 }]] }
       }]
-    });
+      });
+    };
+    if (typeof echarts === 'undefined') {
+      if (typeof window.__ensureEcharts === 'function') {
+        window.__ensureEcharts().then(draw).catch(function () { block.style.display = 'none'; });
+      } else {
+        block.style.display = 'none';
+      }
+      return;
+    }
+    draw();
   }
 
   // ---- 价格参考（买入/保守卖出/公允卖出）----
@@ -1186,5 +1209,5 @@ export { renderDetail, showDetail, state, unbindResize,
   recommendScore, R_W_VALUE, R_FRAUD_GATE, R_TRAP_GATE, R_BANDS,
   interimDipYoy, INTERIM_DIP_NOTE, INTERIM_DIP_GATE,
   fmtMoney, fmtNum, fmtPct, recentDividends,
-  scoreCalcText, stRiskOf };
+  scoreCalcText, stRiskOf, bmFeatures };
 

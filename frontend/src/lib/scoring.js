@@ -2665,6 +2665,55 @@
     return { risk: (hit && !exempt) ? 2 : 1, flags: flags.join(',') };
   }
 
+  /* ---------------- 商业模式特征（bm 标签唯一 JS 实现） ----------------
+   * 与 scoring.compute_scores 同一规则：轻资产自供 light = 3 年合计 capex÷经营现金流
+   * ≤0.6（窗口任一年缺数退单年口径）；定价权 pricing = 毛利率较 5 年前年报降幅 ≥−3pp；
+   * 原料缺失 → null（判不动）。zygc 芯片与 _score_check parity 都从这里取——
+   * 2026-09-30 收敛前 parity 校验的是校验器内联抄本，生产芯片那份零校验。
+   * ratio/calibre/gmDelta 供芯片 tip 文案，parity 不比对。 */
+  function bmFeatures(d) {
+    var cfList = (d.cashflow || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
+    var annual = annualRows(d.indicators || []);
+    var last = annual.length ? annual[annual.length - 1] : null;
+    var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
+    var annDates = cfList.filter(function (r) { return String(r['报告日'] || '').slice(5) === '12-31'; })
+      .map(function (r) { return String(r['报告日']).slice(0, 10); });
+    var last3 = annDates.slice(-3);
+    var cxs = [], ocfs = [];
+    last3.forEach(function (yd) {
+      var r = sheetRowByDate(cfList, yd);
+      if (r) {
+        var c = r['购建固定资产、无形资产和其他长期资产所支付的现金'];
+        var o = r['经营活动产生的现金流量净额'];
+        if (c != null && o != null) { cxs.push(c); ocfs.push(o); }
+      }
+    });
+    var light = null, ratio = null, calibre = '3年合计';
+    if (last3.length >= 3 && cxs.length >= 3 && ocfs.reduce(function (a, b) { return a + b; }, 0) > 0) {
+      ratio = cxs.reduce(function (a, b) { return a + b; }, 0) / ocfs.reduce(function (a, b) { return a + b; }, 0);
+      light = ratio <= 0.6;
+    } else {
+      calibre = '单年';
+      var lastCf = lastDate ? sheetRowByDate(cfList, lastDate) : null;
+      var cx = lastCf ? lastCf['购建固定资产、无形资产和其他长期资产所支付的现金'] : null;
+      var ocf = lastCf ? lastCf['经营活动产生的现金流量净额'] : null;
+      if (cx != null && ocf != null && ocf > 0) { ratio = cx / ocf; light = ratio <= 0.6; }
+    }
+    var gmNow = last ? last['销售毛利率'] : null;
+    var gmOld = null;
+    if (lastDate) {
+      var oldY = String(Number(lastDate.slice(0, 4) || 0) - 5);
+      for (var gi = 0; gi < annual.length; gi++) {
+        if (String(annual[gi]['报告期']).slice(0, 4) === oldY) { gmOld = annual[gi]['销售毛利率']; break; }
+      }
+    }
+    return {
+      light: light, pricing: (gmNow != null && gmOld != null) ? (gmNow - gmOld >= -0.03) : null,
+      ratio: ratio, calibre: calibre,
+      gmDelta: (gmNow != null && gmOld != null) ? gmNow - gmOld : null
+    };
+  }
+
   /* ---------------- 启动(已移交 Vue 组件) ---------------- */
 
 export {
@@ -2774,6 +2823,7 @@ export {
   ST_FIN_KW,
   stBoardLine,
   stRiskOf,
+  bmFeatures,
   R_FRAUD_GATE,
   R_TRAP_GATE,
   INTERIM_DIP_GATE,

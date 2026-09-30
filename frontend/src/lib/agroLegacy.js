@@ -49,11 +49,13 @@
     return null;
   }
 
-  // 距 dateStr 往前 n 天的日期
+  // 距 dateStr 往前 n 天的日期（本地日期格式化——toISOString 在 UTC+8 每日 0-8 点
+  // 会倒退一天，周/月涨跌基线与 YTD 基准年跟着错，同 edbLegacy 的同比教训）
   function daysAgo(n) {
     var d = new Date();
     d.setDate(d.getDate() - n);
-    return d.toISOString().slice(0, 10);
+    var pad = function (x) { return x < 10 ? '0' + x : '' + x; };
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
 
   // 过滤出指定时间范围内的价格序列

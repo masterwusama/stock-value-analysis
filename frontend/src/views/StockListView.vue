@@ -164,7 +164,9 @@ const rng = (f, lo, hi) => hi == null ? (lo == null ? '-' : '≥' + f(lo))
   : lo == null ? '≤' + f(hi) : lo === hi ? f(hi) : f(lo) + '~' + f(hi)
 const seoTip = (s) => {
   const v = s.actions?.seo
-  if (!v) return '未收录定增记录或不在覆盖范围\n' + SEO_TIP
+  // actions=null（非 A 股无此源）与空 cell（A 股但未收录）是两件事，接口已分态
+  if (s.actions == null) return '仅 A 股有此数据源'
+  if (!v) return '未收录定增记录\n' + SEO_TIP
   return `最近一次定增：${v.date || '-'}，发行价 ${fmt(v.price, 4)} 元/股，发行量 ${fmt(v.num, 0)} 股，募集资金 ${fmt(v.amount)} 元\n${SEO_TIP}`
 }
 function buyRow(tag, b) {
@@ -188,7 +190,8 @@ function buyRows(s) {
 }
 const buyTip = (s) => {
   const rows = buyRows(s)
-  if (!rows.length) return '未收录回购记录或不在覆盖范围\n' + BUY_TIP
+  if (s.actions == null) return '仅 A 股有此数据源'
+  if (!rows.length) return '未收录回购记录\n' + BUY_TIP
   return rows.map((r) => `${r.tag === '完' ? '最近已完成' : '最新公告'}：${r.progress}｜${r.full}`
     + `｜价 ${r.price} 元/股（${r.kind}）｜量 ${r.numFull} 股｜额 ${r.amount} 元｜用途 ${r.cx}`
   ).join('\n') + '\n' + BUY_TIP
@@ -389,7 +392,7 @@ async function load() {
       pe_max: flt.peMax === '' ? null : Number(flt.peMax),
       pb_min: flt.pbMin === '' ? null : Number(flt.pbMin),
       pb_max: flt.pbMax === '' ? null : Number(flt.pbMax),
-      div_min: flt.divMin === '' ? null : Number(flt.divMin),
+      div_min: flt.divMin === '' ? null : pctToRatio(flt.divMin),
       liq_disc_max: flt.liqDisc === '' ? null : Number(flt.liqDisc),
       buyback_days: flt.buyDays === '' ? null : Number(flt.buyDays),
       seo_days: flt.seoDays === '' ? null : Number(flt.seoDays),
@@ -790,7 +793,8 @@ const SORT_VAL_FMT = {
   fair_liq: (s) => '清算 ' + fmt(s.fair_liq),
   net_cash_ratio: (s) => '净现金/市值 ' + score2(s.net_cash_ratio),
   pb_pctile: (s) => 'PB分位 ' + pbCell(s),
-  w_cash: (s) => '加权现金 ' + yi(s.w_cash) + (s.market !== 'A' ? s.currency : ''),
+  w_cash: (s) => '加权现金 ' + yi(s.weighted_cash) + (s.market !== 'A' ? s.currency : ''),
+  net_cash_w: (s) => '净现金·扣有息 ' + yi(s.net_cash_w) + (s.market !== 'A' ? s.currency : ''),
   int_debt: (s) => '有息负债 ' + yi(s.int_debt) + (s.market !== 'A' ? s.currency : ''),
   net_cash_b: (s) => '净现金 ' + yi(s.net_cash_b) + (s.market !== 'A' ? s.currency : ''),
   score_graham_agg: (s) => '格进取 ' + score(s.score_graham_agg),

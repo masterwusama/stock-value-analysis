@@ -20,7 +20,11 @@ var $ = function (id) { return document.getElementById(id); }
       // grid 边距与移动端折叠结构都是渲染期烘死的，跨断点必须整体重建，单靠 resize 会留下桌面边距
       if (n !== wasNarrow) {
         wasNarrow = n;
-        if ($('stock-detail-body')) renderDetail(state.current);
+        // renderDetail 在宿主 stockLegacy 闭包里，反向 import 会成环——宿主渲染时把
+        // 自己挂到 state.rebuildDetail（见 stockLegacy renderDetail 开头），这里只回调
+        if ($('stock-detail-body') && typeof state.rebuildDetail === 'function') {
+          state.rebuildDetail(state.current);
+        }
         return;
       }
       resizeStockCharts();

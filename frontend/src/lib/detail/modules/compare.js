@@ -145,8 +145,11 @@ var $ = function (id) { return document.getElementById(id); };
             var v = list[i][m.key];
             if (v == null) return null;
             if (m.type === 'amount' && !isAnnualCmp && m.single !== false) {
-              // 一季报累计即当季值，无需差分；其余季度单季 = 本期累计 - 上期累计
-              if (String(period).slice(5, 7) !== '03' && i > 0) {
+              // 一季报累计即当季值，无需差分；其余季度单季 = 本期累计 - 上期累计。
+              // 年报期始终保持累计值：混选年报×季报时对上年年报差分得到的是「年度
+              // 增量」，既非累计也非单季（2026-09-30 自检项）
+              var mm = String(period).slice(5, 7);
+              if (mm !== '03' && mm !== '12' && i > 0) {
                 var pv = list[i - 1][m.key];
                 return pv == null ? null : v - pv;
               }

@@ -118,39 +118,12 @@ async function main() {
     // 中报恶化 dip：纯 indicators 函数，数值比对（与 Python 同一浮点运算路径）
     out[code].interimDip = num(dipV);
 
-    // 商业模式标签（与 scoring.compute_scores 同一规则）：年报行 capex/OCF≤0.6；
-    // 毛利率较 5 年前年报降幅 ≤3pp；原料缺失 null
-    const annualBM = (d.indicators || []).filter(r => String(r['报告期'] || '').includes('-12-31'))
-      .sort((a, b) => String(a['报告期']) < String(b['报告期']) ? -1 : 1);
-    const lastBM = annualBM[annualBM.length - 1] || null;
-    const ldBM = lastBM ? String(lastBM['报告期']).slice(0, 10) : null;
-    const cfBM = (d.cashflow || []).filter(r => String(r['报告日'] || '').includes('-12-31'))
-      .sort((a, b) => String(a['报告日']) < String(b['报告日']) ? -1 : 1);
-    const lastCfBM = ldBM ? (cfBM.find(r => String(r['报告日']).slice(0, 10) === ldBM) || null) : null;
-    // 与 scoring.compute_scores 同批的 3 年合计口径（缺年退单年）；parity 才能对上
-    const annCfBM = cfBM.slice(-3);
-    let cxs3 = [], ocs3 = [];
-    for (const r of annCfBM) {
-      const c = r['购建固定资产、无形资产和其他长期资产所支付的现金'];
-      const o = r['经营活动产生的现金流量净额'];
-      if (c != null && o != null) { cxs3.push(c); ocs3.push(o); }
-    }
-    if (annCfBM.length >= 3 && cxs3.length >= 3 && ocs3.reduce((a, b) => a + b, 0) > 0) {
-      out[code].bmLight = cxs3.reduce((a, b) => a + b, 0) / ocs3.reduce((a, b) => a + b, 0) <= 0.6;
-    } else {
-      const cxBM = lastCfBM ? lastCfBM['购建固定资产、无形资产和其他长期资产所支付的现金'] : null;
-      const ocBM = lastCfBM ? lastCfBM['经营活动产生的现金流量净额'] : null;
-      out[code].bmLight = (cxBM != null && ocBM != null && ocBM > 0) ? (cxBM / ocBM <= 0.6) : null;
-    }
-    const gmNowBM = lastBM ? lastBM['销售毛利率'] : null;
-    let gmOldBM = null;
-    if (ldBM) {
-      const oldY = Number(ldBM.slice(0, 4)) - 5;
-      for (const r of annualBM) {
-        if (String(r['报告期']).slice(0, 4) === String(oldY)) { gmOldBM = r['销售毛利率']; break; }
-      }
-    }
-    out[code].bmPricing = (gmNowBM != null && gmOldBM != null) ? (gmNowBM - gmOldBM >= -0.03) : null;
+    // 商业模式标签：直接调 scoring.bmFeatures（生产 JS 唯一实现，zygc 芯片同源）。
+    // 2026-09-30 前这里是一份内联抄本——parity 校验的是抄本，改了 zygc 芯片 parity
+    // 依旧全绿；收敛后本校验比对的就是用户看到的那份实现。
+    const bm = m.bmFeatures(d);
+    out[code].bmLight = bm.light == null ? null : bm.light;
+    out[code].bmPricing = bm.pricing == null ? null : bm.pricing;
 
     // ST/退市风险预警（与 scoring._st_risk 同一规则）：等级 + 旗串，入库前先证两侧一致
     const stR = m.stRiskOf(d) || {};
