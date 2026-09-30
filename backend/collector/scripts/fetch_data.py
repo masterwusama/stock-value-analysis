@@ -341,7 +341,8 @@ def fetch_snapshot(code: str):
 
 # ==================== 港股数据源（东财港股 + 腾讯行情） ====================
 # 东财港股三大报表为长表（每行一个科目），科目名按 IFRS 口径，映射回前端 A 股字段名。
-# 注意：东财已把各公司财年末统一映射为 12-31 报告期，与 A 股 schema 完全对齐。
+# 注意：源给的是真实财年末（新鸿基 00016 全是 06-30），与美股一样要自己压平成 12-31
+# 标签（fetch_hk_report/fetch_hk_indicators 调 us_report_period），真实财年末存 财年截止。
 
 # 资产负债表科目映射：东财科目名 → 前端字段（未列出的科目保留原名）
 HK_BALANCE_MAP = {
@@ -400,25 +401,47 @@ def _pct(v):
 
 
 def fetch_hk_report(code: str, kind: str, item_map: dict):
-    """东财港股三大报表：长表（科目×金额）→ 宽表（报告日 × 字段），按报告日倒序"""
+    """东财港股三大报表：长表（科目×金额）→ 宽表（报告日 × 字段），按报告日倒序
+
+    报告日与美股同理压平（us_report_period）：源给的就是真实财年末（实测新鸿基
+    00016 全是 06-30），不压平 scoring 的 annual_rows 一条年报都选不出，整套年度
+    评分栈对 26 家非 12 月财年公司失效。本接口（akshare 内 REPORT_TYPE=年报 过滤）
+    只回年报，压平标签不会与中报撞车；真实财年末存 财年截止 随 extras 入库。
+    """
     df = ak.stock_financial_hk_report_em(stock=code, symbol=kind)
     if df is None or df.empty:
         return []
     by_date = {}
+    real_by_label = {}
     for _, r in df.iterrows():
-        dt = to_iso(str(r["REPORT_DATE"])[:10])
+        dt, real = us_report_period(r["REPORT_DATE"])
         if not dt:
             continue
+        prev = real_by_label.get(dt)
+        if prev and prev != real:
+            # 换财年的过渡期可能两年末压进同一标签：留财年末更晚的整行（同美股）
+            print("  [warn] %s %s: 财年 %s 与 %s 同落 %s，只留较晚的" % (code, kind, prev, real, dt))
+            if prev > real:
+                continue
+            by_date[dt] = {}
+        real_by_label[dt] = real
         item = item_map.get(str(r["STD_ITEM_NAME"]).strip(), str(r["STD_ITEM_NAME"]).strip())
         val = parse_number(r["AMOUNT"])
         by_date.setdefault(dt, {})[item] = val
-    records = [{"报告日": dt, **fields} for dt, fields in by_date.items()]
+    records = [{"报告日": dt, "财年截止": real_by_label.get(dt), **fields}
+               for dt, fields in by_date.items()]
     records.sort(key=lambda r: r["报告日"], reverse=True)
     return records[:MAX_PERIODS]
 
 
 def fetch_hk_indicators(code: str):
-    """东财港股财务分析指标：映射为前端 indicators 字段，含单季还原（累计差），按报告期倒序"""
+    """东财港股财务分析指标：映射为前端 indicators 字段，按报告期倒序
+
+    报告期与美股同理压平（us_report_period）；接口走 DATE_TYPE_CODE=001 只有年报，
+    压平不会与中报撞标签。单季字段留空：港股没有 A 股式季报序列，年报间做累计差
+    得到的是「同比增量」不是单季（老写法给腾讯 FY2025 算出 915 亿「单季营收」＝
+    全年−上年全年，全列都是这种垃圾值），与美股同口径置 None。
+    """
     df = ak.stock_financial_hk_analysis_indicator_em(symbol=code)
     if df is None or df.empty:
         return []
@@ -426,22 +449,16 @@ def fetch_hk_indicators(code: str):
     df = df.sort_values("REPORT_DATE", ascending=True).reset_index(drop=True)
     rows = []
     for _, r in df.iterrows():
-        rec = {"报告期": to_iso(str(r["REPORT_DATE"])[:10])}
+        label, real = us_report_period(r["REPORT_DATE"])
+        rec = {"报告期": label, "财年截止": real}
         for en, zh in HK_IND_MAP.items():
             rec[zh] = parse_number(r[en])
         for en, zh in HK_IND_PCT.items():
             rec[zh] = _pct(r[en])
         rec["流动比率"] = parse_number(r["CURRENT_RATIO"])
+        rec["营业总收入_单季"] = None
+        rec["净利润_单季"] = None
         rows.append(rec)
-    # 单季还原：本期累计 - 上期累计（港股无 A 股式一季报特例，统一按累计差）
-    for col in ("营业总收入", "净利润"):
-        for i, rec in enumerate(rows):
-            cum = rec[col]
-            if i == 0:
-                rec[col + "_单季"] = None
-            else:
-                prev = rows[i - 1][col]
-                rec[col + "_单季"] = None if (cum is None or prev is None) else round(cum - prev, 4)
     rows = rows[-MAX_PERIODS:]
     return rows[::-1]
 
@@ -489,29 +506,66 @@ def fetch_hk_snapshot(code: str):
 
 
 def fetch_hk_dividends(code: str):
-    """东财港股分红：方案文本解析每股派息 → 每10股口径，日期统一 ISO"""
+    """东财港股分红：方案文本解析每股派息 → 每10股口径，日期统一 ISO
+
+    - 美元计价也要解析（实测 689 行「每股派美元…」因正则只认 人民币|港币 全空）：
+      主额若标美元而文本给出「相当于港币X元」，取港币口径——bonus 与股价（港币）
+      同单位，股息率才不差 7.8 倍；没有折算额就留原值（description 里有原文）。
+    - type 逐笔取分配类型（中期/末期/特别/年度）：唯一键 (sid,div_year,div_type)，
+      全塌成「中期分红」会让一年多派（如 00857 一年三笔）只留一笔、每股分红少计。
+      同类型一年多条（分期两笔）加序号后缀保行。
+    """
     df = ak.stock_hk_dividend_payout_em(symbol=code)
     if df is None or df.empty:
         return []
     records = []
+    seen = {}
     for _, row in df.iterrows():
         plan = str(row["分红方案"]).strip()
+        # 币种可前可后（「每股派美元0.01元」「每股派0.0568美元」）、动词带 派发/派息、
+        # 还有澳元；非港币计价而文本给了「相当于港币X元/约为X港元」时取港币口径——
+        # bonus 与股价（港币）同单位，股息率才不差 7.8 倍；没有折算额就留原值
         bonus = None
-        m = re.search(r"每股派(?:人民币|港币)?([\d.]+)元", plan)
+        # 词表来自实测残行：派发/派息/派送/发现金红利；币种可前可后、含美币/澳元/英镑；
+        # 折算写法有 相当于港币X元/相当於约X港元/约为X港元（简繁於混用）
+        CUR = "(人民币|港币|港幣|美元|美币|澳大利亚元|澳元|英镑|欧元)"
+        VERB = "(?:发现金红利|发|息|送)?"
+        m = re.search(r"每股派" + VERB + CUR + r"?\s*([\d.]+)\s*(元|美元|港元|人民币)?", plan)
+        per10 = False
+        if not m:
+            m = re.search(r"每10股派" + VERB + CUR + r"?\s*([\d.]+)\s*(元|美元|港元|人民币)?", plan)
+            per10 = m is not None
         if m:
-            bonus = round(float(m.group(1)) * 10, 4)  # 每股 → 每10股
-        else:
-            m = re.search(r"每10股派(?:人民币|港币)?([\d.]+)元", plan)
-            if m:
-                bonus = round(float(m.group(1)), 4)
+            cur_txt = m.group(1) or m.group(3) or plan[m.end(2):m.end(2) + 5]
+            per_share = float(m.group(2))
+            if cur_txt and "港" not in str(cur_txt):
+                # 「相当于港币X元」币种在前、「约为X港元」「相当於约X港元」数额在前，都吃
+                h = (re.search(r"相当[于於]约?(?:港(?:币|元)|每股派?)?\s*([\d.]+)\s*(?:港(?:币|元))?", plan)
+                     or re.search(r"约为?(?:每股)?\s*([\d.]+)\s*港(?:币|元)", plan))
+                if h:
+                    per_share = float(h.group(1))
+            bonus = round(per_share * (1 if per10 else 10), 4)
         kind = str(row["分配类型"]).strip()
         annual = ("年度" in kind) or ("末期" in kind)
+        year = str(row["财政年度"]).strip() + ("年报" if annual else "中报")
+        if "特别" in kind:
+            dtype = "特别分红"
+        elif "末期" in kind:
+            dtype = "末期分红"
+        elif "中期" in kind:
+            dtype = "中期分红"
+        else:
+            dtype = "年度分红" if annual else "中期分红"
+        n = seen.get((year, dtype), 0) + 1
+        seen[(year, dtype)] = n
+        if n > 1:
+            dtype = f"{dtype}({n})"
         rec_date = str(row["截至过户日"]).strip() if row["截至过户日"] else ""
         rec_date = to_iso(rec_date.split("-")[0].split("至")[0]) if rec_date else None
         records.append(
             {
-                "year": str(row["财政年度"]).strip() + ("年报" if annual else "中报"),
-                "type": "年度分红" if annual else "中期分红",
+                "year": year,
+                "type": dtype,
                 "announce_date": iso_or_none(str(row["最新公告日期"])[:10]),
                 "record_date": rec_date,
                 "ex_date": iso_or_none(str(row["除净日"])[:10]),
@@ -908,11 +962,19 @@ def fetch_company_us(code: str, name: str):
 
 
 def _div_year_label(report_date: str):
-    """'2025-12-31' → ('2025年报', '年度分红')：对齐巨潮的 year/type 口径。"""
+    """'2025-12-31' → ('2025年报', '年度分红')：对齐巨潮的 year/type 口径。
+
+    type 必须逐期对齐巨潮的事件词表（季度分红/中期分红/年度分红）：两边唯一键都是
+    (sid, div_year, div_type)，巨潮限流回退东财的轮次若把同一笔分红写进不同键，
+    按年求和的股息率就翻倍（实测 320 组三季报双行：东财「中期分红」×巨潮「季度分红」）。
+    巨潮对一季报/三季报的派息都记「季度分红」。
+    """
     d = str(report_date or "")
     yy, mm = d[:4], d[5:7]
     suffix = {"12": "年报", "06": "半年报", "03": "一季报", "09": "三季报"}.get(mm, "")
-    return f"{yy}{suffix}", ("年度分红" if mm == "12" else "中期分红")
+    dtype = {"12": "年度分红", "06": "中期分红", "03": "季度分红", "09": "季度分红"}.get(
+        mm, "中期分红")
+    return f"{yy}{suffix}", dtype
 
 
 def _dividends_cninfo(code: str):
@@ -1495,8 +1557,14 @@ def fetch_audit(code: str, reports: list, balance: list = None, scope: str = Non
         if not ok:
             failed += 1
             _PDF_FAILS += 1
-            r["audit_firm"] = None
-            r["audit_opinion"] = None
+            # 两轮重试失败：有旧缓存就沿用旧审计字段——巨潮 static 抖动一轮不该把上轮
+            # 已解析的事务所/意见抹成 None（gate 的“审计非标”旗随之失真）；没有才置空
+            cached = old.get(url)
+            if cached:
+                r.update(cached)
+            else:
+                r["audit_firm"] = None
+                r["audit_opinion"] = None
         else:
             _PDF_FAILS = 0
         time.sleep(PDF_INTERVAL)
