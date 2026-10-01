@@ -75,6 +75,7 @@ import zygcMod from './detail/modules/zygc.js';
 import { evHasAny } from './detail/modules/events.js';
 import { hasActions } from './detail/modules/actions.js';
 import { createLazyMount } from './detail/lazyMount.js';
+import { ensureDetailChrome, retargetDetailSpy } from './detail/chrome.js';
 import { state, mqMobile } from './detail/state.js';
 import { renderCharts, bindViewToggle, unbindResize } from './detail/modules/charts.js';
 import { renderCompare, bindComparePicks } from './detail/modules/compare.js';
@@ -212,6 +213,28 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
     { key: 'trap', no: '⑪', navTitle: '价值陷阱分', title: '价值陷阱分 · 坏消息证据', card: 'stock-score-trap' },
   ];
 
+  // 空态格悬停说明（判不动＝原料缺失/前提不满足，不计入该项得分）：各卡表格统一
+  var NA_TIP = ' title="原料缺失或不满足计算前提，判不动＝不计入该项得分（详见本卡说明）"';
+
+  // 总览条 chips：占位 –，队列算出后 fillStrip 点亮（档位色点 + 悬停档位说明）
+  function stripChip(letter, name, target) {
+    return '<a class="strip-chip" data-scroll="' + target + '" href="#' + target + '" ' +
+      'title="' + name + '分（计算中…）">' +
+      '<em>' + letter + '</em><span>' + name + '</span>' +
+      '<b id="strip-' + letter.toLowerCase() + '">–</b>' +
+      '<i class="dot va-grade-na"></i></a>';
+  }
+
+  function fillStrip(letter, total, grade, tip) {
+    var b = $('strip-' + letter.toLowerCase());
+    if (!b) return;
+    b.textContent = total == null ? '判不动' : fmtNum(total);
+    var chip = b.parentElement;
+    var dot = chip && chip.querySelector('.dot');
+    if (dot) dot.className = 'dot va-grade-' + grade;
+    if (chip && tip) chip.setAttribute('title', tip);
+  }
+
   function renderDetail(d) {
     state.current = d;
     // 跨断点整体重建由 charts.js 的 resize 监听触发；renderDetail 在本闭包内，
@@ -229,6 +252,14 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
     // 头部（市场徽标 + 货币单位：US→USD / HK→HKD / A→CNY）
     var marketName = d.market === 'US' ? '美股' : d.market === 'HK' ? '港股' : 'A股';
     var ccy = d.market === 'US' ? 'USD' : d.market === 'HK' ? 'HKD' : 'CNY';
+    // 评分基准报告期（score_daily.report_date，随详情包下发）：长页里分数挂在各节，
+    // 「这份分是按哪期财报算的」放头部才不会被当成最新季报的结论；非日历财年
+    // （NVDA 1 月末、新鸿基 6 月末）同时点明财年截止，12-31 只是对齐标签
+    var rd = ((d.scores || {}).reportDate || '');
+    var fe = fiscalEndOf(d.indicators || []);
+    var repBase = rd ? ('<span class="s-meta s-report">评分基准 ' + String(rd).slice(0, 10) +
+      ' 财报' + (fe && String(fe).slice(5) !== '12-31' ? '（财年截至 ' + fe + '，12-31 为对齐标签）' : '') +
+      '</span>') : '';
     html += '<div class="stock-header">' +
       '<h2>' + d.name + '</h2>' +
       '<span class="s-badge s-badge-' + (d.market || 'A') + '">' + marketName + '</span>' +
@@ -237,7 +268,19 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       '<span class="s-ccy">' + ccy + '</span>' +
       '<span class="s-meta ' + cls(chg) + '">' +
       (chg == null ? '-' : (chg > 0 ? '+' : '') + (chg * 100).toFixed(2) + '%') + '</span>' +
-      '<span class="s-meta">更新于 ' + fmtDate(s.time || d.updated_at) + '</span>' +
+      repBase +
+      '<span class="s-meta s-updated">更新于 ' + fmtDate(s.time || d.updated_at) + '</span>' +
+      '</div>';
+
+    // 评分总览条：五个结论分一眼可见（R 卡埋在页面中部、T/F 更深，长页扫视拿不到
+    // 结论）。占位「–」随渐进任务队列逐个点亮（fa→F，vv/gg→V/G，recommend→R，
+    // trap→T）；点按跳对应节，档位色点复用 va-grade-* 配色
+    html += '<div class="score-strip" id="score-strip">' +
+      stripChip('R', '综合', 'sec-recommend') +
+      stripChip('V', '价值', 'sec-value-score') +
+      stripChip('G', '成长', 'sec-growth') +
+      stripChip('T', '陷阱', 'sec-trap') +
+      stripChip('F', '造假', 'sec-fraud') +
       '</div>';
 
     // Wind 事件覆盖层当前代码条目（⑥⑦优化说明 + ⑫事件模块共用）；无事件数据（港美股/未抓公司）为 null
@@ -258,7 +301,8 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         return m.navTitle && (!m.has || m.has(d));   // 无 has＝恒出（①②与评分卡节）
       }).map(function (m) {
         return '<a href="#sec-' + m.key + '" data-scroll="sec-' + m.key + '">' + m.no + ' ' + m.navTitle + '</a>';
-      }).join('') + '</nav>';
+      }).join('') +
+      '<i class="va-progress" aria-hidden="true"></i></nav>';   // 阅读进度条（chrome.js 驱动）
 
     // ---- 模块一：基础财务信息（估值快照/趋势图/财务对比/报表/分红/定期报告）----
     html += '<section id="sec-basic" class="stock-section va-module"><h2 class="va-module-title"><span>①</span>基础财务信息</h2>';
@@ -534,6 +578,10 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
     document.querySelectorAll('#stock-detail-body [data-lazy]').forEach(function (el) {
       lazyMount.register(el, el.dataset.lazy, function (hostEl) { buildLazy(hostEl.dataset.lazy); });
     });
+
+    // 长页 chrome：scroll-spy 重挂（section 集合随渲染变化），监听器/回顶单例只绑一次
+    ensureDetailChrome();
+    retargetDetailSpy();
     if (!('IntersectionObserver' in window)) {
       ['charts', 'compare', 'divs', 'reports', 'zygc', 'events', 'actions'].forEach(function (k) { lazyMount.forceBuild(k); });
     }
@@ -560,6 +608,11 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         fa = fraudAnalysis(d);
         var el = $('stock-score-fraud');
         if (el) el.innerHTML = fraudCard(fa, ovD);
+        var fg = fa && fa.total != null ? fraudGradeOf(fa.total) : 'na';
+        fillStrip('F', fa ? fa.total : null, fg,
+          fa && fa.total != null
+            ? '造假风险分 ' + fmtNum(fa.total) + ' · ' + fraudGradeText(fg)
+            : '造假风险分判不动');
       },
       function () {
         ma = managementAnalysis(d);
@@ -577,20 +630,33 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         var ve = $('stock-score-value'), ge = $('stock-score-growth');
         if (ve) ve.innerHTML = valueCard(vv);
         if (ge) ge.innerHTML = growthCard(gg);
+        var vb = vv.total == null ? null : vBandOf(vv.total);
+        var gb = gg.total == null ? null : gBandOf(gg.total);
+        fillStrip('V', vv.total, vb ? vb.grade : 'na',
+          vb ? '价值综合分 ' + fmtNum(vv.total) + ' · ' + vb.label : '价值综合分判不动');
+        fillStrip('G', gg.total, gb ? gb.grade : 'na',
+          gb ? '成长综合分 ' + fmtNum(gg.total) + ' · ' + gb.label : '成长综合分判不动');
       },
       function () {
         // R 综合推荐分：同一份现算输入（V/G/造假/陷阱/中报恶化）合成，与列表页入库分同一套公式
         tpD = trapScore(d) || {};
         dip = interimDipYoy(d.indicators || []);
+        var rec = recommendScore(vv.total, gg.total, fa ? fa.total : null, tpD.total, dip);
         var el = $('stock-score-recommend');
-        if (el) el.innerHTML = recommendCard(recommendScore(vv.total, gg.total,
-                                                       fa ? fa.total : null, tpD.total, dip),
-                                             vv.total, gg.total, dip, d.market);
+        if (el) el.innerHTML = recommendCard(rec, vv.total, gg.total, dip, d.market);
+        var rb = rec && rec.total == null ? null : (rec ? rBandOf(rec.total) : null);
+        fillStrip('R', rec ? rec.total : null, rb ? rb.grade : 'na',
+          rb ? '综合推荐分 ' + fmtNum(rec.total) + ' · ' + rb.label +
+            (rec.gate ? '（门槛外：' + R_GATE_TEXT[rec.gate] + '）' : '')
+            : (rec && rec.gate ? '门槛外不算分：' + (R_GATE_TEXT[rec.gate] || rec.gate) : '综合推荐分判不动'));
       },
       function () {
         var el = $('stock-score-trap');
         // 复用 R 步已算的 tpD：trapScore 内部还带一遍 fraudAnalysis，重算纯属白烧
         if (el) el.innerHTML = trapCard(tpD);
+        fillStrip('T', tpD.total == null ? null : tpD.total,
+          tpD.band ? tpD.band.grade : 'na',
+          tpD.band ? '价值陷阱分 ' + fmtNum(tpD.total) + ' · ' + tpD.band.label : '价值陷阱分判不动');
         bindMoreButtons();
       },
     ];
@@ -735,7 +801,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         '<td class="v">' + (x.value == null ? '-' : fmt(x.value)) + '</td>' +
         '<td class="v" style="text-align:left">' + x.why + '</td>' +
         '<td class="v">' + x.weight + '</td>' +
-        '<td class="v ' + cls + '">' + txt + '</td></tr>';
+        '<td class="v ' + cls + '"' + (x.bad === null ? NA_TIP : '') + '>' + txt + '</td></tr>';
     }).join('');
     var bands = TRAP_BANDS.map(function (b, i) {
       var on = i === TRAP_BANDS.indexOf(ts.band);
@@ -790,7 +856,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       var fmt = G_VALUE_FMT[x.key] || fmtNum;
       return '<tr><td>' + x.label + '</td>' +
         '<td class="v">' + (x.value == null ? '-' : fmt(x.value)) + '</td>' +
-        '<td class="v ' + cls + '">' + (x.na ? '判不动' : (x.sc * 100).toFixed(0) + '%') + '</td>' +
+        '<td class="v ' + cls + '"' + (x.na ? NA_TIP : '') + '>' + (x.na ? '判不动' : (x.sc * 100).toFixed(0) + '%') + '</td>' +
         '<td class="v">' + x.weight + '</td>' +
         '<td class="v"><b>' + (x.na ? '-' : fmtNum(x.weight * x.sc)) + '</b></td>' +
         '<td class="v" style="text-align:left">' + x.why + '</td></tr>';
@@ -847,7 +913,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       var fmt = V_VALUE_FMT[x.key] || fmtNum;
       return '<tr><td>' + x.label + '</td>' +
         '<td class="v">' + (x.value == null ? '-' : fmt(x.value)) + '</td>' +
-        '<td class="v ' + cls + '">' + (x.na ? '判不动' : (x.sc * 100).toFixed(0) + '%') + '</td>' +
+        '<td class="v ' + cls + '"' + (x.na ? NA_TIP : '') + '>' + (x.na ? '判不动' : (x.sc * 100).toFixed(0) + '%') + '</td>' +
         '<td class="v">' + x.weight + '</td>' +
         '<td class="v"><b>' + (x.na ? '-' : fmtNum(x.weight * x.sc)) + '</b></td>' +
         '<td class="v" style="text-align:left">' + x.why + '</td></tr>';
@@ -988,8 +1054,8 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         var mCls = x.match == null ? 'sc-na' : x.match >= 0.99 ? 'sc-good' : x.match >= 0.5 ? 'sc-mid' : 'sc-low';
         var mTxt = x.match == null ? '-' : (x.match * 100).toFixed(0) + '%';
         return '<tr><td>' + x.std + '</td><td class="v">' + x.val + '</td><td class="v">' + x.thr + '</td>' +
-          '<td class="v ' + mCls + '">' + mTxt + '</td>' +
-          '<td class="v"><b>' + (x.score == null ? '-' : fmtNum(x.score)) + '</b> / ' + x.max + '</td></tr>';
+          '<td class="v ' + mCls + '"' + (x.match == null ? NA_TIP : '') + '>' + mTxt + '</td>' +
+          '<td class="v"' + (x.score == null ? NA_TIP : '') + '><b>' + (x.score == null ? '-' : fmtNum(x.score)) + '</b> / ' + x.max + '</td></tr>';
       }).join('');
     }
     var head;
@@ -1007,7 +1073,9 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         '<table class="stock-compare">' + tableHead + '<tbody>' + dimRows(ca.cyclicalItems) + '</tbody></table></div>';
     }
     if (ca.items.length) {
-      h += '<div class="stock-compare-wrap"><h4 style="margin:8px 0 4px">阶段二：周期位置评分（分数越低越接近周期底部）</h4>' +
+      h += '<div class="stock-compare-wrap"><h4 style="margin:8px 0 4px">阶段二：周期位置评分' +
+        (ca.total == null ? '' : ' — 当前 <b class="cy-total">' + fmtNum(ca.total) + ' 分</b>') +
+        '（分数越低越接近周期底部）</h4>' +
         '<table class="stock-compare">' + tableHead + '<tbody>' + dimRows(ca.items) + '</tbody></table></div>';
     } else {
       h += '<div class="stock-compare-wrap"><h4 style="margin:8px 0 4px">阶段一：周期强度判定明细</h4>' +
@@ -1041,7 +1109,9 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       chart.setOption({
       grid: mqMobile.matches ? { left: 38, right: 14, top: 28, bottom: 26 } : { left: 44, right: 18, top: 32, bottom: 30 },
       tooltip: { trigger: 'axis', valueFormatter: function (v) { return v == null ? '-' : v + ' 分'; } },
-      xAxis: { type: 'category', data: hist.map(function (x) { return x.year; }) },
+      // 年份多时（回溯 8 年+）相邻标签在 1180px 下间隙已 <8px：hideOverlap 自动隔年
+      xAxis: { type: 'category', data: hist.map(function (x) { return x.year; }),
+               axisLabel: { hideOverlap: true, fontSize: 11 } },
       yAxis: { type: 'value', min: 0, max: 100, name: '周期位置分', splitLine: { lineStyle: { type: 'dashed' } } },
       series: [{
         name: '周期位置分', type: 'line', data: hist.map(function (x) { return x.score; }),
@@ -1099,7 +1169,8 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
   // 模块锚点导航：平滑滚动（避免与 #/code 路由冲突）
 
   function bindVaNav(buildLazy) {
-    document.querySelectorAll('.va-nav a').forEach(function (a) {
+    // 总览条 chips 与导航锚点同一套跳转语义（data-scroll → forceBuild + 平滑滚动）
+    document.querySelectorAll('.va-nav a, a.strip-chip').forEach(function (a) {
       a.addEventListener('click', function (e) {
         e.preventDefault();
         var el = $(a.getAttribute('data-scroll'));
