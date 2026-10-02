@@ -9,7 +9,10 @@
     - 板块效应 = 同行业涨停≥5家 且 占该行业成分≥2%(行业是证监会大类,计算机类 700 只,
       绝对家数阈值对大行业形同虚设,必须带占比);
     - 榜单池(封单额/首次/最后封板时间/连板数/炸板次数)只保留近 15 个交易日,本轮顺手
-      回填窗口内的缺失日,梯队/身位维度的历史完全靠这里逐日落盘积累。
+      回填窗口内的缺失日,梯队/身位维度的历史完全靠这里逐日落盘积累;
+    - 温度 T/极端度 E/连续天数由 sentiment_score.py 计算(设计:docs/设计-情绪温度
+      与极端度.md)。采集端只落时点工件(md 报告/daily.json/history 摘要),页面值
+      一律 API 读时计算——公式演进对全部历史一致生效,防口径漂移。
 
 用法(在 backend/ 目录): python -m collector.run sentiment
     或直接 python collector/scripts/fetch_sentiment.py [--force]
@@ -30,6 +33,8 @@ for _k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"
     os.environ.pop(_k, None)
 
 import requests
+
+import sentiment_score as sscore
 
 BACKEND = Path(__file__).resolve().parents[2]
 DATA = BACKEND / "collector" / "data"
@@ -156,8 +161,8 @@ def build(quotes, uni, sizes, r5, pool_zt=None):
                dt_count=int(limdn.sum()), yz_dt_count=int((limdn & yz).sum()))
     ind["zha_rate"] = ind["zha_count"] / max(1, ind["zt_count"] + ind["zha_count"])
 
-    # 优先级即判定顺序:极弱 > 极强 > 普通。「回暖」是转折确认、当日盘后判不出
-    # (它是"昨日极弱+今日涨"的读法),由 main 里用 history 推导后写回
+    # 优先级即判定顺序:极弱 > 极强 > 普通。「回暖」仅作转移目标词汇,采集端不落盘
+    # (推导规则未定、与 trap 的边界未厘清,见 docs/设计-情绪温度与极端度.md §7)
     if (r5 <= TH["r5_weak"]) or ind["yz_dt_count"] >= 5 or \
        (ind["dt_count"] >= TH["dt_panic"] and ind["red_rate"] < TH["red_weak"]):
         state = "极弱"
@@ -268,12 +273,29 @@ def r5_gz2000(snap_date=None):
     return float(f[3]) / c[-6] - 1
 
 
-def render_md(date_s, state, prev_state, ind, r5, trans, trap, payload):
+def render_md(date_s, state, prev_state, ind, r5, trans, trap, payload, score=None):
     P = PREMIUM.get(state, PREMIUM["普通"])
     L = [f"# 情绪日报 {date_s}", "",
          f"状态:**{state}**(昨日:{prev_state or '—'})|"
          f"红盘率{ind['red_rate']*100:.0f}% 涨停{ind['zt_count']} 炸板率{ind['zha_rate']*100:.0f}% "
          f"跌停{ind['dt_count']} 一字跌停{ind['yz_dt_count']} | 国证2000 R5={r5*100:+.2f}%", ""]
+    if score:
+        parts = [f"温度 T={score['t']}/100"]
+        if score["extreme"] is not None:
+            parts.append(f"极端度 {score['extreme']} · {score['band']}档")
+        if score["streak"] >= 2:
+            parts.append(f"连续第{score['streak']}日")
+        parts.append("分位: " + " ".join(
+            f"{sscore.RANK_LABELS[k]} {round(v * 100)}%" for k, v in score["ranks"].items()))
+        L += [" | ".join(parts), ""]
+        if score["band"] == "踩线":
+            dom = "、".join(sscore.dominant_of(state, score["ranks"])) or "—"
+            L += [f"> **踩线{state}**:极端度 {score['extreme']} 未达 80——主导:{dom};"
+                  f"单指标驱动、综合温度未跟上,操作按普通档仓位对待。", ""]
+        elif score["divergence"]:
+            which = "极强带" if score["divergence"] == "high" else "极弱带"
+            L += [f"> **温度与档位背离**:综合温度 T={score['t']} 已达{which}但状态机未触发"
+                  f"——多指标同向而均未过线,关注次日确认。", ""]
     if trap:
         L += ["> **陷阱日**:昨日极弱、今日转普通——该形态次日涨停溢价实测 +0.55%/胜率50%,全局禁止隔夜。", ""]
     L += ["## 明日预案(转移概率)"]
@@ -338,13 +360,16 @@ def main():
     # 排除当日自身:--force 重跑最新一天时不能自引用成 prev_state
     prior = [h for h in history if h["date"] != date_s]
     prev_state = prior[-1]["state"] if prior else None
+    # 温度/极端度/连续天数:streak 从 prior 状态序列推,score 为时点工件随产物落盘
+    streak = sscore.streak_of([h["state"] for h in prior] + [state])[-1]
+    score = sscore.score_card({**ind, "r5": r5}, state, streak)
     trans = TRANS.get(state, TRANS["普通"])
     trap = prev_state == "极弱" and state == "普通"
-    md = render_md(date_s, state, prev_state, ind, r5, trans, trap, payload)
+    md = render_md(date_s, state, prev_state, ind, r5, trans, trap, payload, score)
 
     daily = {"date": date_s, "state": state, "prev_state": prev_state,
              "indicators": ind, "r5": round(r5, 4), "transitions": trans,
-             "trap": trap, "premium_hint": PREMIUM.get(state, PREMIUM["普通"]),
+             "trap": trap, "score": score, "premium_hint": PREMIUM.get(state, PREMIUM["普通"]),
              **payload, "report_md": md,
              "updated_at": datetime.now().astimezone().isoformat(timespec="seconds")}
     (OUT / "daily.json").write_text(json.dumps(daily, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -352,7 +377,8 @@ def main():
     entry = {"date": date_s, "state": state, "prev_state": prev_state,
              "red_rate": round(ind["red_rate"], 4), "zt": ind["zt_count"],
              "zha_rate": round(ind["zha_rate"], 4), "dt": ind["dt_count"],
-             "yz_dt": ind["yz_dt_count"], "r5": round(r5, 4), "trap": trap}
+             "yz_dt": ind["yz_dt_count"], "r5": round(r5, 4), "trap": trap,
+             "t": score["t"] if score else None, "streak": streak}
     history = [h for h in history if h["date"] != date_s] + [entry]
     history.sort(key=lambda x: x["date"])
     hist_path.write_text(json.dumps(history[-500:], ensure_ascii=False), encoding="utf-8")
@@ -361,7 +387,8 @@ def main():
     missed = backfill_pools()
     if missed:
         print(f"[sentiment] 榜单池回填: {','.join(missed)}", flush=True)
-    print(f"[sentiment] {date_s} 状态={state} 涨停{ind['zt_count']} "
+    print(f"[sentiment] {date_s} 状态={state} T={score['t'] if score else '-'} "
+          f"涨停{ind['zt_count']} "
           f"板块效应{len(payload['sectors'])} 候选{len(payload['candidates'])} "
           f"黑名单{ind['zha_count']}", flush=True)
     return 0

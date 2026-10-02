@@ -76,6 +76,19 @@ const IND = [
 
 const TONE_CN = { strong: '极强', warm: '回暖', flat: '普通', weak: '极弱' }
 const TONE_COLOR = { strong: '#dc2626', warm: '#ea580c', flat: '#d1d5db', weak: '#16a34a' }
+// 温度/极端度(API 读时计算,collector/scripts/sentiment_score.py 同源锚点)
+const RANK_LABELS = { r5: 'R5', red: '红盘', zt: '涨停', short: '空头', zha: '炸板' }
+const rankPct = (r) => r == null ? '-' : Math.round(r * 100) + '%'
+// 踩线说明的主导触发指标:极强=正向分位≥80/反向≤20,极弱镜像(与后端 dominant_of 同规则)
+function dominant(score, state) {
+  const pos = ['r5', 'red', 'zt'], neg = ['short', 'zha']
+  const hot = (k, r) => state === '极强'
+    ? (pos.includes(k) ? r >= 0.8 : r <= 0.2)
+    : (pos.includes(k) ? r <= 0.2 : r >= 0.8)
+  return Object.entries(score?.ranks || {})
+    .filter(([k, r]) => (pos.includes(k) || neg.includes(k)) && hot(k, r))
+    .map(([k, r]) => RANK_LABELS[k] + ' ' + rankPct(r))
+}
 function fmtAmount(wan) {
   if (wan == null) return '-'
   return wan >= 10000 ? (wan / 10000).toFixed(1) + '亿' : Math.round(wan).toLocaleString() + '万'
@@ -90,7 +103,7 @@ function renderTrend() {
   const zt = days.map((d) => d.zt_count)
   const zha = days.map((d) => pct1(d.zha_rate))
   const red = days.map((d) => pct1(d.red_rate))
-  const r5 = days.map((d) => d.r5 == null ? null : +(d.r5 * 100).toFixed(2))
+  const t = days.map((d) => d.t)   // 温度 0-100(R5 保留在 tooltip/状态卡/历史表)
   const startPct = days.length > VISIBLE_DAYS ? (1 - VISIBLE_DAYS / days.length) * 100 : 0
   const hiddenX = { xAxis: { show: false } }
   chart = echarts.init(trendEl.value)
@@ -107,7 +120,7 @@ function renderTrend() {
         return `<b>${d.date} ${d.state}${d.trap ? ' ⚠陷阱日' : ''}</b><br/>` +
           `涨停 ${d.zt_count ?? '-'} · 炸板率 ${pc(d.zha_rate)}<br/>` +
           `红盘率 ${pc(d.red_rate)} · 跌停 ${d.dt_count ?? '-'}(一字 ${d.yz_dt_count ?? '-'})<br/>` +
-          `R5 ${d.r5 == null ? '-' : (d.r5 * 100).toFixed(2) + '%'}`
+          `温度 ${d.t ?? '-'}/100 · R5 ${d.r5 == null ? '-' : (d.r5 * 100).toFixed(2) + '%'}`
       },
     },
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
@@ -135,9 +148,9 @@ function renderTrend() {
       { type: 'value', gridIndex: 1, min: 0, max: 100, name: '红盘%', splitNumber: 2,
         nameTextStyle: { color: '#9ca3af', fontSize: 10 },
         axisLabel: { color: '#6b7280', fontSize: 10 }, splitLine: { lineStyle: { color: '#f1f5f9' } } },
-      { type: 'value', gridIndex: 2, name: 'R5%', scale: true, splitNumber: 2,
+      { type: 'value', gridIndex: 2, min: 0, max: 100, name: '温度', splitNumber: 2,
         nameTextStyle: { color: '#9ca3af', fontSize: 10, align: 'right' },
-        axisLabel: { color: '#6b7280', fontSize: 10, formatter: (v) => v.toFixed(1) },
+        axisLabel: { color: '#6b7280', fontSize: 10, formatter: (v) => v.toFixed(0) },
         splitLine: { lineStyle: { color: '#f1f5f9' } } },
       { type: 'value', gridIndex: 3, min: 0, max: 1, show: false },
     ],
@@ -154,8 +167,12 @@ function renderTrend() {
       { name: '红盘率%', type: 'line', xAxisIndex: 1, yAxisIndex: 2, data: red,
         symbol: 'none', lineStyle: { color: '#059669', width: 1.5 },
         areaStyle: { color: 'rgba(5,150,105,0.08)' } },
-      { name: 'R5%', type: 'line', xAxisIndex: 2, yAxisIndex: 3, data: r5,
-        symbol: 'none', lineStyle: { color: '#2563eb', width: 1.5 } },
+      { name: '温度T', type: 'line', xAxisIndex: 2, yAxisIndex: 3, data: t,
+        symbol: 'none', connectNulls: true, lineStyle: { color: '#2563eb', width: 1.5 },
+        // 20/80 虚线=极弱/极强带边界(T 与状态机并行,档内高低在曲线上直接可读)
+        markLine: { silent: true, symbol: 'none', label: { show: false },
+          lineStyle: { color: '#cbd5e1', type: 'dashed', width: 1 },
+          data: [{ yAxis: 20 }, { yAxis: 80 }] } },
       { // 状态色带:每根顶满的色柱,颜色即当日档位;缩放/悬浮与上面三格天然同步
         name: '状态', type: 'bar', xAxisIndex: 3, yAxisIndex: 4, barWidth: '100%',
         data: days.map((d) => ({ value: 1, itemStyle: { color: TONE_COLOR[d.tone] || '#d1d5db' } })),
@@ -184,6 +201,15 @@ function goRow(d) { loadDate(d) }
             <span v-if="daily.prev_state" class="prev">· 昨日 {{ daily.prev_state }}</span>
             <span v-if="!isLatest" class="hist-flag">历史查看中</span>
           </div>
+          <div v-if="daily.score" class="score">
+            <span v-if="daily.score.extreme != null" class="se" :class="'bd-' + daily.tone">
+              极端度 {{ daily.score.extreme }}/100 · {{ daily.score.band }}</span>
+            <span v-else class="se">温度 {{ daily.score.t }}/100</span>
+            <span v-if="daily.score.streak >= 2" class="stk">{{ daily.state }} · 第{{ daily.score.streak }}日</span>
+            <span v-if="daily.score.ranks" class="ranks">
+              <template v-for="(v, k) in daily.score.ranks" :key="k">{{ RANK_LABELS[k] || k }} {{ rankPct(v) }}&ensp;</template>
+            </span>
+          </div>
           <div class="nav">
             <button type="button" @click="goDay(-1)" :title="'查看前一交易日'">◀ 前一日</button>
             <button v-if="!isLatest" type="button" class="latest" @click="loadDate(latestDate)">回到最新</button>
@@ -200,6 +226,13 @@ function goRow(d) { loadDate(d) }
       <p v-if="daily.trap" class="trap">
         ⚠ 陷阱日:昨日极弱、今日转普通——该形态次日涨停溢价实测 +0.55%/胜率 50%,全局禁止隔夜。
       </p>
+      <p v-if="daily.score && daily.score.band === '踩线'" class="trap">
+        ⚠ 踩线{{ daily.state }}:极端度 {{ daily.score.extreme }} 未达 80——主导
+        {{ dominant(daily.score, daily.state).join('、') || '—' }};单指标驱动、综合温度未跟上,操作按普通档仓位对待。
+      </p>
+      <p v-if="daily.score && daily.score.divergence" class="trap">
+        ⚠ 温度与档位背离:综合温度 {{ daily.score.t }} 已达{{ daily.score.divergence === 'high' ? '极强' : '极弱' }}带但状态机未触发——多指标同向而均未过线,关注次日确认。
+      </p>
 
       <!-- ② 走势:近 120 个交易日,四联格 + 缩放;状态带点柱跳当日 -->
       <section v-if="history.length" class="card">
@@ -207,7 +240,7 @@ function goRow(d) { loadDate(d) }
         <div ref="trendEl" class="trend"></div>
         <p class="legend">
           <i class="bg-strong"></i>极强 <i class="bg-warm"></i>回暖 <i class="bg-flat"></i>普通 <i class="bg-weak"></i>极弱
-          <span class="lg-note">红柱=涨停家数 橙线=炸板率 绿线=红盘率 蓝线=R5</span>
+          <span class="lg-note">红柱=涨停家数 橙线=炸板率 绿线=红盘率 蓝线=温度T(虚线 20/80=极弱/极强带)</span>
         </p>
       </section>
 
@@ -301,19 +334,20 @@ function goRow(d) { loadDate(d) }
               <thead><tr>
                 <th>日期</th><th>状态</th><th class="num">红盘率</th><th class="num">涨停</th>
                 <th class="num">炸板率</th><th class="num">跌停</th><th class="num">一字</th>
-                <th class="num">R5</th><th></th>
+                <th class="num">R5</th><th class="num">温度</th><th></th>
               </tr></thead>
               <tbody>
                 <tr v-for="h in [...history].reverse()" :key="h.date" class="hrow"
                     :class="{ cur: h.date === daily.date }" @click="goRow(h.date)">
                   <td>{{ h.date }}</td>
-                  <td><span class="dot" :style="{ background: TONE_COLOR[h.tone] }"></span>{{ h.state }}</td>
+                  <td><span class="dot" :style="{ background: TONE_COLOR[h.tone] }"></span>{{ h.state }}<span v-if="h.streak >= 2" class="stkk">·{{ h.streak }}</span></td>
                   <td class="num">{{ pct1(h.red_rate) ?? '-' }}%</td>
                   <td class="num">{{ h.zt_count ?? '-' }}</td>
                   <td class="num">{{ pct1(h.zha_rate) ?? '-' }}%</td>
                   <td class="num">{{ h.dt_count ?? '-' }}</td>
                   <td class="num">{{ h.yz_dt_count ?? '-' }}</td>
                   <td class="num">{{ h.r5 == null ? '-' : (h.r5 * 100).toFixed(2) + '%' }}</td>
+                  <td class="num">{{ h.t ?? '-' }}</td>
                   <td class="num">{{ h.trap ? '⚠陷阱' : '' }}</td>
                 </tr>
               </tbody>
@@ -324,7 +358,9 @@ function goRow(d) { loadDate(d) }
 
       <p class="note">口径:全市场 A 股收盘快照(剔除停牌),涨停按交易所涨停价判定;状态阈值与转移矩阵为
         2024-01~2026-09 校准,积累满 60 交易日后换滚动分位。历史回看:走势卡留 120 个交易日,
-        更早的期次随数据积累仍在 /api/sentiment/history 里(limit 上限 500)。采集:交易日 15:35 fetch_sentiment。</p>
+        更早的期次随数据积累仍在 /api/sentiment/history 里(limit 上限 500)。采集:交易日 15:35 fetch_sentiment。
+        温度 T/极端度/连续天数为 API 读时计算(锚点 static-v1,满 60 交易日后切滚动 250 日分位),
+        状态机阈值不受影响。</p>
     </template>
     <p v-else-if="!error" class="empty">加载中…</p>
   </div>
@@ -356,6 +392,15 @@ function goRow(d) { loadDate(d) }
 .nav .latest { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
 .inds { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; font-size: 13px; }
 .inds em { font-style: normal; color: #6b7280; margin-right: 4px; }
+
+.score { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; }
+.score .se { font-weight: 700; font-size: 18px; }
+.score .se.bd-strong { color: #dc2626; }
+.score .se.bd-weak { color: #16a34a; }
+.score .stk { font-size: 12px; color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe;
+  border-radius: 999px; padding: 1px 8px; }
+.score .ranks { font-size: 12px; color: #6b7280; }
+.stkk { color: #9ca3af; font-size: 12px; margin-left: 2px; }
 
 .loadmsg { color: #6b7280; font-size: 12px; margin: 0 0 10px; }
 .trap { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; padding: 8px 14px; border-radius: 8px; }
