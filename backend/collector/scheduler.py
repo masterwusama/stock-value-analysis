@@ -10,21 +10,20 @@
     全市场深抓: 周六 09:05——财报/定期报告重抓(--resume --max-age 6, 约 4.5h),
              财务数据按季更新,周频足够; 新上市标的也在这一步进池
     农价     : 每天 09:05 / 21:05(生意社每周 2~4 次,一天 2 次足够)
-    行业 EDB : 每周日 20:00——Wind 客户端量价序列(月/周频为主,周更足够)
+    行业 EDB : 每周日 20:00——量价序列(月/周频为主,周更足够)。2026-10-02 起换免费
+             HTTP 源(新浪期货主力连续/东财宏观,收缩为 8 指标),不再依赖 Wind,云端可跑
     估值分位 : 每天 05:05——Wind PE/PB/PS 十年分位,单日 80 次调用,铺完一轮约 1.8 天
     立案公告 : 每周日 10:05——巨潮全文检索「立案告知书/行政处罚决定书」(免 Wind),
              灌 case_event 并单刷 score_daily,「正在立案」抬 ST 高危旗
-    其余 Wind 侧(events job)仍不进调度:本机 Wind 客户端 CLI 要登录、按量耗积分,
-             是自动链管不到的外部依赖(2026-09-03 09:05 的 agro 就被 fetch_edb 带成过 failed)。
+    其余 Wind 侧(events/valuation 之外的 events job)仍不进调度:本机 Wind 客户端 CLI
+             要登录、按量耗积分,是自动链管不到的外部依赖(2026-09-03 09:05 的 agro
+             就被当时的 fetch_edb 带成过 failed——edb 自换免费源后该风险已消除)。
 
-Wind 积分约束(每日 1000 分,单价实测 8~11.4 积分/次、cli 不返回余额;EDB 历史删了补不回来):
-自动碰 Wind 的有两个任务,各自靠不同东西兜住——edb 靠 fetch_edb 的默认增量窗口(单次 7 调用
-/共 265 天数据,同脚本改成固定 365 天窗口是 2607 天,约 10 倍)、写盘前的历史不回撤防线(合并
-按失败处理就 exit=4 不写文件)、以及客户端没登录时只会 job failed(不耗积分、不动数据);
-valuation 靠 --calls-cap 80 的当日调用上限加 data/valuation/state.json 游标,到上限就干净
-收尾 exit 0(一天铺不完全是预期,次日接着铺),只有连续多批取数失败才让 job 红。
-要更新 events 跑 python -m collector.run events;要看 edb 本轮花多少数据量跑
-python fetch_edb.py --dry-run(不碰 Wind)。
+Wind 积分约束(每日 1000 分,单价实测 8~11.4 积分/次、cli 不返回余额):2026-10-02 edb
+退役 Wind 后,自动任务里只剩 valuation 碰 Wind——靠 --calls-cap 80 的当日调用上限加
+data/valuation/state.json 游标,到上限就干净收尾 exit 0(一天铺不完全是预期,次日接着
+铺),只有连续多批取数失败才让 job 红;积分预算全额让给它。
+要更新 events 跑 python -m collector.run events。
 
 全量抓取期间持 data/.fetch.lock,同时段的 stock job 会自动跳过(不互盖 index.json)。
 
@@ -76,7 +75,7 @@ def main():
     # 原 cron "0 1,13 * * *" = 北京 09:00/21:00
     s.add_job(run_job, "cron", args=["agro"], hour="9,21", minute=5, id="agro")
     # 行业 EDB 每周一次(周日晚上,不与周六全市场深抓挤同一时段)：量价序列以月/周频
-    # 为主,日更毫无意义却要把 Wind 客户端这个自动链管不到的依赖掺进 agro 链(踩过)
+    # 为主,日更无意义。2026-10-02 起为免费 HTTP 源(期货主力/东财),无 Wind 依赖
     s.add_job(run_job, "cron", args=["edb"], day_of_week="sun",
               hour=20, minute=0, id="edb")
     # 估值分位每天 05:05 铺一批(单日 80 次调用,约 1.8 天铺完全市场后自动开新一轮)。

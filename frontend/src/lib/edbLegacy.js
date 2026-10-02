@@ -2,7 +2,7 @@
  * 行业 EDB 量价跟踪（自 agro-price/assets/edb.js 整体移植）
  * 改造:去 IIFE 改 ESM;数据源改 /api/agro/edb(结构与原 edb.json 对齐);
  * 初始化改由 AgroView.vue 组件 onMounted 调用 export init()。
- * 消费后端 edb 数据（由 scripts/import_legacy.py 从万得 Wind 抓取，周/月聚合）。
+ * 消费后端 edb 数据（fetch_edb.py 免费源采集:新浪期货主力连续/东财宏观,周/月聚合）。
  */
 
   var DATA_FILE = '/api/agro/edb';
@@ -504,7 +504,7 @@
     renderDimCharts(cat);
 
     $('edb-foot').textContent =
-      '数据来源：万得 Wind 金融数据服务（宏观行业 EDB，周/月聚合）· 仅供个人学习研究';
+      '数据来源:新浪期货(主力连续)/东方财富(波罗的海系运价指数·70城房价),周/月聚合 · 仅供个人学习研究';
   }
 
   function fmtUpdated(s) {

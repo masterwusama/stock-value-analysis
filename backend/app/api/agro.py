@@ -65,7 +65,7 @@ def agro_products(db: Session = Depends(get_session)):
 
 @router.get("/edb")
 def edb_indicators(db: Session = Depends(get_session)):
-    """Wind EDB 宏观行业量价(同原 edb.json:categories→indicators→points)。
+    """EDB 宏观行业量价(同 edb.json:categories→indicators→points;2026-10-02 起免费源采集)。
 
     原始展示顺序由导入时记录的 extra.cat_idx / ind_idx 还原。
     """

@@ -5,7 +5,7 @@
     python -m collector.run stock     # 日更：腾讯批量刷全市场估值 + 定增/回购明细 → 回灌（分钟级）
     python -m collector.run deep      # 深抓：全市场财务/报告重抓（--resume 增量，数小时）
     python -m collector.run agro      # fetch_prices → 回灌（生意社/中农立华价格，不碰 Wind）
-    python -m collector.run edb       # Wind 行业 EDB 量价（手动，不进调度，理由见 JOBS 注）
+    python -m collector.run edb       # 行业 EDB 量价（免费源:新浪期货主力/东财宏观,周日 20:00 自动,云端可跑）
     python -m collector.run events    # Wind 事件(一次性/手动,不进每日调度) → 回灌
     python -m collector.run import    # 跳过抓取,仅手动触发一次回灌
 尾部参数透传给该 job 首个采集脚本(传了就整体替代该 job 的默认参数),
@@ -75,12 +75,11 @@ JOBS = {
     # 末尾同样补一次重算：fetch_data 只给本轮真爬过的公司算分，带 --resume/--max-age 时
     # 大部分公司是跳过的，改了评分公式就得靠这一步铺满全市场。
     "deep": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "_refresh_scores.py")],
-    # agro 只跑生意社价格：行业 EDB 的唯一数据源是本机 Wind 客户端 CLI（要客户端登录、按
-    # 指标耗积分），属于自动链管不到的外部依赖。2026-09-03 09:05 那轮已经碰到：
-    # etl_job_log 里 agro 至今唯一一条记录就是 failed / `fetch_edb.py exit=1`（价格数据
-    # 09:14:32 已落盘、回灌 09:14:38 起照样成功——驱动是 break 后仍回灌，没丢数据，但日更
-    # 状态被 Wind 侧带红，红了也分不出是链路坏还是 Wind 坏）。EDB 本身是周/月聚合的低频
-    # 序列，一天两跑无意义 → Wind 侧要抓时手动跑下面的 edb / events。
+    # agro 只跑生意社价格。行业 EDB 历史上是本机 Wind 客户端 CLI(要登录、耗积分),属于
+    # 自动链管不到的外部依赖,2026-09-03 09:05 那轮 agro 曾被 fetch_edb 带成 failed(价格
+    # 落盘/回灌照常,但日更状态被 Wind 侧带红)。2026-10-02 起 edb 全量换免费 HTTP 源
+    # (新浪期货主力连续/东财宏观,收缩为 8 指标,见 fetch_edb.py 头注),独立成周日 job
+    # 自动跑、云端也能跑;仍不并进 agro 链——周/月聚合的低频序列,日更无意义。
     "agro": [(AGRO_SCRIPTS, "fetch_prices.py")],
     "edb": [(AGRO_SCRIPTS, "fetch_edb.py")],
     "events": [(SCRIPTS, "fetch_events.py")],
@@ -114,7 +113,7 @@ JOB_DEFAULTS = {
     # 刷池已筛掉美股与管理分<30／造假分>50 的标的，一轮 5340 家 = 54 批 = 108 次；56 次/天
     # = 28 批 = 2800 家，约 1.9 天铺完一轮。取 56 不取 90：单价只能
     # 按“当天积分 ÷ 成功调用数”反推（cli 不返回余额），2026-09-10 首轮 72 次就把当天 1000
-    # 积分打光 ⇒ ≈13.9 积分/次，90 次要 1251 积分；且周日 20:00 的 edb 抢的是同一个池子。
+    # 积分打光 ⇒ ≈13.9 积分/次，90 次要 1251 积分（edb 退役 Wind 后积分池已全额让给本任务）。
     "valuation": ["--calls-cap", "56"],
 }
 

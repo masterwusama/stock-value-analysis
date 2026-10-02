@@ -1020,8 +1020,20 @@ def import_sentiment(db, stats):
 
 
 def import_edb(db, stats):
-    """edb.json → edb_indicator / edb_value。"""
+    """edb.json → edb_indicator / edb_value。
+
+    2026-10-02 起 edb.json 是本模块的唯一指标清单(Wind 源退役、换免费源收缩):
+    源里不存在的指标连同其观测整行删除——老 Wind S 码序列与被删指标的旧历史
+    都靠这里出清,不需要一次性手工 SQL。
+    """
     src = json.loads((AGRO_DIR / "edb.json").read_text(encoding="utf-8"))
+    src_codes = {ind["code"] for cat in src.get("categories", [])
+                 for ind in cat.get("indicators", [])}
+    have = {r[0] for r in db.execute(select(EdbIndicator.edb_code)).fetchall()}
+    for gone in sorted(have - src_codes):
+        db.execute(text("DELETE FROM edb_value WHERE edb_code = :c"), {"c": gone})
+        db.execute(text("DELETE FROM edb_indicator WHERE edb_code = :c"), {"c": gone})
+        stats["edb_indicator_stale_deleted"] += 1
     for ci, cat in enumerate(src.get("categories", [])):
         for ii, ind in enumerate(cat.get("indicators", [])):
             freq = EDB_FREQ_MAP.get(str(ind.get("freq", "")).strip(), "month")
@@ -1050,10 +1062,10 @@ def import_edb(db, stats):
                 stats["edb_value"] += 1
                 keep.add(d)
             # 与 import_agro 同理：--no-clean 下只 upsert 不删，指标撤点会永久残留。
-            # 但删除要限定在源自身覆盖的区间内：Wind 积分有限（2026-09-03 约剩 1000），
-            # 而 fetch_edb 默认只抓近 365 天，一旦 edb.json 被整份覆盖成一年数据，
-            # 无条件差集会把库里回溯到前几年的点一起抹掉，而且补不回来。区间外的历史点
-            # 保留（真要清库用不带 --no-clean 的全量重灌）。
+            # 但删除要限定在源自身覆盖的区间内——一旦源被整份覆盖成较窄窗口的数据,
+            # 无条件差集会把库里更早的历史一起抹掉。2026-10-02 换免费源后每轮都是
+            # 全量历史,该防线降级为兜底;窗口外的历史点仍保留
+            # (真要清库用不带 --no-clean 的全量重灌)。
             src_dates = sorted(x for x in keep if x is not None)
             if not src_dates:
                 stats["edb_value_delete_skipped"] += 1

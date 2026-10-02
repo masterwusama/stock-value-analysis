@@ -51,15 +51,13 @@ onBeforeUnmount(() => {
     <div class="edb-switch" id="edb-switch">
       <div class="edb-segs">
         <button class="edb-seg active" data-view="agro">农化制品</button>
-        <button class="edb-seg" data-view="auto">汽车</button>
         <button class="edb-seg" data-view="alu">电解铝</button>
         <button class="edb-seg" data-view="shipping">航运</button>
         <button class="edb-seg" data-view="tire">轮胎橡胶</button>
         <button class="edb-seg" data-view="realestate">地产链</button>
-        <button class="edb-seg" data-view="coal">煤炭</button>
         <button class="edb-seg" data-view="steel">钢铁</button>
       </div>
-      <span class="edb-switch-note">行业 EDB 量价跟踪 · 数据源 万得 Wind（周/月聚合）</span>
+      <span class="edb-switch-note">行业 EDB 量价跟踪 · 免费源(新浪期货主力连续/东财宏观,周/月聚合)</span>
     </div>
 
     <!-- ========== 农化制品视图 ========== -->
