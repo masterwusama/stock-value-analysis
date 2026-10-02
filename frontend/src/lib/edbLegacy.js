@@ -280,186 +280,57 @@
     $('edb-kpis').innerHTML = html;
   }
 
-  /* ---------------- 维度图配置（每分类 2-3 张） ---------------- */
+  /* ---------------- 维度图配置（每分类 1-3 张） ----------------
+   * 2026-10-02 EDB 换免费源后按新指标码重写;老 Wind S 码图表整体删除
+   * (auto/coal 两分类已不存在)。单指标分类保留一张原始单位全历史图,
+   * 与总览图(归一化 100)互补。 */
 
   var DIM_SPECS = {
-    auto: [
-      {
-        title: '汽车产量 & 新能源渗透率', yName: '万辆',
-        note: '左轴：汽车/新能源产量（万辆，柱，中汽协）；右轴：新能源渗透率（%，线）',
-        series: [
-          { code: 'S0105523', type: 'bar', scale: 1e-4 },
-          { code: 'S6139215', type: 'bar', scale: 1e-4 },
-          { code: 'X2694913', type: 'line', yAxisIndex: 1, y2: '%' }
-        ]
-      },
-      {
-        title: '产销对比（万辆）', yName: '万辆',
-        note: '中汽协口径：汽车与新能源汽车的月度产量 vs 销量（均为辆，已折算万辆）',
-        series: [
-          { code: 'S0105523', type: 'line', scale: 1e-4, name: '汽车产量' },
-          { code: 'S0105710', type: 'line', scale: 1e-4, name: '汽车销量' },
-          { code: 'S6139215', type: 'line', scale: 1e-4, name: '新能源产量' },
-          { code: 'S6139212', type: 'line', scale: 1e-4, name: '新能源销量' }
-        ]
-      },
-      {
-        title: '乘用车 vs 比亚迪 产量（万辆）', yName: '万辆',
-        note: '中汽协口径（辆，已折算万辆），反映比亚迪在乘用车中的量级',
-        series: [
-          { code: 'S0105526', type: 'line', scale: 1e-4 },
-          { code: 'S0105689', type: 'line', scale: 1e-4 }
-        ]
-      }
-    ],
     alu: [
       {
-        title: '电解铝价格 vs 氧化铝成本（元/吨）', yName: '元/吨',
-        note: '铝锭现货 / 月均价与氧化铝现货，同单位（元/吨）可直接叠比',
+        title: '沪铝 vs 氧化铝（元/吨）', yName: '元/吨',
+        note: '期货主力连续日收盘折周;氧化铝期货 2023-06 上市历史较短。原 A00 现货/月均口径随 Wind 源退役,期现基差存在,趋势与分位用途不受影响',
         series: [
-          { code: 'S0179655', type: 'line' },
-          { code: 'S0031718', type: 'line' },
-          { code: 'Z9174481', type: 'line' }
+          { code: 'AL_MAIN', type: 'line' },
+          { code: 'AO_MAIN', type: 'line' }
         ]
       },
       {
-        title: '吨铝价差（铝锭现货 − 氧化铝）', yName: '元/吨',
-        note: '铝价与氧化铝现货直接相减；未计氧化铝单耗（约 1.9 吨/吨铝）及电力、阳极等成本，非真实冶炼利润',
-        diff: { a: 'S0179655', b: 'Z9174481' },
-        legendName: '铝锭 − 氧化铝'
-      },
-      {
-        title: 'LME 铝（美元/吨）', yName: '美元/吨',
-        note: '伦铝以美元计价，独立展示',
-        series: [{ code: 'S0029755', type: 'line' }]
+        title: '吨铝价差（沪铝 − 氧化铝）', yName: '元/吨',
+        note: '两期货主力收盘直接相减;未计氧化铝单耗（约 1.9 吨/吨铝）及电力、阳极等成本,非真实冶炼利润',
+        diff: { a: 'AL_MAIN', b: 'AO_MAIN' },
+        legendName: '沪铝 − 氧化铝'
       }
     ],
     shipping: [
       {
-        title: '集运综合指数 CCFI & SCFI', yName: '指数',
-        note: 'CCFI（中国出口集装箱综合）与 SCFI（上海出口集装箱综合）',
-        series: [
-          { code: 'S0000066', type: 'line' },
-          { code: 'S0114089', type: 'line' }
-        ]
-      },
-      {
-        title: 'CCFI 分航线', yName: '指数',
-        note: '综合 / 欧洲 / 美西 / 美东 / 东南亚航线',
-        series: [
-          { code: 'S0000066', type: 'line' },
-          { code: 'S0000075', type: 'line' },
-          { code: 'S0000073', type: 'line' },
-          { code: 'S0000072', type: 'line' },
-          { code: 'S0000069', type: 'line' }
-        ]
-      },
-      {
         title: '散货 & 油运指数', yName: '指数',
-        note: 'BDI（干散货）、BDTI（原油运输）、中国沿海散货',
+        note: 'BDI（干散货）与 BDTI（原油运输）,日频折周。CCFI/SCFI 集运与沿海散货无稳定免费接口,随 Wind 源退役',
         series: [
-          { code: 'S0031550', type: 'line' },
-          { code: 'S0031553', type: 'line' },
-          { code: 'D9483906', type: 'line' }
+          { code: 'BDI', type: 'line' },
+          { code: 'BDTI', type: 'line' }
         ]
       }
     ],
     tire: [
       {
-        title: '轮胎产量 & 出口金额', yName: '万条',
-        note: '左轴：轮胎产量（万条，柱，月）；右轴：橡胶轮胎出口金额（万美元，线，月）',
-        series: [
-          { code: 'F0040955', type: 'bar' },
-          { code: 'S0270241', type: 'line', yAxisIndex: 1, y2: '万美元' }
-        ]
-      },
-      {
-        title: '橡胶原料价格（元/吨）', yName: '元/吨',
-        note: '天然橡胶(标准胶1#) 与 丁苯橡胶(1502) 现货，同为元/吨直接叠比；周频',
-        series: [
-          { code: 'S5470428', type: 'line' },
-          { code: 'S5470420', type: 'line' }
-        ]
-      },
-      {
-        title: '半钢胎开工率（%）', yName: '%',
-        note: '汽车轮胎(半钢胎)开工率，反映轮胎厂景气度；周频',
-        series: [{ code: 'S6124651', type: 'line' }]
+        title: '天然橡胶（主力连续,元/吨）', yName: '元/吨',
+        note: '沪胶 RU 主力连续日收盘折周;原丁苯橡胶现货与全钢/半钢胎开工率无免费接口,随 Wind 源退役',
+        series: [{ code: 'RU_MAIN', type: 'line' }]
       }
     ],
     realestate: [
       {
-        title: '销售与投资（统计局当月值）', yName: '万㎡',
-        note: '左轴：商品房销售面积当月（万㎡，柱）；右轴：销售额与开发投资完成额当月（亿元，线）；当月值由累计差分推得，年初首点为 1-2 月合并发布值',
-        series: [
-          { code: 'S0029658', type: 'bar' },
-          { code: 'S0029659', type: 'line', yAxisIndex: 1, y2: '亿元' },
-          { code: 'S0029656', type: 'line', yAxisIndex: 1, y2: '亿元' }
-        ]
-      },
-      {
-        title: '施工端：新开工 vs 竣工（当月万㎡）', yName: '万㎡',
-        note: '统计局房屋新开工/竣工面积当月值（累计差分），竣工年底集中交付致 12 月崛起属正常',
-        series: [
-          { code: 'S0029669', type: 'line' },
-          { code: 'S0029670', type: 'line' }
-        ]
-      },
-      {
-        title: '房价同比 & 30 城高频成交', yName: '%',
-        note: '左轴：70 城新建商品住宅价格指数当月同比（%）；右轴：30 大中城市日均成交面积（万㎡，日频按月均聚合）',
-        series: [
-          { code: 'S2707411', type: 'line' },
-          { code: 'S2707380', type: 'line', yAxisIndex: 1, y2: '万㎡' }
-        ]
-      }
-    ],
-    coal: [
-      {
-        title: '原煤 / 焦炭产量与煤炭进口（万吨）', yName: '万吨',
-        note: '统计局原煤、焦炭当月产量（1-2 月合并发布导致缺月）与海关煤炭进口量，同为万吨',
-        series: [
-          { code: 'S0026989', type: 'line' },
-          { code: 'S0026997', type: 'line' },
-          { code: 'S0027001', type: 'line' }
-        ]
-      },
-      {
-        title: '动力煤价：秦皇岛港 Q5500（元/吨）', yName: '元/吨',
-        note: '秦皇岛港平仓价（周频），动力煤长协/市场价的基准锚',
-        series: [{ code: 'S5104572', type: 'line' }]
-      },
-      {
-        title: '焦链价格：炼焦煤 vs 冶金焦（元/吨）', yName: '元/吨',
-        note: '主要港口炼焦煤均价与冶金焦平仓价（日频折周），焦炭利润看两线开口',
-        series: [
-          { code: 'S5132102', type: 'line' },
-          { code: 'S5132320', type: 'line' }
-        ]
+        title: '70 城新房价格同比（%）', yName: '%',
+        note: '70 城新建商品住宅价格指数同比的简单平均,月度。统计局销售/投资/新开工/竣工与 30 城成交无免费接口,随 Wind 源退役',
+        series: [{ code: 'HOUSE70_YOY', type: 'line' }]
       }
     ],
     steel: [
       {
-        title: '粗钢 / 生铁 / 钢材产量（万吨，当月）', yName: '万吨',
-        note: '统计局当月值（1-2 月合并发布导致缺月）',
-        series: [
-          { code: 'S0027374', type: 'line' },
-          { code: 'S0027370', type: 'line' },
-          { code: 'S0027378', type: 'line' }
-        ]
-      },
-      {
-        title: '螺纹钢价 vs 进口铁矿石（元/吨 / 美元/吨）', yName: '元/吨',
-        note: '左轴：螺纹钢 HRB400E 20mm 全国价（日频折周）；右轴：进口铁矿石平均价（美元/吨，月）',
-        series: [
-          { code: 'S5707798', type: 'line' },
-          { code: 'S5704501', type: 'line', yAxisIndex: 1, y2: '美元/吨' }
-        ]
-      },
-      {
-        title: '钢材社会库存（万吨）', yName: '万吨',
-        note: '主要市场钢材社会库存量（周频，非官方整理口径），去库/累库拐点参考',
-        series: [{ code: 'L3818799', type: 'line' }]
+        title: '螺纹钢（主力连续,元/吨）', yName: '元/吨',
+        note: '螺纹钢 RB 主力连续日收盘折周;原统计局产量/铁矿石进口均价/社会库存无免费接口,随 Wind 源退役',
+        series: [{ code: 'RB_MAIN', type: 'line' }]
       }
     ]
   };
