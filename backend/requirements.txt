@@ -3,3 +3,5 @@ pymysql>=1.1
 python-dotenv>=1.0
 fastapi>=0.110
 uvicorn[standard]>=0.29
+markdown>=3.4
+pyyaml>=6

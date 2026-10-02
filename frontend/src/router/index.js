@@ -5,6 +5,8 @@ const routes = [
   { path: '/stock/:code', name: 'detail', component: () => import('../views/StockDetailView.vue') },
   { path: '/agro', name: 'agro', component: () => import('../views/AgroView.vue') },
   { path: '/sentiment', name: 'sentiment', component: () => import('../views/SentimentView.vue') },
+  { path: '/research', name: 'research', component: () => import('../views/ResearchView.vue') },
+  { path: '/research/:slug', name: 'research-report', component: () => import('../views/ResearchView.vue') },
 ]
 
 const router = createRouter({ history: createWebHashHistory(), routes })

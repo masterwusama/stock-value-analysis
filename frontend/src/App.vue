@@ -8,6 +8,7 @@
       <router-link to="/">证券列表</router-link>
       <router-link to="/agro">农价·量价</router-link>
       <router-link to="/sentiment">情绪日报</router-link>
+      <router-link to="/research">投研库</router-link>
     </nav>
   </header>
   <main class="page">
