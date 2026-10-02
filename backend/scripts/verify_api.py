@@ -72,14 +72,22 @@ def check_company(code):
     assert api["snapshot"]["pe_ttm"] == exp["pe_ttm"], "pe mismatch"
     assert float(api["snapshot"]["market_cap"]) == float(exp["market_cap"]), "mcap mismatch"
 
-    # 财务四表:行数按裁剪口径核对(2026-09-23 起 API 详情包=全部年报+最近12个季报行,
-    # securities._prune_interims;报表标签页的完整历史走 /statements 端点,下方单独比)
+    # 财务四表:行数按裁剪口径核对(2026-09-23 起 API 详情包=全部年报+最近12个季报行;
+    # 2026-09-30 周期分改造起再加「近 8 年的三季报行」——securities._prune_interims 的
+    # INTERIM_KEEP=12 / CYCLE_Q3_YEARS=8,本复刻须与其同步;报表标签页的完整历史走
+    # /statements 端点,下方单独比)
     def _pruned_rows(rows):
         def day(r):
             return str(r.get("报告日") or r.get("报告期") or "")
         annual = [r for r in rows if day(r)[5:7] == "12"]
-        interim = [r for r in rows if day(r)[5:7] != "12"][:12]
-        return sorted(annual + interim, key=day, reverse=True)
+        interim = [r for r in rows if day(r)[5:7] != "12"]
+        keep = interim[:12]
+        kept = {day(r) for r in keep}
+        years = [int(day(r)[:4]) for r in interim if day(r)[:4].isdigit()]
+        q3_floor = f"{(max(years) if years else 0) - 8 + 1}-09-30"
+        extra = [r for r in interim if day(r)[5:10] == "09-30"
+                 and day(r) >= q3_floor and day(r) not in kept]
+        return sorted(annual + keep + extra, key=day, reverse=True)
 
     for key in ("indicators", "income", "balance", "cashflow"):
         want = _pruned_rows(src[key])
@@ -110,20 +118,28 @@ def check_company(code):
                     print(f"   [value] {key}[{i}] {k}: {sa[k]!r} != {v!r}")
     assert diffs == 0, f"{diffs} 处还原差异"
 
-    # 分红:type 非空的 (year,type) 唯一键去重后行数一致
-    seen, uniq = set(), 0
+    # 分红:upsert 不删表——库可能保留源已不再给的旧行,断言改为「源行 ⊆ API 行」,
+    # 源空而 API 有行时打印可见性提示(整体断供的哨兵),不再要求行数相等
+    seen, uniq_rows = set(), []
     for r in src["dividends"]:
         k = (r.get("year"), r.get("type"))
-        if r.get("type") is not None:
-            if k in seen:
-                continue
+        if r.get("type") is not None and k not in seen:
             seen.add(k)
-        uniq += 1
-    assert len(api["dividends"]) == uniq, f"dividends {len(api['dividends'])} != {uniq}"
+            uniq_rows.append(k)
+    api_div = {(r.get("year"), r.get("type")) for r in api["dividends"]}
+    missing_div = [k for k in uniq_rows if k not in api_div]
+    assert not missing_div, f"dividends 源行缺失于 API: {missing_div[:5]}"
+    if not uniq_rows and api["dividends"]:
+        print(f"   [info] 源 dividends 空,API 保留 {len(api['dividends'])} 行(upsert 不删)")
 
-    # 定期报告:导入跳过无 date 行
-    expect = sum(1 for r in src["reports"] if r.get("date"))
-    assert len(api["reports"]) == expect, f"reports {len(api['reports'])} != {expect}"
+    # 定期报告:同为 upsert 不删表(periodic_report),源变空后库保留最后已知行——
+    # 断言改为「源行 ⊆ API 行」(按 date+category 对账);源空时打印提示不失败
+    src_rpts = [(r.get("date"), r.get("category")) for r in src["reports"] if r.get("date")]
+    api_rpts = {(r.get("date"), r.get("category")) for r in api["reports"]}
+    missing_rpt = [k for k in src_rpts if k not in api_rpts]
+    assert not missing_rpt, f"reports 源行缺失于 API: {missing_rpt[:5]}"
+    if not src_rpts and api["reports"]:
+        print(f"   [info] 源 reports 空,API 保留 {len(api['reports'])} 行(upsert 不删)")
 
     # 评分快照 vs index.json
     sc_src = idx_entry(code)["scores"]

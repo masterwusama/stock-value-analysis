@@ -20,6 +20,10 @@ from app.api.securities import MIN_PRICE_REF  # 参考值门槛与后端排序�
 
 BASE = "http://127.0.0.1:8000/api"
 IDX = json.load(io.open(LEGACY_DATA_DIR / "data" / "index.json", encoding="utf-8"))
+# index.json 快照里没有行情的公司(实测集中在港股:行情进 quote_daily 但不回写
+# index quote 快照)——市值门槛的归属只由库决定,文件侧无法预测,集合对账时豁免
+NO_INDEX_QUOTE = {c["code"] for c in IDX["companies"]
+                  if not (c.get("quote") or {}).get("market_cap")}
 COLS = {"grahamAgg": "grahamAgg", "grahamDef": "grahamDef", "schloss": "schloss", "buffett": "buffett"}
 # 板块前缀(与 app/api/securities.py BOARDS 一致)
 BOARDS = {"shMain": ("60",), "szMain": ("00",), "gem": ("30",),
@@ -143,8 +147,10 @@ def api_flt_items(cases):
 fails = 0
 
 
-def check(label, want, got):
+def check(label, want, got, exempt=frozenset()):
     global fails
+    if exempt:
+        want, got = want - exempt, got - exempt
     ok = want == got
     if not ok:
         fails += 1
@@ -239,7 +245,10 @@ if _pbvals:
     ]
 for cs in cases_list:
     label = "&".join(f"{k}={','.join(v) if isinstance(v, list) else v}" for k, v in cs.items())
-    check(label, local_flt(**cs), api_flt(cs))
+    # 带市值门槛的对账豁免快照缺行情的公司(见 NO_INDEX_QUOTE 注)——其余门槛的值
+    # 源仍在文件侧,不豁免,免得把真回归也一起豁免掉
+    exempt = NO_INDEX_QUOTE if ("cap_min" in cs or "cap_max" in cs) else frozenset()
+    check(label, local_flt(**cs), api_flt(cs), exempt)
 
 # 门槛边界得闭合（后端把 >= 写成 > 就会掉边界那只，上面按集对比未必命中相等情形）：
 # 阈值直接用该券 API 返回的 market_cap 原值，拿库对库，不因 index.json 与库微差误报
