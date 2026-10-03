@@ -48,6 +48,17 @@ function jump(id) {
   if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 70, behavior: 'smooth' })
   history.replaceState(null, '', '#' + route.fullPath)
 }
+
+// 目录按 h2 小节分组:每节独立 <details> 可折叠;level≥3 归入所在小节作子条目
+const tocGroups = computed(() => {
+  const groups = []
+  for (const t of report.value?.toc || []) {
+    if (t.level <= 2) groups.push({ id: t.id, name: t.name, children: [] })
+    else if (groups.length) groups[groups.length - 1].children.push(t)
+    else groups.push({ id: t.id, name: t.name, children: [] })
+  }
+  return groups
+})
 </script>
 
 <template>
@@ -101,10 +112,15 @@ function jump(id) {
         <nav class="toc card" v-if="(report.toc || []).length">
           <details open>
             <summary>目录</summary>
-            <ul>
-              <li v-for="t in report.toc" :key="t.id" :class="t.level > 2 ? 'sub' : ''">
-                <a :href="'#' + t.id" @click.prevent="jump(t.id)">{{ t.name }}</a></li>
-            </ul>
+            <div class="toc-scroll">
+              <details v-for="g in tocGroups" :key="g.id" class="toc-sec" open>
+                <summary><a :href="'#' + g.id" :title="g.name" @click.prevent.stop="jump(g.id)">{{ g.name }}</a></summary>
+                <ul v-if="g.children.length">
+                  <li v-for="c in g.children" :key="c.id">
+                    <a :href="'#' + c.id" :title="c.name" @click.prevent="jump(c.id)">{{ c.name }}</a></li>
+                </ul>
+              </details>
+            </div>
           </details>
         </nav>
         <!-- eslint-disable-next-line vue/no-v-html: 内容为仓库内自有 Markdown,服务端渲染 -->
@@ -151,11 +167,31 @@ section.card:hover { border-color: #93c5fd; }
 .val-m { display: block; color: #9ca3af; font-size: 12px; margin-top: 2px; }
 
 .reader { display: flex; gap: 14px; align-items: flex-start; }
-.toc { position: sticky; top: 70px; width: 220px; flex-shrink: 0; font-size: 13px; }
-.toc summary { cursor: pointer; font-weight: 600; }
-.toc ul { list-style: none; padding-left: 12px; margin: 8px 0; }
-.toc ul li.sub { padding-left: 14px; font-size: 12px; color: #6b7280; }
-.toc a { color: #374151; text-decoration: none; line-height: 1.9; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 目录:粘性 + 限高,超长在 .toc-scroll 内部滚动;外层 details 收起时高度自然收缩 */
+.toc { position: sticky; top: 70px; width: 220px; flex-shrink: 0; font-size: 13px;
+  display: flex; flex-direction: column; max-height: calc(100vh - 84px); overflow: hidden; padding: 12px 12px 8px; }
+.toc > details { display: flex; flex-direction: column; min-height: 0; }
+.toc > details > summary { flex-shrink: 0; cursor: pointer; font-weight: 600; margin-bottom: 4px; }
+.toc-scroll { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  /* flex 链从 max-height 父级收敛在部分内核不生效(clientHeight 实测溢出),直接给滚动区限高兜底:
+     100vh-84px 是 .toc 外框,再扣掉外框上下 padding(20)与「目录」summary 行(约 26) */
+  max-height: calc(100vh - 130px);
+  scrollbar-width: thin; scrollbar-color: #d1d5db transparent; }
+.toc-scroll::-webkit-scrollbar { width: 6px; }
+.toc-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+/* 小节:自绘箭头(list-style 各浏览器不一),标题是链接(点击跳转不折叠),点箭头/其余区域折叠 */
+.toc-sec { border-top: 1px solid #f1f5f9; }
+.toc-sec:first-child { border-top: none; }
+.toc-sec > summary { display: block; position: relative; padding: 5px 0 5px 14px;
+  cursor: pointer; user-select: none; list-style: none; font-weight: 600; }
+.toc-sec > summary::-webkit-details-marker { display: none; }
+.toc-sec > summary::before { content: '▸'; position: absolute; left: 0; top: 5px;
+  color: #9ca3af; font-size: 11px; line-height: 20px; transition: transform 0.15s; }
+.toc-sec[open] > summary::before { transform: rotate(90deg); }
+.toc ul { list-style: none; padding-left: 14px; margin: 0 0 6px; }
+.toc a { color: #374151; text-decoration: none; line-height: 1.9; display: block;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toc ul a { font-weight: normal; color: #4b5563; }
 .toc a:hover { color: #2563eb; }
 .md-body { flex: 1; min-width: 0; }
 
@@ -176,7 +212,8 @@ section.card:hover { border-color: #93c5fd; }
 
 @media (max-width: 600px) {
   .reader { flex-direction: column; }
-  .toc { position: static; width: auto; }
+  .toc { position: static; width: auto; max-height: none; }
+  .toc-scroll { overflow: visible; max-height: none; }
   .md-body :deep(table) { font-size: 12px; }
   .md-body :deep(th), .md-body :deep(td) { padding: 4px 6px; }
 }
