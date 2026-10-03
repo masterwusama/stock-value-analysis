@@ -11,7 +11,6 @@ import { get } from '../api/client'
 const route = useRoute()
 const list = ref(null)
 const report = ref(null)
-const tracker = ref([])
 const error = ref('')
 
 const slug = computed(() => route.params.slug)
@@ -20,10 +19,7 @@ async function load() {
   error.value = ''
   if (!slug.value) {
     report.value = null
-    try {
-      list.value = await get('/research/list')
-      tracker.value = await get('/research/tracker')
-    } catch (e) { error.value = String(e.message || e) }
+    try { list.value = await get('/research/list') } catch (e) { error.value = String(e.message || e) }
   } else {
     list.value = null
     try { report.value = await get(`/research/report/${encodeURIComponent(slug.value)}`) }
@@ -76,21 +72,6 @@ const tocGroups = computed(() => {
         <p class="sub">深度研报:生意模式 · 护城河 · 财务拆骨 · 估值区间 · 反方证伪。
           每份研报自带数据来源附录;结构与写作纪律见 <code>docs/设计-投研库模块.md</code>。</p>
       </header>
-
-      <!-- 观察哨跟踪:各研报 §6.9 验证时点表按时间合并(升序,非日期类垫底) -->
-      <section v-if="tracker.length" class="card track-board">
-        <h3>观察哨跟踪<span class="sub">{{ tracker.length }} 项验证点 · 按时间排序 · 点标的进研报</span></h3>
-        <div class="track-scroll">
-          <div v-for="(t, i) in tracker" :key="t.slug + i" class="trow"
-               @click="$router.push('/research/' + t.slug)">
-            <span class="tdate" :class="{ now: t.date.startsWith('2026-10') }">{{ t.date }}</span>
-            <router-link :to="'/stock/' + t.code" class="tname" @click.stop>{{ t.name }}</router-link>
-            <span class="conc" :class="'c-' + concTone(t.conclusion)">{{ t.conclusion }}</span>
-            <span class="tevent">{{ t.event }}</span>
-            <span class="taction">{{ t.action }}</span>
-          </div>
-        </div>
-      </section>
 
       <p v-if="list && !list.length" class="empty">还没有研报。</p>
       <section v-for="m in list" :key="m.slug" class="card" @click="$router.push('/research/' + m.slug)">
@@ -160,20 +141,6 @@ const tocGroups = computed(() => {
 .page-head .sub { color: #6b7280; font-size: 13px; margin: 0 0 14px; }
 .page-head code { background: #f3f4f6; border-radius: 4px; padding: 0 4px; font-size: 12px; }
 
-/* 观察哨看板:网格行(日期/标的/结论/事件/动作),限高滚动 */
-.track-board h3 { margin: 0 0 8px; font-size: 15px; }
-.track-board .sub { font-weight: normal; color: #6b7280; font-size: 12px; margin-left: 8px; }
-.track-scroll { max-height: 300px; overflow-y: auto; overscroll-behavior: contain; }
-.trow { display: grid; grid-template-columns: 96px 84px 44px 200px 1fr; gap: 10px; align-items: baseline;
-  padding: 6px 4px; border-bottom: 1px solid #f8fafc; font-size: 13px; cursor: pointer; }
-.trow:hover { background: #f8fafc; }
-.trow:last-child { border-bottom: none; }
-.tdate { color: #6b7280; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tdate.now { color: #b45309; font-weight: 600; }  /* 2026-10 窗口内的验证点亮黄 */
-.tname { color: #2563eb; text-decoration: none; font-weight: 600; white-space: nowrap; }
-.tname:hover { text-decoration: underline; }
-.tevent { color: #374151; }
-.taction { color: #6b7280; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 600px) {
   .trow { grid-template-columns: 84px 72px 40px 1fr; }
   .taction { display: none; }

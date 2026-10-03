@@ -100,30 +100,6 @@ def list_reports():
 
 
 # ---------------------------------------------------------------------------
-# 观察哨跟踪(v2):各研报 frontmatter 的 track 条目合并成一张按时间排序的验证清单。
-# 排序规则:ISO 日期(YYYY-MM-DD 开头)按日期升序在前;中文时段/待定类保持稳定序垫底。
-# ---------------------------------------------------------------------------
-_ISO_PREFIX = re.compile(r"^\d{4}-\d{2}")
-
-
-@router.get("/tracker")
-def tracker():
-    items = []
-    for m in list_reports():
-        for i, t in enumerate(m.track or []):
-            if not isinstance(t, dict) or not t.get("event"):
-                continue
-            items.append({
-                "code": m.code, "name": m.name, "slug": m.slug,
-                "conclusion": m.conclusion, "order": i,
-                "date": str(t.get("date", "")), "event": t["event"],
-                "action": str(t.get("action", "")),
-            })
-    items.sort(key=lambda x: (0, x["date"]) if _ISO_PREFIX.match(x["date"]) else (1, x["date"]))
-    return items
-
-
-# ---------------------------------------------------------------------------
 # 研报覆盖缓存:证券列表/详情页挂「有研报」标记用。9 份文件的 frontmatter 解析
 # 不到 1ms,但列表页每请求都要——按目录 mtime 缓存,内容不变零解析。
 # ---------------------------------------------------------------------------
