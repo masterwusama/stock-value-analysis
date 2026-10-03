@@ -9,6 +9,17 @@ import { getDetail } from '../lib/detailCache'
 import { ensureEcharts } from '../lib/echartsLoader'
 import '../assets/stock.css'
 
+// 投研库入口卡(v2):该代码有深度研报时,在 legacy 详情上方给一张结论卡。
+// 覆盖数据来自 /api/research/list(9 份级别的小请求,失败静默——研报是增强不是依赖)
+const researchCard = ref(null)
+async function loadResearch(code) {
+  researchCard.value = null
+  try {
+    const rs = await get('/research/list')
+    researchCard.value = rs.find((r) => r.code === code) || null
+  } catch (e) { /* 列表接口异常时详情页照常 */ }
+}
+
 // echarts 不进关键路径：详情的图表全是懒模块（滚动到才建），legacy 的 charts 构建器
 // 经 window.__ensureEcharts 拿到 Promise 后再 renderCharts。这里挂载即后台预热，
 // 与首屏评分卡的阅读时间重叠——1MB 的 echarts 下载解析不再挡「点进详情」
@@ -77,8 +88,8 @@ async function render(code) {
   }
 }
 
-onMounted(() => render(route.params.code))
-watch(() => route.params.code, (c) => c && render(c))
+onMounted(() => { render(route.params.code); loadResearch(route.params.code) })
+watch(() => route.params.code, (c) => { if (c) { render(c); loadResearch(c) } })
 onBeforeUnmount(() => {
   alive = false
   renderSeq++ // 使在途请求全部失效
@@ -96,6 +107,13 @@ onBeforeUnmount(() => {
       <button type="button" class="back-btn" @click="router.back()">← 返回列表</button>
     </div>
     <div v-if="error" class="error">{{ error }}</div>
+    <!-- 研报入口卡:结论/区间/摘要,点击进阅读器 -->
+    <router-link v-if="researchCard" :to="'/research/' + researchCard.slug" class="res-card">
+      <span class="rc-badge" :class="'rc-' + (researchCard.conclusion === '回避' ? 'sell' : researchCard.conclusion === '观察' ? 'hold' : 'buy')">{{ researchCard.conclusion }}</span>
+      <span class="rc-title">深度研报:{{ researchCard.title }}</span>
+      <span class="rc-val" v-if="researchCard.val_low != null">估值 {{ researchCard.val_low }}~{{ researchCard.val_high }} · 基准价 {{ researchCard.price_ref }}</span>
+      <span class="rc-go">阅读全文 →</span>
+    </router-link>
     <div v-if="loading && !error" class="detail-loading">加载中…（首次加载含全部分析模块，约需数秒）</div>
     <!-- legacy show() 切换的四块容器(id 与原页面一致)；loading 由 Vue 接管 v-show -->
     <div id="stock-loading" v-show="loading">加载中…</div>
@@ -133,6 +151,20 @@ onBeforeUnmount(() => {
   border-left: 3px solid #5585d4;
   border-radius: 0 8px 8px 0;
 }
+
+/* 研报入口卡:横条链接卡,与 legacy 评分卡同视觉层 */
+.res-card { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  background: #fff; border: 1px solid #dbe7f5; border-left: 3px solid #2563eb;
+  border-radius: 8px; padding: 10px 16px; margin-bottom: 12px;
+  text-decoration: none; box-shadow: 0 1px 3px rgba(16,24,40,0.05); }
+.res-card:hover { border-color: #2563eb; }
+.rc-badge { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 10px; flex-shrink: 0; }
+.rc-buy { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+.rc-sell { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
+.rc-hold { background: #f9fafb; color: #6b7280; border: 1px solid #e5e7eb; }
+.rc-title { color: #1f2937; font-size: 14px; font-weight: 600; }
+.rc-val { color: #1d4ed8; font-size: 13px; }
+.rc-go { color: #2563eb; font-size: 13px; margin-left: auto; }
 </style>
 
 <!-- 详情页版式整理（2026-09）。legacy 注入的 DOM 不带 scoped 属性，故用非 scoped 块、

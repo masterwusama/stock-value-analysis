@@ -1055,6 +1055,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
                   :title="stTip(s)">{{ s.st_risk >= 2 ? '⚠ST' : '⚠' }}</span>
             <span v-if="dipOf(s) != null" class="stale-flag dip-flag" :title="DIP_TIP + '｜本标的：' + dipOf(s) + '%'">中报{{ dipOf(s) }}%</span>
             <span v-if="staleOf(s)" class="stale-flag" :title="ageTip(s)">期龄{{ staleOf(s) }}月</span>
+            <router-link v-if="s.research" :to="'/research/' + s.research.slug" class="rs-flag" :title="s.research.title + '(结论:' + s.research.conclusion + ')'" @click.stop>研</router-link>
             <span class="sc-code">{{ s.code }}</span>
             <span v-if="s.market !== 'A'" class="badge">{{ MARKET_NAME[s.market] }}</span>
             <span class="sc-price" :class="cls(s.change_pct)">
@@ -1167,7 +1168,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
         <tbody>
           <tr v-for="s in data?.items" :key="s.sid" @click="router.push(`/stock/${s.code}`)">
             <td class="l stick name-cell" @mouseenter="prefetchDetail(s.code)">
-              <div class="nm-row"><b>{{ s.name }}</b><span class="badge">{{ MARKET_NAME[s.market] }}</span><span class="cd">{{ s.code }}</span></div>
+              <div class="nm-row"><b>{{ s.name }}</b><router-link v-if="s.research" :to="'/research/' + s.research.slug" class="rs-flag" :title="s.research.title + '(结论:' + s.research.conclusion + ')'" @click.stop>研</router-link><span class="badge">{{ MARKET_NAME[s.market] }}</span><span class="cd">{{ s.code }}</span></div>
               <div class="nm-sub">
                 <span class="ind" :title="s.industry">{{ s.industry || '-' }}</span>
                 <span v-if="s.gate" class="gate-flag" :title="gateTip(s)">⚑</span>
@@ -1387,6 +1388,12 @@ const REF_COLS = COLS.filter((c) => c.ref)
 .tp-ev { font-style: normal; font-size: 9px; color: #9aa5b5; vertical-align: super; margin-left: 1px; }
 /* 硬门槛角标：定性否决，只标注不着色不排序，故用最高对比的红而不是等级色（--bad 那套是给分数用的） */
 .gate-flag { color: #d43b3b; font-size: 12px; margin-left: 3px; cursor: help; }
+/* 投研库徽标(v2):有深度研报的行加「研」字蓝标,点击直达阅读器 */
+.rs-flag { display: inline-block; font-size: 10px; font-weight: 700; line-height: 1;
+  padding: 2px 5px; margin-left: 4px; border-radius: 4px;
+  color: #1d4ed8; background: #eff6ff; border: 1px solid #bfdbfe;
+  text-decoration: none; vertical-align: 1px; }
+.rs-flag:hover { background: #dbeafe; }
 /* ST/退市风险预警徽标：高危红底白字（简称还没变色，红要盖过门槛的 ⚑），关注琥珀描边 */
 .st-flag {
   font-size: 10px; font-weight: 700; line-height: 1;

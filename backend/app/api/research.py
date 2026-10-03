@@ -44,6 +44,8 @@ class ReportMeta(BaseModel):
     val_method: str = ""
     tags: list[str] = []
     summary: str = ""
+    # 观察哨:v2 契约(设计文档 §3.2)。date 支持 ISO 日期或中文时段(「2026-10 下旬」「待定」「月度」等)
+    track: list[dict] = []
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
@@ -95,6 +97,55 @@ def list_reports():
     metas = [m for p in sorted(RESEARCH_DIR.glob("[!_]*.md")) if (m := _load_meta(p))]
     metas.sort(key=lambda m: (m.date, m.slug), reverse=True)
     return metas
+
+
+# ---------------------------------------------------------------------------
+# 观察哨跟踪(v2):各研报 frontmatter 的 track 条目合并成一张按时间排序的验证清单。
+# 排序规则:ISO 日期(YYYY-MM-DD 开头)按日期升序在前;中文时段/待定类保持稳定序垫底。
+# ---------------------------------------------------------------------------
+_ISO_PREFIX = re.compile(r"^\d{4}-\d{2}")
+
+
+@router.get("/tracker")
+def tracker():
+    items = []
+    for m in list_reports():
+        for i, t in enumerate(m.track or []):
+            if not isinstance(t, dict) or not t.get("event"):
+                continue
+            items.append({
+                "code": m.code, "name": m.name, "slug": m.slug,
+                "conclusion": m.conclusion, "order": i,
+                "date": str(t.get("date", "")), "event": t["event"],
+                "action": str(t.get("action", "")),
+            })
+    items.sort(key=lambda x: (0, x["date"]) if _ISO_PREFIX.match(x["date"]) else (1, x["date"]))
+    return items
+
+
+# ---------------------------------------------------------------------------
+# 研报覆盖缓存:证券列表/详情页挂「有研报」标记用。9 份文件的 frontmatter 解析
+# 不到 1ms,但列表页每请求都要——按目录 mtime 缓存,内容不变零解析。
+# ---------------------------------------------------------------------------
+_cov_cache: tuple[float, dict] = (0.0, {})
+
+
+def coverage() -> dict:
+    """{code: {slug, title, conclusion, date}};目录无变化时直接返回缓存。"""
+    global _cov_cache
+    if not RESEARCH_DIR.is_dir():
+        return {}
+    try:
+        stamp = max(p.stat().st_mtime for p in RESEARCH_DIR.glob("*.md"))
+    except ValueError:  # 空目录
+        return {}
+    if stamp != _cov_cache[0]:
+        cov = {}
+        for m in list_reports():
+            cov[m.code] = {"slug": m.slug, "title": m.title,
+                           "conclusion": m.conclusion, "date": m.date}
+        _cov_cache = (stamp, cov)
+    return _cov_cache[1]
 
 
 @router.get("/report/{slug}")

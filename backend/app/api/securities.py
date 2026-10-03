@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.fin_columns import restore_row
+from app.api.research import coverage as _research_cov_full
 from app.models import (
     Dividend,
     FinBalance,
@@ -212,6 +213,9 @@ class SecurityItem(BaseModel):
     # A 股但一笔都没发生过的则是 {seo: null, buy_latest: null, buy_done: null}——
     # 「没有这笔」与「这个市场没这个源」是两件事，前端只在后者上打 "-（无此源）"
     actions: ActionsCell | None = None
+    # 投研库覆盖(2026-10 v2):该代码有深度研报时给 {slug,title,conclusion,date},否则 null。
+    # 覆盖集来自 docs/research frontmatter(mtime 缓存),不进分页 SQL
+    research: dict | None = None
 
 
 class SecurityListOut(BaseModel):
@@ -484,6 +488,11 @@ def _actions_cell(picks: dict) -> ActionsCell:
         buy_latest=_buy_cell(picks["buy_latest"]) if "buy_latest" in picks else None,
         buy_done=_buy_cell(picks["buy_done"], True) if "buy_done" in picks else None,
     )
+
+
+def _research_cov() -> dict:
+    """投研库覆盖(frontmatter mtime 缓存);循环导入规避:函数体内不再引 research。"""
+    return _research_cov_full()
 
 
 @router.get("", response_model=SecurityListOut)
@@ -791,6 +800,7 @@ def list_securities(
             # 同形，前端无法区分「没有这笔」与「这个市场没这个源」
             actions=(_actions_cell(act_picks[sec.sid]) if sec.sid in act_picks
                      else (ActionsCell() if sec.market == "A" else None)),
+            research=_research_cov().get(sec.code),
         )
         for sec, quote, score, val in rows
     ]
