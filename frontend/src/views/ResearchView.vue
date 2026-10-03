@@ -217,9 +217,37 @@ section.card:hover { border-color: #93c5fd; }
 .md-body :deep(hr) { border: none; border-top: 1px solid #f1f5f9; margin: 18px 0; }
 
 @media (max-width: 600px) {
+  /* 研报卡:标题/区间换行、摘要行高收紧 */
+  section.card { padding: 12px 12px; }
+  .row1 { flex-wrap: wrap; row-gap: 4px; }
+  .row1 .date { margin-left: 0; flex-basis: 100%; order: 9; }
+  .row2 h3 { font-size: 15px; }
+  .summary { font-size: 12px; line-height: 1.6; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .val { font-size: 12px; }
+  .tag { font-size: 11px; padding: 1px 7px; }
+
+  /* 阅读器:目录从侧栏改为顶部折叠,正文单列 */
   .reader { flex-direction: column; }
   .toc { position: static; width: auto; max-height: none; }
+  .toc > details > summary { margin-bottom: 2px; }
   .toc-scroll { overflow: visible; max-height: none; }
+  /* nowrap 的省略号截断在窄屏会撑爆 details:改可换行 */
+  .toc a { white-space: normal; line-height: 1.5; padding: 2px 0; }
+  .toc-sec > summary { padding: 4px 0 4px 14px; }
+  /* 正文排版:表格是研报的主要内容形态,给横向滚动而不是压碎;
+     字号回退防 iOS 聚焦放大无输入框场景不适用,但表格 12px 在手机可读性尚可 */
+  .md-body { padding: 12px 12px; }
+  .md-body :deep(table) { display: block; width: max-content; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; font-size: 12px; }
+  /* 长 URL/长标题不再把整页撑出横向滚动:正文内所有块级内容限宽并可断行 */
+  .md-body { max-width: 100%; overflow-x: hidden; }
+  .md-body :deep(h1), .md-body :deep(h2), .md-body :deep(h3), .md-body :deep(p), .md-body :deep(li) { overflow-wrap: anywhere; }
+  .md-body :deep(th), .md-body :deep(td) { padding: 4px 6px; white-space: nowrap; }
+  .md-body :deep(h2) { font-size: 16px; }
+  .md-body :deep(h3) { font-size: 14px; }
+  .md-body :deep(blockquote) { padding: 6px 10px; }
+  .head h2 { font-size: 17px; }
+  .val-big { font-size: 13px; }
+  .val-big b { font-size: 15px; }
   .md-body :deep(table) { font-size: 12px; }
   .md-body :deep(th), .md-body :deep(td) { padding: 4px 6px; }
 }

@@ -138,9 +138,13 @@ onBeforeUnmount(() => {
 }
 .back-btn:hover { border-color: var(--accent); color: var(--accent); }
 
-/* 手机端放大返回按钮的点击区；桌面保持原尺寸不变 */
+/* 手机端放大返回按钮的点击区；研报入口卡换行排布 */
 @media (max-width: 600px) {
   .back-btn { padding: 8px 16px; font-size: 15px; min-height: 36px; }
+  .res-card { padding: 9px 12px; gap: 6px 10px; }
+  .rc-title { flex-basis: 100%; order: 3; font-size: 13px; line-height: 1.5; }
+  .rc-val { font-size: 12px; }
+  .rc-go { margin-left: 0; }
 }
 
 .detail-loading {
