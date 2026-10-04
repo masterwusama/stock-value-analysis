@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api import agro, research, securities, sentiment
+from app.api import agro, industries, research, securities, sentiment
 from app.db import get_session
 
 app = FastAPI(title="stock-value-analysis API", version="0.1.0")
@@ -33,6 +33,7 @@ app.add_middleware(
 )
 
 app.include_router(securities.router)
+app.include_router(industries.router)
 app.include_router(agro.router)
 app.include_router(sentiment.router)
 app.include_router(research.router)
