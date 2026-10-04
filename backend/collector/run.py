@@ -83,8 +83,9 @@ JOBS = {
     "agro": [(AGRO_SCRIPTS, "fetch_prices.py")],
     "edb": [(AGRO_SCRIPTS, "fetch_edb.py")],
     "events": [(SCRIPTS, "fetch_events.py")],
-    # valuation：PE/PB/PS 十年分位（Wind）。同样吃本机 Wind 客户端与每日积分，且一轮铺不
-    # 完全市场（70 批 × 2 = 140 次 > 日预算），靠 data/valuation/state.json 记游标跨天续跑，
+    # valuation：PE/PB/PS 十年分位。2026-10-04 起默认免费源(东财 datacenter,
+    # fetch_valuation_em,全 A 一轮约 110 分钟,调度 03:35);Wind 路径保留为可选
+    # (--source wind 切回,积分/游标/批上限逻辑原样,唯一还能刷港股的路径)。
     # 所以是独立 job、每天固定跑一次，不并进 stock/deep。
     "valuation": [(SCRIPTS, "fetch_valuation.py")],
     # sentiment：盘后情绪日报（腾讯批量快照+东财榜单池，约 2~4 分钟，不碰 Wind）。
@@ -110,11 +111,9 @@ JOB_DEFAULTS = {
     "deep": ["--all-market", "--hk-connect", "--us-indexes", "--workers", "4",
              "--resume", "--max-age", "6", "--chunk", "400", "--flush-every", "200",
              "--audit-scope", "full", "--quiet"],
-    # 刷池已筛掉美股与管理分<30／造假分>50 的标的，一轮 5340 家 = 54 批 = 108 次；56 次/天
-    # = 28 批 = 2800 家，约 1.9 天铺完一轮。取 56 不取 90：单价只能
-    # 按“当天积分 ÷ 成功调用数”反推（cli 不返回余额），2026-09-10 首轮 72 次就把当天 1000
-    # 积分打光 ⇒ ≈13.9 积分/次，90 次要 1251 积分（edb 退役 Wind 后积分池已全额让给本任务）。
-    "valuation": ["--calls-cap", "56"],
+    # 免费源(em)是默认路径且无需默认参数;Wind 路径的批上限默认在 main() 的 dispatch 里
+    # 补(--source wind 时自动追加,当年 56 次/天 ≈780 积分的预算纪律不变)
+    "valuation": [],
 }
 
 # 回灌面：日更只动了 index.json（行情/评分），财务文件按 mtime 增量；
@@ -141,7 +140,7 @@ SCRIPT_TIMEOUT = {
     "stock": 2 * 3600,
     "deep": 8 * 3600,
     "events": 8 * 3600,
-    "valuation": 2 * 3600,
+    "valuation": 3 * 3600,
     "import": 2 * 3600,
     "edb": 3600,
     "sentiment": 1800,
@@ -240,6 +239,14 @@ def main():
 
     status, messages = "success", []
     steps = JOBS[args.job]
+    # valuation 双源 dispatch:默认免费源(东财);--source wind 整体切回 Wind 原路径
+    # (含港股过筛池;当年 56 次/天的积分预算作为默认参数自动补上,显式传了就不重复加)
+    if args.job == "valuation":
+        wind = any(v == "wind" for k, v in zip(extra, extra[1:]) if k == "--source")
+        if not wind:
+            steps = [(SCRIPTS, "fetch_valuation_em.py")]
+        elif "--calls-cap" not in extra:
+            extra = extra + ["--calls-cap", "56"]
     if any(s == "fetch_data.py" for _, s in steps) and fetch_locked():
         # 全量抓取进行中：不跑采集也不回灌（避开与持锁进程抢写 index.json）
         msg = "跳过：全量抓取持锁中（data/.fetch.lock）"

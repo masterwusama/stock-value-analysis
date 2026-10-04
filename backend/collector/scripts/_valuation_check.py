@@ -142,5 +142,55 @@ mk = [e["market"] for e in pool]
 check("过筛池仍按 A→HK 定序", mk == sorted(mk, key=lambda m: MARKET_ORDER[m]),
       u"A %d / HK %d" % (mk.count("A"), mk.count("HK")))
 
+
+# ---------- 6. 免费源路径（fetch_valuation_em）：合成序列,零网络 ----------
+from fetch_valuation_em import (  # noqa: E402
+    METRICS as EM_METRICS, _num, build_item, percentile, trim_window,
+)
+
+check("指标名与 latest.json 契约一致", EM_METRICS == ("pe", "pb", "ps"))
+check("NaN/None/脏值 → None", _num(float("nan")) is None and _num(None) is None
+      and _num("x") is None and _num(1.5) == 1.5)
+
+# 亏损置空:最新 PE=-0.42(万科A 实测形态),正值窗口守卫
+r = percentile(["2026-09-29", "2026-09-30"], [5.0, -0.42], "2026-09-30")
+check("负 PE 分位置空", r is None, r)
+# 最新值缺失(NaN 单元格)
+r = percentile(["2026-09-30"], [None], "2026-09-30")
+check("最新值缺失置空", r is None, r)
+# 正常:5 个正值样本、最新 12 → ≤12 的有 4 个(含自身)→ 80%
+r = percentile([f"2026-09-{d:02d}" for d in range(1, 6)], [3.0, 7.0, 12.0, 20.0, 12.0],
+               "2026-09-05")
+check("分位=窗口内≤最新的占比(自含)", r == (80.0, 5), r)
+# 窗口剔除非正值:0 与负值不进分母
+r = percentile([f"2026-09-{d:02d}" for d in range(1, 6)], [3.0, 0.0, 12.0, -1.0, 12.0],
+               "2026-09-05")
+check("≤0 样本不进窗口(分母)", r == (100.0, 3), r)
+# 10 年窗口边界:窗口起点当日的样本照进,前一天不进
+EM_TODAY = dt.date(2026, 10, 4)
+d_last = "2026-09-30"
+d_edge = (dt.date.fromisoformat(d_last) - dt.timedelta(days=3650)).isoformat()
+d_out = (dt.date.fromisoformat(d_last) - dt.timedelta(days=3651)).isoformat()
+r = percentile([d_out, d_edge, d_last], [1.0, 2.0, 3.0], d_last)
+check("10 年窗边界:窗起点日进、前一天不进", r == (100.0, 2), r)
+
+# 停更守卫:最新观测距今天 >45 天整股不进 items;恰好 45 天仍进
+stale_dates = [str(EM_TODAY - dt.timedelta(days=46)), str(EM_TODAY - dt.timedelta(days=50))]
+cols = [[9.9] * len(stale_dates)] * 3
+check("停更 46 天整股置空", build_item("000002", stale_dates, cols, EM_TODAY, "now") is None)
+ok_dates = [str(EM_TODAY - dt.timedelta(days=45)), str(EM_TODAY - dt.timedelta(days=44))]
+item = build_item("000001", ok_dates, [[5.0] * 2] * 3, EM_TODAY, "now")
+check("滞后恰 45 天仍进 items 且带 src", item is not None and item.get("src") == "em"
+      and item.get("trade_date") == ok_dates[1], item)
+check("全指标无效的条目不产出", build_item("000003", ok_dates, [[None] * 2] * 3,
+                                            EM_TODAY, "now") is None)
+
+# 序列裁剪:10 年+45 天之外的行丢弃,之后的保留(含None行对齐)
+tdates = ["2016-01-01", "2016-06-01", "2026-09-29", "2026-09-30"]
+tcols = [[1.0, 1.1, None, 2.0]] * 3
+nd, nc = trim_window(tdates, tcols, EM_TODAY)
+check("裁剪只留 10 年+45 天窗口内(长度对齐)", nd == ["2026-09-29", "2026-09-30"]
+      and all(len(c) == 2 for c in nc), (nd, nc))
+
 print("\n%s" % ("全部通过" if not fails else "失败 %d 项: %s" % (len(fails), fails)))
 sys.exit(1 if fails else 0)

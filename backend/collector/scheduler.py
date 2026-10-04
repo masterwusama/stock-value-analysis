@@ -12,18 +12,18 @@
     农价     : 每天 09:05 / 21:05(生意社每周 2~4 次,一天 2 次足够)
     行业 EDB : 每周日 20:00——量价序列(月/周频为主,周更足够)。2026-10-02 起换免费
              HTTP 源(新浪期货主力连续/东财宏观,收缩为 8 指标),不再依赖 Wind,云端可跑
-    估值分位 : 每天 05:05——Wind PE/PB/PS 十年分位,单日 80 次调用,铺完一轮约 1.8 天
+    估值分位 : 每天 03:35——PE/PB/PS 十年分位,2026-10-04 起换免费源(东财 datacenter,
+             fetch_valuation_em)刷全 A 一轮,约 110 分钟;Wind 路径退为手动
+             (python -m collector.run valuation --source wind,唯一还能刷港股的路径)
     立案公告 : 每周日 10:05——巨潮全文检索「立案告知书/行政处罚决定书」(免 Wind),
              灌 case_event 并单刷 score_daily,「正在立案」抬 ST 高危旗
     其余 Wind 侧(events/valuation 之外的 events job)仍不进调度:本机 Wind 客户端 CLI
              要登录、按量耗积分,是自动链管不到的外部依赖(2026-09-03 09:05 的 agro
              就被当时的 fetch_edb 带成过 failed——edb 自换免费源后该风险已消除)。
 
-Wind 积分约束(每日 1000 分,单价实测 8~11.4 积分/次、cli 不返回余额):2026-10-02 edb
-退役 Wind 后,自动任务里只剩 valuation 碰 Wind——靠 --calls-cap 80 的当日调用上限加
-data/valuation/state.json 游标,到上限就干净收尾 exit 0(一天铺不完全是预期,次日接着
-铺),只有连续多批取数失败才让 job 红;积分预算全额让给它。
-要更新 events 跑 python -m collector.run events。
+Wind 现状:积分 2026-09-20 耗尽后,edb(10-02)与 valuation(10-04)相继换免费源,自动任务
+已全部不碰 Wind——events(手动 job)是仅剩的 Wind 用户,要更新跑 python -m collector.run
+events;valuation 要走 Wind 手动加 --source wind(游标/批上限逻辑在 fetch_valuation.py 原样)。
 
 全量抓取期间持 data/.fetch.lock,同时段的 stock job 会自动跳过(不互盖 index.json)。
 
@@ -78,9 +78,10 @@ def main():
     # 为主,日更无意义。2026-10-02 起为免费 HTTP 源(期货主力/东财),无 Wind 依赖
     s.add_job(run_job, "cron", args=["edb"], day_of_week="sun",
               hour=20, minute=0, id="edb")
-    # 估值分位每天 05:05 铺一批(单日 80 次调用,约 1.8 天铺完全市场后自动开新一轮)。
-    # 挑清晨是躲开行情快照/深抓/农价/EDB 四个时段,也让 Wind 当日额度从凌晨就开始用。
-    s.add_job(run_job, "cron", args=["valuation"], hour=5, minute=5, id="valuation")
+    # 估值分位每天 03:35 铺一轮:免费源(东财 datacenter,fetch_valuation_em)刷全 A
+    # 约 110 分钟,05:30 前完事;当日已更新的序列文件默认跳过,重跑即断点续传。
+    # 挑凌晨是躲开行情快照/深抓/农价/EDB 四个时段;Wind 路径退为手动(--source wind)。
+    s.add_job(run_job, "cron", args=["valuation"], hour=3, minute=35, id="valuation")
     # 情绪日报每个交易日 16:30(收盘后 90 分钟:新浪指数日频要拖到 15:35 还没收录
     # 当日,R5 虽有实时兜底但能等到正主就等;周末不跑,休市跳过在采集器内部)。
     # 榜单池数据源只留 15 个交易日,中断超两周记得手动补跑
@@ -93,7 +94,7 @@ def main():
               hour=10, minute=5, id="case")
     print("[scheduler] 已注册: stock(周一~六 16:05/22:05 估值快照) "
           "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农价,不碰 Wind) "
-          "edb(周日 20:00 行业量价) valuation(每天 05:05 估值分位,两个 Wind 任务按游标限额跑) "
+          "edb(周日 20:00 行业量价) valuation(每天 03:35 估值分位,免费源刷全 A) "
           "sentiment(交易日 16:30 情绪日报) case(周日 10:05 立案/处罚公告)。"
           "Ctrl+C 退出",
           flush=True)

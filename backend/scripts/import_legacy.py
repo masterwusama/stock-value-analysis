@@ -1240,7 +1240,8 @@ def import_valuation(db, stats):
             pe_pctile=pcts["pe"], pb_pctile=pcts["pb"], ps_pctile=pcts["ps"],
             pe_days=days["pe"], pb_days=days["pb"], ps_days=days["ps"],
             source={m: {"windCode": (v.get(m) or {}).get("wind_code"),
-                        "date": (v.get(m) or {}).get("date"), "round": v.get("round")}
+                        "date": (v.get(m) or {}).get("date"), "round": v.get("round"),
+                        "src": v.get("src")}
                     for m in ("pe", "pb", "ps")},
         ))
     w.flush()
