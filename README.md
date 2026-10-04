@@ -14,7 +14,7 @@ FastAPI + MySQL 提供结构化查询接口，Vue 3 前端，采集层沿用经�
 且设备要先加入同一个 tailnet。服务默认只监听 `127.0.0.1:8000`，`ts.net` 是远程访问的唯一入口。
 `<设备名>.<tailnet>.ts.net` 换成自己的：Tailscale 管理台的设备列表，或本机 `tailscale status --self`。
 
-四个页面：`/#/` 全市场列表 · `/#/stock/<代码>` 单家详情 · `/#/agro` 农价与行业量价 · `/#/research` 投研库(深度研报，Markdown 文档驱动，结构见 [docs/设计-投研库模块.md](docs/设计-投研库模块.md))。
+五个页面：`/#/` 全市场列表 · `/#/industry` 行业视角(证监会大类横截面,见 [docs/设计-行业聚合视角.md](docs/设计-行业聚合视角.md)) · `/#/stock/<代码>` 单家详情 · `/#/agro` 农价与行业量价 · `/#/research` 投研库(深度研报，Markdown 文档驱动，结构见 [docs/设计-投研库模块.md](docs/设计-投研库模块.md))。
 窄屏（≤600px）自动切换为移动版：列表改卡片、筛选与排序折叠、图表自适应。
 
 > **部署与运维请看 [docs/使用说明书.md](docs/使用说明书.md)**——三个页面怎么用、数据什么时候更新、
@@ -29,7 +29,7 @@ FastAPI + MySQL 提供结构化查询接口，Vue 3 前端，采集层沿用经�
 │ scoring.py      四流派评分物化    │→JSON→│  /api/*      REST 接口           │
 │ fetch_prices/fetch_edb 农价/EDB   │ 工作 │  /            托管 frontend/dist │
 │ fetch_events.py Wind 事件(手动)   │ 目录 │ MySQL db_va (18 表, localhost)   │
-│ fetch_valuation Wind 分位(每天)   │      │                                  │
+│ fetch_valuation_em 东财分位(每天) │      │                                  │
 │                                  │      │ collector/scheduler.py 定时进程  │
 └──────────────────────────────────┘   └────────────────────────────────────┘
                                         ┌─ 前端 frontend/ (Vue3+Vite) ──────┐
@@ -105,8 +105,9 @@ cd frontend ; npm run dev      # → http://localhost:5173
 | `stock` | 周一~六 16:05 / 22:05 | 全市场估值快照 → 回灌（≈1~2 分钟） |
 | `deep` | 周六 09:05 | 全市场财务/报告/审计重抓 + **评分重算**（≈5 小时，可断点续） |
 | `agro` | 每天 09:05 / 21:05 | 农化价格（生意社）→ 回灌 |
-| `edb` | 周日 20:00 | 行业量价 44 指标（Wind EDB，唯一自动用 Wind 的任务） |
+| `edb` | 周日 20:00 | 行业量价（2026-10-02 起免费 HTTP 源） |
 | `case` | 周日 10:05 | 证监会立案/处罚公告（巨潮全文检索，免 Wind）→ 回灌，「正在立案」抬 ST 高危旗 |
+| `valuation` | 每天 03:35 | PE/PB/PS 十年分位（2026-10-04 起东财免费源 `fetch_valuation_em`，刷全 A ≈110 分钟；`--source wind` 切回 Wind 原路径——唯一还能刷港股的路径）→ 回灌 |
 | `events` | 手动 | Wind 事件与股东结构 |
 | `import` | 手动 | 只把 JSON 工作目录回灌 MySQL |
 
@@ -126,6 +127,8 @@ python -X utf8 -m scripts.verify_filters    # 列表筛选与排序 68 项(含�
 python -X utf8 scripts\verify_writer.py     # 离线：写入层行为
 python -X utf8 scripts\verify_edb_merge.py  # 离线：EDB 合并防线与增量窗口
 python -X utf8 -m scripts.fraud_validity    # 离线：造假分判别效度回测（T 年红旗 → T+1 年非标/大额减值/转亏）
+python -X utf8 -m scripts.verify_industries # 行业视角聚合对账（Σn/三行业独立重算/门槛总数/纯函数性）
+python -X utf8 -m scripts.buy_validity --check-live   # 四派买点回测的同构对拍(重建买价 vs score_daily 物化列)
 python -X utf8 -m scripts.st_validity       # 离线：ST/退市风险预警的横截面命中面与规则自检
 cd collector; python -X utf8 scripts\_valuation_check.py   # 离线：估值分位守卫与 windcode 映射
 ```

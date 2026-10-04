@@ -13,9 +13,11 @@
 锚点不同（末收绝对值不同）——点对点收益只依赖序列内部一致性，跨源混档才会出问题，
 所以统一用新浪一源。北交所代码新浪覆盖不全，抓不到的写成空档占位（收益回测里判不动）。
 
-产物：data/prices/<code>.json = {code, updated_at, start, dates: [...], closes: [...]}
-（紧凑数组，日期与收盘价一一对应、升序）。约 5,500 只 × 2019 年至今 ≈ 1,800 交易日，
-单只 ~30KB、全量 ~170MB——该目录 gitignore，换机器重拉即可。
+产物：data/prices/<code>.json = {code, updated_at, start, dates: [...], closes: [...], raws: [...]}
+（紧凑数组，日期与收盘价一一对应、升序；closes=hfq 后复权、raws=不复权名义收盘——
+buy_validity 的买点比较是名义价对名义价，hfq 不能直接比。2026-10-04 起带 raws，
+旧档缺该列会一次性全量重拉补齐）。约 5,500 只 × 2019 年至今 ≈ 1,800 交易日，
+单只 ~40KB、全量 ~220MB——该目录 gitignore，换机器重拉即可。
 
 节奏：一次性回补（≈75 分钟，0.35s 间隔 + 3 次重试）；已存在的文件默认跳过（断点续传），
 --refresh 时只从各文件最后一天续拉。不进调度器——收益侧回测是离线研究，不需要日更；
@@ -63,7 +65,10 @@ def sina_symbol(code):
 
 
 def fetch_one(ak, code, start, end="20991231"):
-    """单只 → (dates, closes)；新浪日线（单请求全历史），升序。空表返回 None（退市/不覆盖）。"""
+    """单只 → (dates, closes, raws)；新浪日线(单请求全历史,升序)。raws=不复权收盘,
+    买点回测(buy_validity)要比「名义价 vs 名义买价」,hfq 不能直接比。空表返回 None
+    (退市/不覆盖)。raws 与 closes 同源同日抓,天然对齐;若两端日期不齐(极罕见)按日对齐
+    补 None。"""
     last_err = None
     for attempt in range(RETRY):
         try:
@@ -75,7 +80,16 @@ def fetch_one(ak, code, start, end="20991231"):
             closes = [float(x) for x in df["close"]]
             if len(dates) != len(closes) or not dates:
                 return None
-            return dates, closes
+            raws = None
+            try:
+                dr = ak.stock_zh_a_daily(symbol=sina_symbol(code),
+                                         start_date=start, end_date=end, adjust="")
+                if dr is not None and not dr.empty:
+                    m = {str(x)[:10]: float(y) for x, y in zip(dr["date"], dr["close"])}
+                    raws = [m.get(d) for d in dates]
+            except Exception:  # noqa: BLE001  raws 拉失败不阻断 hfq 主链
+                raws = None
+            return dates, closes, raws
         except Exception as e:  # noqa: BLE001
             last_err = e
             time.sleep(1.5 * (attempt + 1))
@@ -111,16 +125,23 @@ def main():
         path = PRICE_DIR / f"{code}.json"
         start = args.start
         existing = None
+        migrate = False   # 旧档缺 raws(buy_validity 之前回补的):一次性全量重拉补列
         if path.exists():
-            if not args.refresh:
-                skip += 1
-                continue
             try:
                 existing = json.loads(path.read_text(encoding="utf-8"))
-                if existing.get("dates"):
-                    start = existing["dates"][-1].replace("-", "")
             except Exception:  # noqa: BLE001  坏档当无档重拉
                 existing = None
+            if existing is not None:
+                has_raws = "raws" in existing
+                is_empty = not existing.get("dates")
+                if not args.refresh and (has_raws or is_empty):
+                    skip += 1
+                    continue
+                if existing.get("dates"):
+                    if has_raws:
+                        start = existing["dates"][-1].replace("-", "")  # 续拉
+                    else:
+                        migrate = True  # 缺 raws:整档重拉(hfq+raw 同抓,天然对齐)
         got = fetch_one(ak, code, start)
         time.sleep(SLEEP)
         if got == "FAIL":
@@ -129,20 +150,26 @@ def main():
         if got is None:
             # 空表：老代码（退市/更名）没有行情。写成空档占位，断点续传不会反复重试
             atomic_write(path, {"code": code, "updated_at": now, "start": start,
-                                "dates": [], "closes": []})
+                                "dates": [], "closes": [], "raws": []})
             empty += 1
             continue
-        dates, closes = got
-        if existing and existing.get("dates") and dates:
+        dates, closes, raws = got
+        if not migrate and existing and existing.get("dates") and dates:
             # 续拉段与存量拼接：东财 start_date 含当日，交界日去重
             if dates[0] <= existing["dates"][-1]:
                 dates = dates[1:]
                 closes = closes[1:]
-        merged_dates = (existing["dates"] + dates) if existing else dates
-        merged_closes = (existing["closes"] + closes) if existing else closes
+                if raws is not None:
+                    raws = raws[1:]
+            dates = existing["dates"] + dates
+            closes = existing["closes"] + closes
+            if raws is not None and existing.get("raws") is not None:
+                raws = existing["raws"] + raws
+            elif raws is None:
+                raws = existing.get("raws")
         atomic_write(path, {"code": code, "updated_at": now,
-                            "start": (merged_dates[0] if merged_dates else start),
-                            "dates": merged_dates, "closes": merged_closes})
+                            "start": (dates[0] if dates else start),
+                            "dates": dates, "closes": closes, "raws": raws})
         done += 1
         if i % 100 == 0:
             el = time.time() - t0
