@@ -15,19 +15,30 @@ DAY_CAP = 14           # 网格日停牌:其后 14 天内有交易则用该日,�
 
 
 def load_prices(limit_codes=None):
+    """→ (prices{code:(dates,closes,raws)}, bad{原因:n})。
+
+    坏 JSON / raws 与 dates 长度错位的文件不再静默消失:错位 raws 置 None 进
+    「无名义价」缺失计数,坏文件计入 bad——静默丢股会加重幸存者偏差且不可见
+    (fetch 侧 2026-10-05 起落盘前断言等长,此守卫兜存量与旧档)。"""
     out = {}
+    bad = {}
     if not PRICE_DIR.exists():
-        return out
+        return out, bad
     for p in PRICE_DIR.glob("*.json"):
         if limit_codes is not None and p.stem not in limit_codes:
             continue
         try:
             d = json.loads(p.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
+            bad["坏价格文件"] = bad.get("坏价格文件", 0) + 1
             continue
         if d.get("dates") and d.get("closes"):
-            out[p.stem] = (d["dates"], d["closes"], d.get("raws"))
-    return out
+            raws = d.get("raws")
+            if raws is not None and len(raws) != len(d["dates"]):
+                bad["raws/dates 错位(当无名义价)"] = bad.get("raws/dates 错位(当无名义价)", 0) + 1
+                raws = None
+            out[p.stem] = (d["dates"], d["closes"], raws)
+    return out, bad
 
 
 def grid_dates(dates, y_from, y_to):

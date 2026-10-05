@@ -132,7 +132,7 @@ def main():
             except Exception:  # noqa: BLE001  坏档当无档重拉
                 existing = None
             if existing is not None:
-                has_raws = "raws" in existing
+                has_raws = bool(existing.get("raws"))   # raws 键存在但为 null/空 = 没有
                 is_empty = not existing.get("dates")
                 if not args.refresh and (has_raws or is_empty):
                     skip += 1
@@ -163,10 +163,17 @@ def main():
                     raws = raws[1:]
             dates = existing["dates"] + dates
             closes = existing["closes"] + closes
-            if raws is not None and existing.get("raws") is not None:
-                raws = existing["raws"] + raws
-            elif raws is None:
-                raws = existing.get("raws")
+            old_raws = existing.get("raws")
+            # raws 必须与 dates 等长同锚:新段 raws 拉失败时拿旧段凑数会短一截,
+            # buy_validity 按 dates 索引会取到错位名义价(或越界)。有缺就整列置空,
+            # has_raws 判假让下次跑 migrate 全量重拉补齐
+            if raws is not None and old_raws is not None \
+                    and len(old_raws) == len(existing["dates"]):
+                raws = old_raws + raws
+            else:
+                raws = None
+        if raws is not None and len(raws) != len(dates):
+            raws = None
         atomic_write(path, {"code": code, "updated_at": now,
                             "start": (dates[0] if dates else start),
                             "dates": dates, "closes": closes, "raws": raws})

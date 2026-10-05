@@ -82,12 +82,20 @@ def render(panel, grids, sec, miss, schools, discounts, n_sids):
                 verdict[(s, d)] = None
                 continue
             line = f"\n  {tag}:事件 {len(evs)} 条 · 超额中位 "
-            cells = []
+            cells, meds = [], {}
             for _, h in HORIZONS:
                 vs = [ex(r, h) for r in evs]
                 vs = [v for v in vs if v is not None]
-                cells.append(f"{h}={statistics.median(vs) * 100:+.1f}%(n={len(vs)})")
+                if not vs:
+                    break
+                meds[h] = statistics.median(vs)
+                cells.append(f"{h}={meds[h] * 100:+.1f}%(n={len(vs)})")
             abs_2y = [r[5] for r in evs if r[5] is not None]
+            if len(meds) < len(HORIZONS) or not abs_2y:
+                # 某期限腿全缺(事件全挤在窗口尾部/2y 全 None)时不能拿 median 硬算
+                print(line + " ".join(cells) + " · 有效收益样本不足,不判")
+                verdict[(s, d)] = None
+                continue
             print(line + " ".join(cells)
                   + f" · 绝对2y={statistics.median(abs_2y) * 100:+.1f}%")
             # 逐年方向
@@ -112,24 +120,29 @@ def render(panel, grids, sec, miss, schools, discounts, n_sids):
                     e = ex(r, "2y")
                     if cm is not None and e is not None:
                         ds.append(e - cm)
-                if ds:
-                    diff2 = statistics.median(ds)
-                    print(f"    乙(邻域差,2y):事件−邻域 = {diff2 * 100:+.1f}pp(n={len(ds)},线 ≥{ -TOL_PP * 100:.1f}pp)")
+            if ds:
+                diff2 = statistics.median(ds)
+                print(f"    乙(邻域差,2y):事件−邻域 = {diff2 * 100:+.1f}pp(n={len(ds)},线 ≥{ -TOL_PP * 100:.1f}pp)")
+            else:
+                print("    乙(邻域差,2y):邻域组全缺,不判")
             e1 = [v for v in (ex(r, '1y') for r in evs) if v is not None]
             e2 = [v for v in (ex(r, '2y') for r in evs) if v is not None]
             ok_a = bool(e1 and e2) and statistics.median(e1) > 0 and statistics.median(e2) > 0 \
-                and tot >= 2 and pos >= tot - 1
-            ok_b = (diff2 is None) or (diff2 >= -TOL_PP)
+                and tot >= 2 and pos * 3 >= tot * 2      # 预登记是「≥2/3」,tot=2 时 1/2 不该过
+            # 邻域全缺(无同月同行业同分位的干净邻居)时乙**不判**:缺证据当 PASS 会
+            # 把「无法对证」混进「增量成立」
+            ok_b = None if diff2 is None else diff2 >= -TOL_PP
             verdict[(s, d)] = (ok_a, ok_b, pos, tot)
             print(f"    甲:{'PASS' if ok_a else 'FAIL'}(1y/2y 超额为正+逐年 {pos}/{tot}≥2/3)"
-                  + (f" · 乙:{'PASS' if ok_b else 'FAIL'}" if d == 100 else ""))
+                  + (f" · 乙:{'PASS' if ok_b else 'FAIL'}" if d == 100 and ok_b is not None else ""))
 
     print("\n" + "=" * 104)
-    print("判决书(预登记:甲=超额为正+逐年≥2/3 · 乙(仅 D=100)=邻域差≥−1.5pp · 丙=横评不判)")
+    print("判决书(预登记:甲=超额为正+逐年≥2/3 · 乙(仅 D=100)=邻域差≥−1.5pp,邻域缺不判 · 丙=横评不判)")
     for (s, d), v in verdict.items():
         if v is None:
             continue
+        bs = (" · 乙 不判(邻域缺)" if (d == 100 and v[1] is None)
+              else (f" · 乙 {'PASS' if v[1] else 'FAIL'}" if d == 100 else ""))
         print(f"  {s:12s} D={d}: 甲 {'PASS' if v[0] else 'FAIL'}"
-              + (f" · 乙 {'PASS' if v[1] else 'FAIL'}" if d == 100 else "")
-              + f" · 逐年 {v[2]}/{v[3]}")
+              + bs + f" · 逐年 {v[2]}/{v[3]}")
     return verdict

@@ -43,7 +43,10 @@ def main():
     sec = {sid: (code, ind) for sid, code, ind in db.execute(
         select(Security.sid, Security.code, Security.industry)
         .where(Security.market == "A"))}
-    prices = load_prices(limit_codes={c for c, _ in sec.values()})
+    prices, bad = load_prices(limit_codes={c for c, _ in sec.values()})
+    if bad:
+        print(f"[load_prices] 坏档 {sum(bad.values())} 个: "
+              + " · ".join(f"{k} {v}" for k, v in bad.items()), flush=True)
     cal = prices.get(CAL)
     if not cal or not cal[2]:
         print("缺交易日历锚(000001)或其 raws——先跑 fetch_daily_prices 补 raws 列")
@@ -56,6 +59,7 @@ def main():
     panel, miss, n_sids = build_panel(db, sec, prices, grids, schools, discounts,
                                       batches=a.batches)
     db.close()
+    miss.update(bad)
 
     verdict = render(panel, grids, sec, miss, schools, discounts, n_sids)
     if a.dump:

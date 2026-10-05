@@ -3,6 +3,10 @@
 
 面板行 = (网格下标, sid, pb_t, r6m, r1y, r2y, ev{(派,折扣%): True}),
 事件定义:上一网格日 名义价 > 买价×D% 且本月 ≤ 买价×D%(两格各自的点时买价);
+比价前先做**除权修正**:名义价在除权日机械跳降(10 转 10 即 -50%),而买线锚的
+bps 要等下期财报才换股本——不修正的话送转股必然伪造「跌进线内」事件。修正法:
+hfq 收盘/名义收盘 = 累计除权因子 F,本月价 ×(F_now/F_prev) 折算回上一格股本口径
+再比线;两格之间无除权事件时 F 不变,折算后与原判完全等价。
 同股同派同折扣 180 天(6 个网格)只留首个。
 """
 from collections import defaultdict
@@ -31,7 +35,7 @@ def build_panel(db, sec, prices, grids, schools, discounts, batches=0):
             code, _ = sec[sid]
             dates, closes, raws = prices[code]
             rows = fin[sid]
-            prev = None            # (grid_idx, price, buys)
+            prev = None            # (grid_idx, price, buys, factor)
             last_ev = {}           # (sch, d%) -> grid_idx
             for gi, G in enumerate(grids):
                 i0 = px_idx_at_or_after(dates, G)
@@ -41,6 +45,7 @@ def build_panel(db, sec, prices, grids, schools, discounts, batches=0):
                     miss["无名义价"] += 1
                     continue
                 price = raws[i0]
+                fac = closes[i0] / price     # 累计除权因子(hfq/名义),除权日跳变
                 buys, diag = refs_at(rows, rows["div"], price, G)
                 if buys is None:
                     miss["无 as-of 财务"] += 1
@@ -49,19 +54,20 @@ def build_panel(db, sec, prices, grids, schools, discounts, batches=0):
                 bps = diag["bps"]
                 r = {h: fwd_return(dates, closes, i0, m) for m, h in HORIZONS}
                 ev = {}
+                px = price * (fac / prev[3]) if (prev and prev[3] and fac) else price
                 if prev is not None:
                     for s in schools:
                         b_now, b_prev = buys[s], prev[2][s]
                         for d in discounts:
                             if b_now is not None and b_prev is not None:
                                 thr_now, thr_prev = b_now * d / 100.0, b_prev * d / 100.0
-                                if prev[1] > thr_prev and price <= thr_now:
+                                if prev[1] > thr_prev and px <= thr_now:
                                     if gi - last_ev.get((s, d), -99) >= DEDUP_GRIDS:
                                         ev[(s, d)] = True
                                         last_ev[(s, d)] = gi
-                panel.append((gi, sid, (price / bps if bps else None),
+                panel.append((gi, sid, (px / bps if bps else None),
                               r["6m"], r["1y"], r["2y"], ev))
-                prev = (gi, price, buys)
+                prev = (gi, price, buys, fac)
         done += len(chunk)
         print(f"  面板进度 {done}/{len(sids)} 家 · 网格 {len(grids)} · 观测 {len(panel)}",
               flush=True)
