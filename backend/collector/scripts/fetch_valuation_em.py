@@ -23,9 +23,13 @@ Wind 时代「管理分<30/造假分>50 不刷」的覆盖洞顺带补平);港�
 
 分位口径(本地算,Wind「近10年分位」同义):
   value  = 序列最新一档的 PE(TTM)/市净率/市销率
-  window = 最新观测日前推 10 年内该指标的**正值**样本(≤0 剔除——亏损期分位无意义,
-           对齐 Wind 路径「比率≤0 置空」守卫)
+  window = 最新观测日前推 10 年内该指标的**正值**样本(≤0 剔除——亏损期分位无意义)。
+           注意与 Wind 口径并不同义:Wind 只把「当前值≤0」置空,其分位窗口本身
+           含非正值样本;换源瞬间同一标的分位可能小幅跳变,行业页横截面在新旧行
+           过渡期会混两种口径(行业页 NOTE 已披露)
   pct    = count(window ≤ value)/len(window)×100;days = len(window)(新股短样本自明)
+           ——EM 的 days 是「正值样本数」,Wind 的 days 是全部交易日数,前端文案
+           已按「样本 N」中性表述
   停更守卫:序列最新日期距今 >45 天(长期停牌/退市边缘)整股不进 items,落库旧行保留。
 
 节奏:一轮全量 ≈ 5553×1.2s ≈ 110 分钟(调度 03:35 起,05:30 前完事,与 09:05 agro
@@ -211,8 +215,9 @@ def main():
             fail += 1
             continue
         if got is None:
-            # 空表(退市边缘/源不覆盖):空档占位,断点续传不反复重试,不进 items
-            if not args.probe:
+            # 空表(退市边缘/源不覆盖):空档占位,断点续传不反复重试,不进 items。
+            # 已有非空档时保留原档——瞬时空返回不该毁十年历史序列(次日重拉可自愈)
+            if not args.probe and not load_local(code):
                 atomic_write(path, {"code": code, "updated_at": now, "start": "",
                                     "dates": [], "pe": [], "pb": [], "ps": []})
             empty += 1
@@ -238,6 +243,17 @@ def main():
     if args.probe:
         print(f"探针完成:{done} 只(空 {empty} 失败 {fail}),未落盘", flush=True)
         return 0
+    # 与 Wind 路径同构的 merge 语义:本轮没刷到的 key(港股 Wind 条目、当日 FAIL、
+    # 停更置空)保留旧条目——latest.json 是「全量累计快照」,整文件覆盖会把 Wind 时代
+    # 的港股分位抹掉(2026-10-04 首跑真发生过,verify_filters 六项红了才逮到)
+    old_items = {}
+    if LATEST_PATH.exists():
+        try:
+            old_items = json.loads(LATEST_PATH.read_text(encoding="utf-8")).get("items") or {}
+        except Exception:  # noqa: BLE001  坏档当空档,本轮照写
+            pass
+    for k, v in old_items.items():
+        items.setdefault(k, v)
     atomic_write(LATEST_PATH, {"fetched_at": now, "src": "em", "items": items})
     print(f"完成:latest.json 写 {len(items)} 家 · 新拉 {done} · 跳过 {skip} · 空档 {empty}"
           f" · 失败 {fail} · {time.time() - t0:.0f}s", flush=True)

@@ -30,7 +30,7 @@ _cache: dict[tuple, tuple[float, dict]] = {}
 
 ANCHOR_NOTE = (
     "PB/PE 中位仅计正值;买点密度分母=该派有买点参考价的家数(无锚者不计);"
-    "PB 分位为每股一行最新观测,数据日期见 meta.pb_pctile_date。"
+    "PB 分位为每股一行最新观测,数据日期见页脚。"
 )
 
 
@@ -48,19 +48,29 @@ def _r2(v):
 
 
 def _latest_date(db: Session) -> date_type | None:
-    """两表都有行的最新交易日(score/quote 的 trade_date 会错一天——假日快照与行情
-    落库时点不同步,单看 score 会取到无行情的孤立日,内连接直接清零)。"""
+    """A 股「两表都有行」的最新交易日(score/quote 的 trade_date 会错一天——假日
+    快照与行情落库时点不同步,单看 score 会取到无行情的孤立日,内连接直接清零)。
+    必须 join Security 限定 market='A':score_daily 休市日也写全市场行,而假日
+    quote_daily 只有港股/美股行——不限定会取到 A 股无行情的日子,横截面清零
+    (2026-10-05 云端 #/industry 空白页实锤)。"""
     return db.execute(
         select(ScoreDaily.trade_date)
+        .join(Security, Security.sid == ScoreDaily.sid)
         .join(QuoteDaily, (QuoteDaily.sid == ScoreDaily.sid)
               & (QuoteDaily.trade_date == ScoreDaily.trade_date))
+        .where(Security.market == "A")
         .order_by(ScoreDaily.trade_date.desc()).limit(1)
     ).scalar_one_or_none()
 
 
 def _pb_pctile_date(db: Session) -> date_type | None:
+    # 行业页是 A 股专属口径,日期也按 A 股行取——港股 Wind 旧行如果更新,
+    # 全表 max 会给出与页面横截面无关的日子
     return db.execute(
-        select(ValuationPctile.trade_date).order_by(ValuationPctile.trade_date.desc()).limit(1)
+        select(ValuationPctile.trade_date)
+        .join(Security, Security.sid == ValuationPctile.sid)
+        .where(Security.market == "A")
+        .order_by(ValuationPctile.trade_date.desc()).limit(1)
     ).scalar_one_or_none()
 
 
@@ -139,6 +149,10 @@ def overview(
         payload = hit[1]
     else:
         payload = _overview(db, day)
+        if date and payload["meta"]["n_stocks"] == 0:
+            # 显式回看无行情/评分的日子要 404,不能 200+空表——前端只会渲染出
+            # 一张无提示的空页(2026-10-05 云端休市日实锤)
+            raise HTTPException(404, f"{day} 无 A 股行情/评分数据")
         payload["meta"]["pb_pctile_date"] = str(_pb_pctile_date(db) or "")
         _cache.clear()          # 单键缓存:只留最新一个日期,防回看刷缓存
         _cache[key] = (now, payload)

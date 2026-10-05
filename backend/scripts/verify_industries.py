@@ -4,8 +4,8 @@
 四道检查:
   A. Σn = 当日 score⋈quote 的 A 股行数(对账基准不用 security 总数——停牌/缺快照
      的行天然少几行,用总数会把正常缺行误报成聚合丢行);
-  B. 抽 3 个行业(最大/最小/中间)用独立 SQL 重算 PB/PE 中位(正值口径)与
-     施洛斯买点命中/有锚数,与 API 响应比对;
+  B. 抽 3 个行业(最大/最小/中间)用独立 SQL 重算 PB/PE/PB 分位中位(正值口径)、
+     施洛斯买点命中/有锚数与 ST 高危计数,与 API 响应比对;
   C. gate 通过总数与 SQL SUM(gate) 一致;
   D. 同一请求两次结果逐字节一致(纯函数性,缓存正确性的前提)。
 
@@ -54,14 +54,17 @@ def main():
     picks = [ranked[-1]["industry"], ranked[len(ranked) // 2]["industry"], ranked[0]["industry"]]
     for ind in picks:
         raw = db.execute(text(
-            "SELECT q.pb, q.pe_ttm, q.price, sd.buy_schloss "
+            "SELECT q.pb, q.pe_ttm, q.price, sd.buy_schloss, "
+            "vp.pb_pctile, sd.st_risk "
             "FROM security s "
             "JOIN score_daily sd ON sd.sid=s.sid AND sd.trade_date=:d "
             "JOIN quote_daily q ON q.sid=s.sid AND q.trade_date=:d "
+            "LEFT JOIN valuation_pctile vp ON vp.sid=s.sid "
             "WHERE s.market='A' AND s.industry=:i"
         ), {"d": day, "i": ind}).all()
         pbs = sorted(float(r[0]) for r in raw if r[0] is not None and r[0] > 0)
         pes = sorted(float(r[1]) for r in raw if r[1] is not None and r[1] > 0)
+        pbpcts = sorted(float(r[4]) for r in raw if r[4] is not None)
 
         def med(vs):
             if not vs:
@@ -81,10 +84,13 @@ def main():
         ok = (got["n"] == len(raw)
               and eq_med(got["med_pb"], med(pbs)) and eq_med(got["med_pe"], med(pes))
               and got["buy"]["schloss"]["n_anchor"] == anchor
-              and got["buy"]["schloss"]["hit"] == hit)
+              and got["buy"]["schloss"]["hit"] == hit
+              and eq_med(got["med_pb_pct"], med(pbpcts))
+              and got["st_high"] == sum(1 for r in raw if (r[5] or 0) > 0))
         check(f"B. 独立重算一致[{ind[:12]}…]", ok,
               f"n={got['n']}/{len(raw)} pb={got['med_pb']}/{med(pbs)} "
-              f"schloss={got['buy']['schloss']['hit']}/{hit}锚{got['buy']['schloss']['n_anchor']}/{anchor}")
+              f"schloss={got['buy']['schloss']['hit']}/{hit}锚{got['buy']['schloss']['n_anchor']}/{anchor} "
+              f"pbpct={got['med_pb_pct']}/{med(pbpcts)} st={got['st_high']}")
 
     # ---- C. gate 总数 ----
     gate_sql = db.execute(text(

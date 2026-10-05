@@ -163,7 +163,8 @@ onMounted(async () => {
           </div>
         </div>
       </div>
-      <p class="foot sub" v-if="meta">{{ meta.anchor_note }}</p>
+      <p class="foot sub" v-if="meta">{{ meta.anchor_note }}<template
+        v-if="meta.pb_pctile_date"> PB 分位数据日期 {{ meta.pb_pctile_date }}。</template></p>
     </template>
   </div>
 </template>
