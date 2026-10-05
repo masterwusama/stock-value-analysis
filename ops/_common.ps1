@@ -19,10 +19,13 @@ if ($env:VA_PYTHON) { $Python = $env:VA_PYTHON }        else { $Python = 'python
 $HealthUrl = "http://127.0.0.1:$Port/api/health"
 $AppUrl    = "http://127.0.0.1:$Port/"
 
-# 服务表:Match = 命令行特征;Log = run/<name>.log 前缀
+# 服务表:Match = 命令行特征;Log = run/<name>.log 前缀。
+# api 的特征必须钉住本机端口:只匹配 "uvicorn app.main:app" 会把本机其他
+# 端口的同应用实例(8010)和别的项目的 uvicorn(如 :8765)全算成自己——
+# status 报四个 PID、stop 连别人一起杀,都是这么来的
 function Get-SvcTable {
     @{
-        api       = @{ Match = 'uvicorn\s+app\.main:app'; Log = 'api';       Desc = 'FastAPI 服务(:' + $Port + ')' }
+        api       = @{ Match = ('uvicorn\s+app\.main:app.*--port\s+' + $Port + '\b'); Log = 'api';       Desc = 'FastAPI 服务(:' + $Port + ')' }
         scheduler = @{ Match = 'collector\.scheduler';    Log = 'scheduler'; Desc = '采集调度器(APScheduler)' }
     }
 }

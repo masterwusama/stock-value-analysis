@@ -1033,7 +1033,12 @@ def _dividends_em(code: str):
 
 
 def fetch_dividends(code: str):
-    """分红历史：巨潮优先，限流/异常时回退东财分红送配接口"""
+    """分红历史：巨潮优先，限流/异常时回东财分红送配接口。
+
+    两源皆异常时按「无分红历史」返回 []:实测未分红次新股会让两个 akshare
+    接口在内部炸(EM 空表 NoneType 下标、巨潮改列名 KeyError,001239 等 108 家
+    每轮 deep 都这样),而分红是可缺数据,空历史对未分红公司就是正确答案——
+    把确定性异常钉在 errors 上每轮重试,只是永远红着。"""
     if cninfo_available():
         try:
             recs = _dividends_cninfo(code)
@@ -1041,7 +1046,11 @@ def fetch_dividends(code: str):
             return recs
         except Exception:
             cninfo_note(False)
-    return _dividends_em(code)
+    try:
+        return _dividends_em(code)
+    except Exception as e:  # noqa: BLE001
+        print(f"  [dividends] {code} 两源皆失败,按无分红历史: {e!r}", flush=True)
+        return []
 
 
 # 事务所名称前的常见修饰语（聘任表格文本：本次变更业经/续聘/已由等）

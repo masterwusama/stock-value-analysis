@@ -1,11 +1,15 @@
+import sys
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
 from itertools import product
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/,直接 python scripts/verify_actions.py 也能跑
 
 with patch("app.config.DATABASE_URL", "sqlite+pysqlite:///:memory:"):
     from app.api.securities import BuybackCell, _action_picks, _actions_cell, _buy_cell
