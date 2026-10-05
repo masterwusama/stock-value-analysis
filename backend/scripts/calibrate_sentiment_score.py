@@ -95,9 +95,11 @@ def main():
     cache.setdefault("r5", {}).update(
         {d: round(v, 6) for d, v in r5_series(idx, days).items()})
 
-    # 池子只拉有效窗口内的日子(更早的必然空表/报错,还容易把无超时的请求挂死)
+    # 池子只拉有效窗口内的日子(更早的必然空表/报错,还容易把无超时的请求挂死)。
+    # 缓存值为 None 说明上次拉失败:必须重拉,否则失败日被永久跳过
     pool_days = set(days[-POOL_WINDOW:])
-    todo = [d for d in days if d in pool_days and (a.refresh or d not in cache.get("zt", {}))]
+    todo = [d for d in days if d in pool_days
+            and (a.refresh or cache.get("zt", {}).get(d) is None)]
     print(f"[calib] 窗口 {a.start}~{a.end} 共 {len(days)} 交易日;R5 全窗口,"
           f"池子窗口 {len(pool_days)} 天(待拉 {len(todo)})", flush=True)
     for i, d in enumerate(todo):
@@ -134,7 +136,8 @@ def main():
                              "dev_pt": None, "n": 0})
                 continue
             n = len([x for x in vals if x <= v])
-            emp = (n - 0.5) / len(vals)   # 经验 CDF 近似
+            # 锚点值低于样本最小值时 n=0,不减 0.5 会出负分位;钳到 [0,1]
+            emp = min(1.0, max(0.0, (n - 0.5) / len(vals)))   # 经验 CDF 近似
             dev = p - emp
             row = {"key": key, "value": v, "static": p, "emp": round(emp, 3),
                    "dev_pt": round(dev * 100, 1), "n": len(vals)}

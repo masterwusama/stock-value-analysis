@@ -31,10 +31,12 @@ def _score_of(row: SentimentDaily, streak: int) -> dict | None:
 
 
 def _streak_at(db: Session, d) -> int:
-    """当日连续同档天数:≤d 的近期状态序(升序)推尾巴;行缺失由状态切换自然截断。"""
+    """当日连续同档天数:≤d 的近期状态序(升序)推尾巴;行缺失由状态切换自然截断。
+    窗口取 500 与采集端 history 留存对齐——limit(15) 会把第 16 天起的长连续
+    系统性少报成 15,与日报文案、/history 三处数字打架。"""
     states = db.execute(
         select(SentimentDaily.state).where(SentimentDaily.trade_date <= d)
-        .order_by(SentimentDaily.trade_date.desc()).limit(15)
+        .order_by(SentimentDaily.trade_date.desc()).limit(500)
     ).scalars().all()
     return sentiment_score.streak_of(list(reversed(states)))[-1] if states else 0
 
@@ -96,10 +98,13 @@ def sentiment_history(limit: int = Query(120, ge=1, le=500),
                       db: Session = Depends(get_session)):
     """逐日状态序列(状态机/红盘率/涨停跌停/炸板率/R5/温度),用于走势条与状态带。"""
     rows = db.execute(
-        select(SentimentDaily).order_by(SentimentDaily.trade_date.desc()).limit(limit)
+        select(SentimentDaily).order_by(SentimentDaily.trade_date.desc()).limit(limit * 2)
     ).scalars().all()
     rows = list(reversed(rows))
     streaks = sentiment_score.streak_of([r.state for r in rows])
+    # 头部多取 limit 行做 streak 预热再裁掉:否则窗口首行即使处在长连续中段也从 1 重数
+    cut = max(0, len(rows) - limit)
+    rows, streaks = rows[cut:], streaks[cut:]
     out = []
     for r, stk in zip(rows, streaks):
         sc = _score_of(r, stk)

@@ -312,7 +312,7 @@ function goRow(d) { loadDate(d) }
 
       <!-- ⑦ 黑名单 / 跌停观察 -->
       <section class="card">
-        <h3>炸板黑名单<span class="sub">次日无条件禁入,实测次日溢价 -1.6% · 共 {{ daily.zha_count }} 只</span></h3>
+        <h3>炸板黑名单<span class="sub">次日无条件禁入,实测次日溢价 -1.6% · 共 {{ daily.zha_count ?? '-' }} 只</span></h3>
         <p class="chips">
           <router-link v-for="b in (daily.report.blacklist || []).slice(0, 20)" :key="b.code"
                        :to="'/stock/' + b.code" class="chip chip-bad">{{ b.name }}</router-link>

@@ -132,20 +132,31 @@ def fetch_pools(yyyymmdd):
 
 
 def backfill_pools(days=15):
-    """榜单池只留近 15 个交易日:补齐窗口内缺过的日子,断了别超两周。"""
+    """榜单池只留近 15 个交易日:补齐窗口内缺过的日子,断了别超两周。
+
+    done 按 池×日期 粒度判定:早期版本 main 只落 zt 池,若按日期粒度判重,
+    那些天的 dt/zha 会被 zt 的占位永久作废。全池皆空的交易日也落空档标记,
+    否则窗口内每天都会重试一遍。
+    """
     import akshare as ak
-    done = {p.stem.split("_")[-1] for p in OUT.glob("pool_*.csv")}
+    done = {tuple(p.stem.split("_")[1:3]) for p in OUT.glob("pool_*.csv")}
     idx = ak.stock_zh_index_daily(symbol="sz399303")
     got = []
     for d in [x.replace("-", "") for x in idx["date"].astype(str)][-days - 2:]:
-        if d in done:
+        missing = [k for k in ("zt", "dt", "zha") if (k, d) not in done]
+        if not missing:
             continue
         pools = fetch_pools(d)
-        if any(v is not None and len(v) for v in pools.values()):
-            for k, v in pools.items():
-                if v is not None:
-                    v.to_csv(OUT / f"pool_{k}_{d}.csv", index=False, encoding="utf-8-sig")
-            got.append(d)
+        wrote = False
+        for k in missing:
+            v = pools.get(k)
+            if v is not None:
+                v.to_csv(OUT / f"pool_{k}_{d}.csv", index=False, encoding="utf-8-sig")
+                wrote = True
+        if not wrote:
+            for k in missing:
+                (OUT / f"pool_{k}_{d}.csv").touch()
+        got.append(d)
     return got
 
 
@@ -268,9 +279,16 @@ def r5_gz2000(snap_date=None):
     f = r.text.split('="')[1].split("~")
     if need and f[30][:8] != need:
         raise RuntimeError(f"指数数据落后:最新{f[30][:8]}≠快照{need},R5 拒绝用旧值")
-    d = ak.stock_zh_index_daily(symbol="sz399303")
+    try:
+        d = ak.stock_zh_index_daily(symbol="sz399303")
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"R5 兜底:日线重拉失败({e!r}),拒绝错分母") from e
+    dates = d["date"].astype(str).str.replace("-", "").tolist()
+    # 分母必须按日期对齐:走到这说明日线缺当日 bar(c[-1]=T-1 惯见),此时
+    # 往前第 5 根是 T-5;写死 c[-6] 会拿到 T-6,把六日涨幅当 R5 入库
+    m = sum(1 for x in dates if need and x >= need)
     c = d["close"].astype(float).tolist()
-    return float(f[3]) / c[-6] - 1
+    return float(f[3]) / c[-(5 + m)] - 1
 
 
 def render_md(date_s, state, prev_state, ind, r5, trans, trap, payload, score=None):
@@ -351,14 +369,18 @@ def main():
         print(f"[sentiment] {date_s} 已生成,跳过(--force 重算)")
         return 0
 
-    # 榜单池先落盘再建日报:细分板块效应就来自池子的「所属行业」字段
-    pool_zt = fetch_pools(snap)["zt"]
-    if pool_zt is not None:
-        pool_zt.to_csv(OUT / f"pool_zt_{snap}.csv", index=False, encoding="utf-8-sig")
+    # 榜单池先落盘再建日报:细分板块效应就来自池子的「所属行业」字段。
+    # 三池全落盘——只落 zt 会把 dt/zha 的回补窗口永久作废(backfill 按池判重)
+    pools = fetch_pools(snap)
+    pool_zt = pools["zt"]
+    for k, v in pools.items():
+        if v is not None:
+            v.to_csv(OUT / f"pool_{k}_{snap}.csv", index=False, encoding="utf-8-sig")
     r5 = r5_gz2000(snap)
     state, ind, payload = build(quotes, uni, sizes, r5, pool_zt)
-    # 排除当日自身:--force 重跑最新一天时不能自引用成 prev_state
-    prior = [h for h in history if h["date"] != date_s]
+    # 只取该日之前的状态序列:--force 重跑最新一天时不能自引用成 prev_state;
+    # 重跑历史旧日期时更不能拿「最新一天」当它的前一交易日
+    prior = [h for h in history if h["date"] < date_s]
     prev_state = prior[-1]["state"] if prior else None
     # 温度/极端度/连续天数:streak 从 prior 状态序列推,score 为时点工件随产物落盘
     streak = sscore.streak_of([h["state"] for h in prior] + [state])[-1]
