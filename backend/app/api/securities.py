@@ -1133,7 +1133,7 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
         if r.report_date
     }
 
-    # 估值分位（Wind 口径的近十年分位，每标的一行最新观测）：只作展示，不参与四派评分与
+    # 估值分位（外源口径的近十年分位，每标的一行最新观测）：只作展示，不参与四派评分与
     # 参考价。单项可能为 NULL——亏损股的 PE 分位、外源序列停更都在采集侧置了空。列表页对
     # 陈旧行做了钳位（排序不能被半年前的分位污染），详情页不钳：这里把观测日一起给出去，
     # 新旧由看的人判断，而不是把值抹成 "-" 之后什么都不知道。
@@ -1142,8 +1142,15 @@ def get_security_detail(code: str, db: Session = Depends(get_session)):
     ).scalar_one_or_none()
     valuation = None
     if vrow is not None:
+        # 来源读行内自陈的 src(2026-10 起默认东财免费源,港股是 Wind 时代存量)——
+        # 写死 "Wind" 会把 EM 行也标成 Wind,前端口径文案跟着失实
+        _srcs = {(vrow.source or {}).get(m, {}).get("src")
+                 for m in ("pe", "pb", "ps")
+                 if (vrow.source or {}).get(m, {}).get("src")}
+        src = (next(iter(_srcs)) if len(_srcs) == 1 else None) or ""
         valuation = {
-            "date": _d(vrow.trade_date), "source": "Wind",
+            "date": _d(vrow.trade_date),
+            "source": {"em": "东财", "wind": "Wind"}.get(src, "Wind"),
             "window": "10y",
             "pe": {"pct": _f(vrow.pe_pctile), "days": vrow.pe_days},
             "pb": {"pct": _f(vrow.pb_pctile), "days": vrow.pb_days},

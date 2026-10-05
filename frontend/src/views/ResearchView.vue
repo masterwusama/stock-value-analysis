@@ -22,6 +22,7 @@ async function load() {
     try { list.value = await get('/research/list') } catch (e) { error.value = String(e.message || e) }
   } else {
     list.value = null
+    report.value = null   // 先清旧文:slug 切换时不能让上一篇短暂残留
     try { report.value = await get(`/research/report/${encodeURIComponent(slug.value)}`) }
     catch (e) { error.value = String(e.message || e) }
   }
@@ -140,11 +141,6 @@ const tocGroups = computed(() => {
 .page-head h2 { margin: 4px 0 6px; }
 .page-head .sub { color: #6b7280; font-size: 13px; margin: 0 0 14px; }
 .page-head code { background: #f3f4f6; border-radius: 4px; padding: 0 4px; font-size: 12px; }
-
-@media (max-width: 600px) {
-  .trow { grid-template-columns: 84px 72px 40px 1fr; }
-  .taction { display: none; }
-}
 
 section.card { cursor: pointer; transition: border-color 0.15s; }
 section.card:hover { border-color: #93c5fd; }

@@ -346,10 +346,12 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         var parts = [];
         ['pe', 'pb', 'ps'].forEach(function (k) {
           var o = v[k] || {};
-          if (o.pct != null) parts.push(k.toUpperCase() + ' 样本 ' + (o.days == null ? '-' : o.days) + ' 个交易日');
+          if (o.pct != null) parts.push(k.toUpperCase() + ' 样本 ' + (o.days == null ? '-' : o.days));
         });
-        var tip = '市盈率(TTM)／市净率／市销率(TTM) 各自近十年分位（外源 Wind 口径，0~100，越低说明当前估值在自己十年里越靠下）；'
-          + '分位窗口、样本起点与亏损期处理均随外源，本系统只做展示与筛选，不进四派评分与买卖点参考价。'
+        var tip = '市盈率(TTM)／市净率／市销率(TTM) 各自近十年分位（外源' + (v.source || 'Wind')
+          + '口径，0~100，越低说明当前估值在自己十年里越靠下）；'
+          + '分位窗口、样本起点与亏损期处理均随外源（样本数在东财源下是“正值样本数”，Wind 下是交易日数），'
+          + '本系统只做展示与筛选，不进四派评分与买卖点参考价。'
           + '置空表示外源无值或已被判为不可信（如市盈率为负、外源日期过旧）。'
           + (v.date ? ' 外源观测日 ' + v.date + '。' : '')
           + (parts.length ? ' ' + parts.join('，') + '。' : '');
@@ -663,7 +665,12 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
     (function next() {
       var fn = tasks.shift();
       if (!fn) return;
-      fn();
+      try {
+        fn();
+      } catch (e) {
+        // 单任务抛错只跳过该格:不能让整条队列停摆,后面的评分卡全空且无提示
+        if (window.console && console.error) console.error('[detail task]', e);
+      }
       setTimeout(next, 0);
     })();
   }

@@ -26,7 +26,7 @@ RESEARCH_DIR = Path(__file__).resolve().parents[3] / "docs" / "research"
 # slug 白名单:字母数字下划线连字符点 + 中文;显式排除路径分隔与父目录
 _SLUG_RE = re.compile(r"^[\w\u4e00-\u9fff.-]+$")
 
-_MD = md_lib.Markdown(extensions=["tables", "fenced_code", TocExtension(slugify=slugify_unicode)])
+_MD_EXTS = ["tables", "fenced_code", TocExtension(slugify=slugify_unicode)]
 
 
 class ReportMeta(BaseModel):
@@ -44,12 +44,11 @@ class ReportMeta(BaseModel):
     val_method: str = ""
     tags: list[str] = []
     summary: str = ""
-    # 观察哨:v2 契约(设计文档 §3.2)。date 支持 ISO 日期或中文时段(「2026-10 下旬」「待定」「月度」等)
-    track: list[dict] = []
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
-    """--- yaml ---\n正文。无 frontmatter 或解析失败时按无元数据处理,不让单篇坏文件拖垮列表。"""
+    """--- yaml ---\n正文。无 frontmatter 或解析失败时按无元数据处理,不让单篇坏文件拖垮列表。
+    utf-8-sig:Windows 记事本保存会带 BOM,\ufeff--- 会让 startswith("---") 判假。"""
     if not text.startswith("---"):
         return {}, text
     parts = text.split("\n---", 1)   # 开头 --- 固定,只需按闭合分隔符切一刀
@@ -64,29 +63,40 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
 
 def _norm(meta: dict) -> dict:
     """frontmatter 归一化:YAML 会把 2026-10-02 解析成 date 对象,统一转 ISO 字符串;
-    数值字段容忍误写成字符串。"""
+    数值字段容忍误写成字符串(转不动就原样留着,详情页照显;列表侧由 _load_meta
+    的兜底捕获,坏值文件不进列表)。"""
     if isinstance(meta.get("date"), date_type):
         meta["date"] = meta["date"].isoformat()
     for k in ("price_ref", "val_low", "val_high"):
         v = meta.get(k)
         if isinstance(v, str):
-            meta[k] = float(v) if v.strip() else None
-    if isinstance(meta.get("tags"), str):
+            try:
+                meta[k] = float(v) if v.strip() else None
+            except ValueError:
+                pass
+    if meta.get("tags") is None:
+        meta["tags"] = []
+    elif isinstance(meta.get("tags"), str):
         meta["tags"] = [t.strip() for t in meta["tags"].split(",") if t.strip()]
     return meta
 
 
 def _load_meta(path: Path) -> ReportMeta | None:
     try:
-        meta, _body = _split_frontmatter(path.read_text(encoding="utf-8"))
+        meta, _body = _split_frontmatter(path.read_text(encoding="utf-8-sig"))
     except OSError:
         return None
-    # code/name/title/date 是契约必填项;缺任一则列表里无意义,跳过
-    if not all(meta.get(k) for k in ("code", "name", "title", "date")):
+    # code/name/title/date 是契约必填项;缺任一则列表里无意义,跳过。
+    # 其余任何坏值(类型错、数值字段写不成 float、pydantic 校验不过)同样只废这一篇——
+    # 语义就是「跳过坏文件」,except 范围必须与之一致,否则单篇坏文件打挂整个列表
+    try:
+        if not all(meta.get(k) for k in ("code", "name", "title", "date")):
+            return None
+        fields = {k: _norm(meta).get(k, d) for k, d in ReportMeta(slug="", code="", name="", title="", date="").model_dump().items()}
+        fields["slug"] = path.stem
+        return ReportMeta(**fields)
+    except Exception:  # noqa: BLE001
         return None
-    fields = {k: _norm(meta).get(k, d) for k, d in ReportMeta(slug="", code="", name="", title="", date="").model_dump().items()}
-    fields["slug"] = path.stem
-    return ReportMeta(**fields)
 
 
 @router.get("/list", response_model=list[ReportMeta])
@@ -103,16 +113,19 @@ def list_reports():
 # 研报覆盖缓存:证券列表/详情页挂「有研报」标记用。9 份文件的 frontmatter 解析
 # 不到 1ms,但列表页每请求都要——按目录 mtime 缓存,内容不变零解析。
 # ---------------------------------------------------------------------------
-_cov_cache: tuple[float, dict] = (0.0, {})
+_cov_cache: tuple[tuple, dict] = ((0, 0.0), {})
 
 
 def coverage() -> dict:
-    """{code: {slug, title, conclusion, date}};目录无变化时直接返回缓存。"""
+    """{code: {slug, title, conclusion, date}};目录无变化时直接返回缓存。
+    stamp 用 (文件数, 最大 mtime):只看 mtime 时删除「非最新」的文件不会
+    失效缓存,已删研报的「有研报」徽章会残留。"""
     global _cov_cache
     if not RESEARCH_DIR.is_dir():
         return {}
     try:
-        stamp = max(p.stat().st_mtime for p in RESEARCH_DIR.glob("*.md"))
+        stamp = (len(list(RESEARCH_DIR.glob("*.md"))),
+                 max(p.stat().st_mtime for p in RESEARCH_DIR.glob("*.md")))
     except ValueError:  # 空目录
         return {}
     if stamp != _cov_cache[0]:
@@ -131,9 +144,11 @@ def get_report(slug: str):
     path = RESEARCH_DIR / f"{slug}.md"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="不存在的研报")
-    meta, body = _split_frontmatter(path.read_text(encoding="utf-8"))
-    _MD.reset()  # toc 扩展实例有状态(累积 id),复用单例必须重置
-    html = _MD.convert(body)
+    meta, body = _split_frontmatter(path.read_text(encoding="utf-8-sig"))
+    # 每请求新建实例:Markdown 实例官方声明非线程安全,sync def 会在线程池里并发,
+    # 单例 + reset 只解决状态累积,防不了并发 convert 互相污染(HTML/toc 错乱)
+    md = md_lib.Markdown(extensions=_MD_EXTS)
+    html = md.convert(body)
     defaults = ReportMeta(slug=slug, code="", name="", title="", date="").model_dump()
     # toc_tokens 是 h1 嵌 h2 的树;阅读器侧栏要的是章节平铺(取 h2/h3,缩进区分)
     flat = []
@@ -144,5 +159,5 @@ def get_report(slug: str):
                 flat.append({"id": t["id"], "name": t["name"], "level": level})
             _flatten(t.get("children", []), level + 1)
 
-    _flatten(_MD.toc_tokens, 1)
+    _flatten(md.toc_tokens, 1)
     return {"meta": {k: _norm(meta).get(k, v) for k, v in defaults.items()}, "html": html, "toc": flat}
