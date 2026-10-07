@@ -203,11 +203,11 @@ PRICE_KEYS = tuple(k for k, _, b, _, _, _ in ITEMS if b in ("A", "B"))
 BOOK_KEYS = tuple(k for k, _, b, _, _, _ in ITEMS if b in ("C", "D"))
 # 乙的对照：四派总分是 V 最强的「已经在做同一件事」质疑对象；陷阱分与造假分方向相反（越低越好），
 # 照样并排打印，因为「和它反向」也是重叠度的一种。管理分单列，它是退轴条件的那一半。
-EXISTING = (("score_graham_agg", "格雷厄姆(进取)"), ("score_graham_def", "格雷厄姆(防守)"),
-            ("score_schloss", "施洛斯"), ("score_buffett", "巴菲特"),
+EXISTING = (("score_graham_def", "格雷厄姆(防守)"),
+            ("score_schloss", "施洛斯"),   # 格攻/巴菲特列 2026-10-06 已 DROP
             ("fraud", "造假红旗"), ("mgmt", "管理层分"), ("cycle", "周期分"),
             ("trap", "陷阱分"), ("growth", "成长分"))
-SCHOOL = ("score_graham_agg", "score_graham_def", "score_schloss", "score_buffett")
+SCHOOL = ("score_graham_def", "score_schloss")
 
 
 # ---------- 事实 ----------

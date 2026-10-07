@@ -120,10 +120,10 @@ SUM_W = sum(WEIGHT.values())
 #  · 分红与注销式回购——属股东回报，归拟议的价值分 V；
 #  · Wind 十年估值分位——上游口径不自主且只有最新横截面，进不了历史面板。
 
-EXISTING = (("grahamAgg", "格雷厄姆(进取)"), ("grahamDef", "格雷厄姆(防守)"),
-            ("schloss", "施洛斯"), ("buffett", "巴菲特"),
+EXISTING = (("grahamDef", "格雷厄姆(防守)"),
+            ("schloss", "施洛斯"),   # 格攻/巴菲特 2026-10-06 已移除
             ("fraud", "造假红旗"), ("mgmt", "管理层分"), ("cycle", "周期分"), ("trap", "陷阱分"))
-SCHOOL = ("grahamAgg", "grahamDef", "schloss", "buffett")
+SCHOOL = ("grahamDef", "schloss")
 
 
 # ---------- 特征 ----------

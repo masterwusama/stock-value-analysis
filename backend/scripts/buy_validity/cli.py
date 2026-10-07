@@ -87,10 +87,9 @@ def check_live(db, sec, prices):
     day = days[0]
     day_iso = str(day)
     rows = db.execute(
-        select(ScoreDaily.sid, ScoreDaily.buy_graham_agg, ScoreDaily.buy_graham_def,
-               ScoreDaily.buy_schloss, ScoreDaily.buy_buffett)
+        select(ScoreDaily.sid, ScoreDaily.buy_graham_def, ScoreDaily.buy_schloss)
         .where(ScoreDaily.trade_date == day)).all()
-    live = {r[0]: {"graham_agg": r[1], "graham_def": r[2], "schloss": r[3], "buffett": r[4]}
+    live = {r[0]: {"graham_def": r[1], "schloss": r[2]}
             for r in rows}
     print(f"对拍日:{day_iso}(日历内最新)· score_daily {len(live)} 行")
     sids = [sid for sid, (code, _) in sec.items() if code in prices and sid in live]

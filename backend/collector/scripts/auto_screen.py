@@ -26,7 +26,7 @@
     python scripts/auto_screen.py --buy 施洛斯 --discount 80
 
     # 全市场扫巴菲特买点，输出前 20 名并存 JSON
-    python scripts/auto_screen.py --source market --buy buffett --top 20
+    python scripts/auto_screen.py --source market --buy schloss --top 20
 """
 import argparse
 import json
@@ -39,8 +39,8 @@ from pathlib import Path
 BASE = Path(__file__).parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 
-SCHOOLS = ('grahamAgg', 'grahamDef', 'schloss', 'buffett')
-SCHOOL_CN = {'grahamAgg': '格进取', 'grahamDef': '格防御', 'schloss': '施洛斯', 'buffett': '巴菲特'}
+SCHOOLS = ('grahamDef', 'schloss')   # 格攻/巴菲特 2026-10-06 随产品口径移除
+SCHOOL_CN = {'grahamDef': '格防御', 'schloss': '施洛斯'}
 # 参数别名：英文名 / 缩写 / 中文名均可
 SCHOOL_ALIAS = {}
 for _k, _cn in SCHOOL_CN.items():

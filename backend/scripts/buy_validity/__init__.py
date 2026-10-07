@@ -13,7 +13,8 @@ rr_validity 等效度脚本同族:离线研究,只读库与本地 data/prices/,�
 用法保持 `python -X utf8 -m scripts.buy_validity`(--check-live/--dump/--school/--discount)。
 """
 
-SCHOOLS = ("graham_agg", "graham_def", "schloss", "buffett")
+SCHOOLS = ("graham_def", "schloss")   # 产品口径收两派(2026-10-06):格攻/巴菲特移除,
+                                      # 其 v1/v2 判决(双双 FAIL)留档在设计文档判决表
 HORIZONS = ((6, "6m"), (12, "1y"), (24, "2y"))
 GRID_FROM, GRID_TO = 2020, 2025   # 信号年(2y 腿截尾:信号>2024-09 的观测自然缺失)
 TOL_PP = 0.015                    # 乙判邻域差容差(与 rr_validity 的 TOL_PP 同级)
