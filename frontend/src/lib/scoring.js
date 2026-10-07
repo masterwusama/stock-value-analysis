@@ -414,7 +414,7 @@
     // ---- 成长性 & PEG ----
     // 基期必须真是 5 年前：早先直接取 annual[0]，窗口等于数据有多深就多深（实测 6911 家里
     // 97.2% 跨度≠5 年，7 年 4051 家、19 年 176 家），却挂着「CAGR(5年)」的标签，还喂给
-    // fairPe 与巴菲特净利成长项（10% 阈值是按 5 年标定的）。取不晚于 lastYear-5 的最近年报
+    // 净利 5 年 CAGR（10% 阈值是按 5 年标定的）。取不晚于 lastYear-5 的最近年报
     // 作基期，历史不足 5 年时退回最早年报（与后端 scoring.py 同口径）。
     var revCagr5 = null, netCagr5 = null, revCagr3 = null, netCagr3 = null, growthNote = '年报数据';
     if (annual.length >= 2 && lastYear != null) {
@@ -698,7 +698,6 @@
   // 且买价中位数只有现价的 8%（格攻）~40%（格防），即要跌 60%~92% 才触发，不是参考价。
   var BUY_MARGIN = 2 / 3;      // 收益派（格防/巴菲特）买点相对公允倍数的安全边际
 
-  var G_A_PNCAV_FULL = 0.67;   // 格攻：市值/净流动资产 ≤ 0.67 拿满 30 分，亦是买点倍数
 
   var G_D_PE_FULL = 15;        // 格防：市盈率 ≤ 15 拿满 5 分，亦是保守卖价倍数
   // 本币 → 人民币的粗略汇率（按市场取）：只服务格防的规模硬门槛（100/50/30 亿当年按 A 股
@@ -856,38 +855,16 @@
     // 有息负债全口径：短借 + 一年内到期 + 长借 + 应付债券 + 租赁负债（字段缺失视为 0）
     var intDebt = sum([stDebt, due1y, ltDebt, bond, lease]);
     if (intDebt == null) intDebt = 0;
-    // 格攻净现金（2026-09 口径升级）：分子改加权类现金（交易性×1/应收票据×0.4/其他流动
-    // 非存款×0.3、附注闭合才采信的定期存款×1.0、受限剔除），分母仍是有息负债——格雷厄姆
-    // net-cash 原文的「现金＋有价证券−有息债」。旧口径只认货币资金一行，把存款/理财重的
-    // 公司判成负净现金（603599 实例）。无交易性/票据/其他流动且无附注时与旧口径逐位相同。
-    // 报表行仍取评分基准年报。scoring.py 的 value_scores 同一条规则。
-    // 报表行随批次 1 取最新一期，季报行整行缺/货币资金缺回退年报行
-    var baDayVS = String((latestBaVS || {})['报告日'] || '').slice(0, 10) || String(lastDate || '');
-    var noteVS = baDayVS ? noteLatest(d.notes, baDayVS) : null;
-    var wCashVS = weightedCashOf(latestBaVS, noteVS ? noteVS[1] : null);
-    if (wCashVS == null) {
-      var noteVSA = lastBa ? noteLatest(d.notes, String(lastDate || '')) : null;
-      wCashVS = weightedCashOf(lastBa, noteVSA ? noteVSA[1] : null);
-    }
-    var netCash = (wCashVS != null) ? wCashVS - intDebt : null; // 净现金（加权类现金−有息负债）
     // 盈利状态（批次 2）：滚动 TTM 净利润，缺则回退年报净利——「还赚不赚钱」回答到最新季
     var ttmNp = ttmNetProfit(d.indicators || [], '净利润');
     if (ttmNp == null) ttmNp = netProfit;
-    var ncav = (ca != null && tl != null) ? ca - tl : null;   // 净流动资产 NCAV
     var wc = (ca != null && cl != null) ? ca - cl : null;     // 营运资本
     // 长期有息负债全口径：一年内到期部分为重分类的长贷/债券，租赁负债计入（字段缺失视为 0）
     var ltd = sum([due1y, ltDebt, bond, lease]);
     if (ltd == null) ltd = 0;
     var curRatio = (ca != null && cl != null && cl > 0) ? ca / cl : null;
     var liqRatio = (ca != null && tl != null && tl > 0) ? ca / tl : null;
-    var pncav = (mcap != null && ncav != null && ncav > 0) ? mcap / ncav : null;
-    var pnetcash = (mcap != null && netCash != null && netCash > 0) ? mcap / netCash : null;
-    // 净现金/NCAV 为负时属于“不达标”而非“数据缺失”：当前值文本说明 + 得 0 分
-    var pncavVal = ncav == null ? '-' : (ncav > 0 ? (pncav == null ? '-' : fmtNum(pncav) + '×') : 'NCAV 为负');
-    var pnetcashVal = netCash == null ? '-' : (netCash > 0 ? (pnetcash == null ? '-' : fmtNum(pnetcash) + '×') : '净现金为负');
     var pepb = (pe != null && pb != null) ? pe * pb : null;
-    var intangShare = (intang != null && assets != null && assets > 0) ? intang / assets : null;
-    var goodwillShare = (goodwill != null && assets != null && assets > 0) ? goodwill / assets : null;
 
     // 近5年年报净利润（盈利稳定性）与近5年净利累计增长
     // posN 只数有数的行；有效行不足 5 整项判不动（null → schoolTotal 中性）：次新公司窗口
@@ -908,42 +885,13 @@
       if (gbv != null && gbv > 0) grow5 = netProfit / gbv - 1;
     }
 
-    // ---- ROE 近 5 年年报序列：水平取中位数，持续性取「达标（≥10%）年数占比」----
-    // 不用均值：披露口径的 ROE 在薄权益/负权益处会炸到 ±几千个百分点（实测 155 家有单年 >100%，
-    // 美股 90 家最集中），均值与中位数在这份数据上的相关系数只有 0.2486，6912 家里 402 家
-    // （5.8%）两种算法会跨过 15% 这条线，且错的方向随机：Home Depot 均值 −4357%（某年权益为负）
-    // 而中位 +385%，被误判 0 分；O'Reilly 均值 984% 而中位 −168%，白拿满分。中位数只取中间那一年，
-    // 炸群的一年进不了统计量。早先这两个 ROE 项（护城河 4 + 盈利质量 25）同用这一个均值，
-    // 实测相关 0.9801，等于 29/100 押在同一个数上——现拆成「水平」与「持续」两个量。
-    var roeVals = va.dupont.map(function (r) { return r.roeReported; }).filter(function (v) { return v != null; });
-    var nRoe = roeVals.length, roeMed5 = null, roeOkFrac = null, roeOkYears = null;
-    if (nRoe) {
-      // 必须带数值比较器：JS 默认按字符串排序，[0.4, 2, 15] 会排成 [0.4, 15, 2]
-      var roeSorted = roeVals.slice().sort(function (a, b) { return a - b; });
-      var rMid = Math.floor(nRoe / 2);
-      roeMed5 = nRoe % 2 ? roeSorted[rMid] : (roeSorted[rMid - 1] + roeSorted[rMid]) / 2;
-    }
-    // 不足 3 年无从谈「持续」，按缺失处理（缺数据项在归一化时当中性，不虚给也不白扣）
-    if (nRoe >= 3) {
-      roeOkYears = roeVals.filter(function (v) { return v >= 0.10; }).length;
-      roeOkFrac = roeOkYears / nRoe;
-    }
-
     var basis = '评分基准：' + (lastYear ? lastYear + ' 年报' : '最新财报') +
       (s.time ? ' + ' + fmtDate(s.time) + ' 收盘价/市值' : '') +
       '；资产负债科目取最新一期财报（' + (latestBaVS ? String(latestBaVS['报告日']).slice(0, 10) : lastYear) +
       '，缺科目回退年报），盈利状态按 TTM；有息负债含一年内到期与租赁负债（全口径）';
 
-    // ---- 格雷厄姆 · 进取型烟蒂（net-net 净流动资产折价）----
-    var gA = [
-      it('价格/净流动资产（市值/NCAV）', pncavVal, '≤ 0.67×（2/3 净流动资产，亦是买入参考倍数）', 30, ncav == null ? null : (ncav > 0 ? lerpScore(pncav, G_A_PNCAV_FULL, 1.5, 30, 0) : 0), noCA),
-      it('价格/净现金（市值/加权类现金−有息负债）', pnetcashVal, '≤ 1×', 20, netCash == null ? null : (netCash > 0 ? lerpScore(pnetcash, 1, 2, 20, 0) : 0), noCash),
-      it('流动资产/总负债', liqRatio == null ? '-' : fmtNum(liqRatio), '≥ 2（资产覆盖债务）', 20, lerpScore(liqRatio, 1, 2, 0, 20), noCA),
-      it('TTM 净利润', fmtMoney(ttmNp), '> 0（清算缓冲）', 15, ttmNp != null && ttmNp > 0 ? 15 : 0),
-      it('资产负债率', fmtPct(debtr), '≤ 60%', 10, lerpScore(debtr, 0.6, 0.8, 10, 0)),
-      it('连续分红年数', (divConsecutive || 0) + ' 年', '≥ 3 年', 5, divConsecutive >= 3 ? 5 : divConsecutive >= 1 ? 2.5 : 0)
-    ];
-    var gATotal = schoolTotal(gA);
+    // （格攻/巴菲特两派 2026-10-06 整体移除——buy_validity v2 判决两线收益侧证据为负，
+    //   历史判决表留档 docs/设计-四派买点信号回测.md；产品口径只剩格防/施洛斯两派。）
 
     // ---- 格雷厄姆 · 防御型烟蒂（《聪明的投资者》防御型标准）----
     // 严格性设计：规模为硬门槛（≥100亿满分）；关键安全项（流动比率/长期负债比/盈利稳定/增长）
@@ -1059,52 +1007,6 @@
     // 正分项归一 + 9 个扣分项原样相加：扣分项缺数据本就给 0，不参与归一（理由见 schoolTotal）
     var sTotal = schoolTotal(sItems, riskItems);
 
-    // ---- 巴菲特芒格（优质企业 + 护城河）----
-    var moatItems = [
-      it('销售毛利率', fmtPct(gMargin), '≥ 40%（定价权迹象）', 5, lerpScore(gMargin, 0.2, 0.4, 0, 5), noGM),
-      it('近5年 ROE ≥ 10% 达标年数 · 护城河', roeOkFrac == null ? '-' : roeOkYears + '/' + nRoe + ' 年', '5/5 年达标（2/5 起给分）', 4,
-        lerpScore(roeOkFrac, 0.4, 1.0, 0, 4)),
-      // 不含商誉：商誉/总资产 ≥10% 组其后大额减值（≥净资产5%）率 29.01% vs 其余 12.28%（lift 2.36、
-      // z=+20.7、四档单调），无形 ≥10% 组 13.73% vs 13.22%（lift 1.04，分不开）——判据见 backend/scripts/fraud_validity.py B 节
-      it('无形资产 / 总资产', fmtPct(intangShare), '≥ 10%（品牌/专利/特许权）', 3,
-        lerpScore(intangShare, 0, 0.1, 0, 3)),
-      it('连续分红且分红率 ≤ 70%', (divConsecutive || 0) + ' 年 / ' + fmtPct(va.payout), '≥ 5 年且 ≤ 70%', 3,
-        divConsecutive >= 5 ? (va.payout != null && va.payout <= 0.7 ? 3 : 1.5) : 0)
-    ];
-    var bItems = [
-      it('ROE（近5年中位数）· 盈利质量', fmtPct(roeMed5), '≥ 15%（10% 起给分）', 25, lerpScore(roeMed5, 0.10, 0.15, 0, 25)),
-      it('销售净利率（最新年报）', fmtPct(nMargin), '≥ 10%', 15, lerpScore(nMargin, 0.05, 0.10, 0, 15)),
-      it('资产负债率', fmtPct(debtr), '≤ 50%', 15, lerpScore(debtr, 0.5, 0.75, 15, 0)),
-      it('5年累计净现比', fmtNum(va.ratio5) + (va.ratioYears === 5 ? '' : '（' + (va.ratioYears || 0) + '/5 年）'), '≥ 1', 15, lerpScore(va.ratio5, 0.5, 1, 0, 15)),
-      it('净利润 5 年 CAGR', fmtPct(va.netCagr5), '≥ 10%', 15, lerpScore(va.netCagr5, 0, 0.1, 0, 15))
-    ];
-    // 缺得最多的是净现比（23.8%）与净利 5 年 CAGR（32.4%），各 15 分，早先一律白扣
-    var bTotal = schoolTotal(bItems.concat(moatItems));
-
-    // 护城河备注：无形资产/商誉明细 + 特许经营（定价权）证据说明
-    var moatNote = '';
-    if (intang != null || goodwill != null) {
-      moatNote = '无形资产 ' + fmtMoney(intang) + '（占总资产 ' + fmtPct(intangShare) + '），商誉 ' + fmtMoney(goodwill) + '（占 ' + fmtPct(goodwillShare) + '）。'
-        + '本项只按无形资产计量：商誉占比 ≥10% 的公司其后出现大额减值（≥ 净资产 5%）的比例是其余的 2.36 倍（z=20.7），'
-        + '而无形资产看不出这个关系（1.04 倍），所以商誉在这里是风险信号、不计入护城河得分。';
-      if (gMargin != null && gMargin >= 0.4 && roeMed5 != null && roeMed5 >= 0.15) {
-        moatNote += '高毛利率（≥40%）+ 高 ROE（近5年中位 ≥15%）组合通常意味着品牌溢价或特许经营（定价权）等护城河，是无形资产创造超额回报的量化证据；若该特征为行业通性（如医药/软件），则更多体现行业属性而非个体优势，需结合行业地位判断。';
-      } else if (gMargin != null && gMargin >= 0.4 || roeMed5 != null && roeMed5 >= 0.15) {
-        moatNote += '毛利率或 ROE 单项突出，特许经营/品牌优势的证据不完全，需结合行业地位判断其可持续性。';
-      } else {
-        moatNote += '毛利率与 ROE 均未达强护城河量化线（40%/15%），暂未见品牌溢价或特许经营定价权证据。';
-      }
-      if (goodwillShare != null && goodwillShare > 0.2) moatNote += '商誉占比偏高（>20%），若增长依赖并购需警惕商誉减值风险。';
-      if (intangShare != null && intangShare > 0.3) moatNote += '无形资产占比较高（>30%），注意区分专利/特许经营权与土地使用权，前者才是定价权来源。';
-    } else {
-      moatNote = '最新年报未披露无形资产/商誉明细，无法量化评估特许经营资产。';
-    }
-    // 本卡两行都有 ROE，但测的是两件事（原先同用一个均值，实测相关 0.9801，
-    // 等于 29/100 押在同一个数上）。备注要说清两行各自看什么，免得看上去像重复录入。
-    moatNote += 'ROE 在本卡有两行，看的不是同一件事：护城河项（4 分）看持续，取近 5 年中 ROE ≥ 10% 的'
-      + '达标年数（5/5 年达标才满分）；盈利质量项（25 分）看水平，取近 5 年 ROE 中位数（≥ 15% 满分，'
-      + '10% 起给分）。中位数只取中间那一年，某一年因权益变薄而畸高畸低都进不了统计量。';
-
     // 有效满分/缺维数：不计分项（缺失或不适用）都不进满分，总分按有效满分折算，需向用户标注
     // （跨市场可比性）。缺失与不适用要分开报：前者是数据没到，后者是报表里就没这个科目。
     function effOf(arr) {
@@ -1119,14 +1021,10 @@
 
     return {
       basis: basis,
-      grahamAgg: { title: '进取型烟蒂 · net-net（低于净流动资产买入）', total: gATotal, items: gA, eff: effOf(gA),
-        note: '格雷厄姆 net-net 思路：以低于净流动资产（流动资产-全部负债）2/3 的价格买入，赚取清算价值与市价之差。得分越高代表越接近“捡烟蒂”状态。' },
       grahamDef: { title: '防御型烟蒂 · 防御型投资者标准', total: gDTotal, items: gD, eff: effOf(gD),
-        note: '对应《聪明的投资者》第 14 章防御型投资者选股标准（规模/流动比率/长期负债/盈利稳定/分红历史/盈利增长/估值）。规模为硬门槛（总资产≥100亿），关键安全项（流动比率<1、营运资本为负、近5年过半亏损、净利负增长）直接负分惩罚，比进取型更严格。' },
+        note: '对应《聪明的投资者》第 14 章防御型投资者选股标准（规模/流动比率/长期负债/盈利稳定/分红历史/盈利增长/估值）。规模为硬门槛（总资产≥100亿），关键安全项（流动比率<1、营运资本为负、近5年过半亏损、净利负增长）直接负分惩罚。' },
       schloss: { title: '施洛斯烟蒂 · 资产折扣+低估值+低负债', total: sTotal, items: sItems.concat(riskItems), eff: effOf(sItems),
-        note: '沃尔特·施洛斯风格：以低于净资产/流动资产的价格买入、负债极低、有股息，分散持有等待价值回归。风险扣分项为量化危险信号：净资产萎缩/扣非亏损、商誉无形与应收存货减值结构、有息负债攀升与利息覆盖不足、营收毛利率趋势溃败，数据不足不扣分；管理层掏空等无公开量化数据的信号未纳入。' },
-      buffett: { title: '巴菲特芒格 · 优质企业合理价格+护城河', total: bTotal, items: bItems.concat(moatItems), eff: effOf(bItems.concat(moatItems)),
-        note: moatNote }
+        note: '沃尔特·施洛斯风格：以低于净资产/流动资产的价格买入、负债极低、有股息，分散持有等待价值回归。风险扣分项为量化危险信号：净资产萎缩/扣非亏损、商誉无形与应收存货减值结构、有息负债攀升与利息覆盖不足、营收毛利率趋势溃败，数据不足不扣分；管理层掏空等无公开量化数据的信号未纳入。' }
     };
   }
 
@@ -2324,25 +2222,14 @@
 
   // 巴菲特合理市盈率 = 净利5年CAGR×100，夹在 [8, 25]；无数据取 15
 
-  // 巴菲特合理市盈率 = 净利5年CAGR×100，夹在 [8, 25]；无数据取 15
-  function fairPe(netCagr5) {
-    if (netCagr5 == null) return 15;
-    return Math.max(8, Math.min(25, netCagr5 * 100));
-  }
-
-  // 公允清算价值 + 四大流派买入/保守卖出/公允卖出价格参考（对应 scoring.py price_references）
-  // fairLiq = 每股公允清算价值（流动资产合计-负债合计）/财报股本，格雷厄姆清算口径
-  // netCashRatio = 净现金/市值（最近一期财报 加权类现金−负债合计 ÷ 快照总市值）
-
-  // 公允清算价值 + 四大流派买入/保守卖出/公允卖出价格参考（对应 scoring.py price_references）
-  // fairLiq = 每股公允清算价值（流动资产合计-负债合计）/财报股本，格雷厄姆清算口径
+  // 两派买入/保守卖出/公允卖出价格参考（对应 scoring.py price_references）
   // netCashRatio = 净现金/市值（最近一期财报 加权类现金−负债合计 ÷ 快照总市值）
   function priceReferences(d, va) {
     var s = d.snapshot || {};
     var price0 = s.price, mcap0 = s.market_cap, pe0 = s.pe_ttm, pb0 = s.pb;
-    var none = { fairLiq: null, buy: null, sellCons: null, sellFair: null };
+    var none = { buy: null, sellCons: null, sellFair: null };
     if (price0 == null || price0 <= 0) {
-      return { fairLiq: null, netCashRatio: null, wCash: null, intDebt: null, netCashW: null, netCashB: null, netCashCalc: null, grahamAgg: none, grahamDef: none, schloss: none, buffett: none };
+      return { netCashRatio: null, wCash: null, intDebt: null, netCashW: null, netCashB: null, netCashCalc: null, grahamDef: none, schloss: none };
     }
     // ---- 基础量（最新年报资产负债表）----
     var annual = annualRows(d.indicators || []);
@@ -2350,16 +2237,9 @@
     var lastDate = last ? String(last['报告期']).slice(0, 10) : null;
     var baList = (d.balance || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
     var lastBa = lastDate ? sheetRowByDate(baList, lastDate) : null;
-    // 批次 1（2026-09）：清算口径的资产负债科目取最新一期（含季报），缺则回退评分基准
+    // 批次 1（2026-09）：账面口径的资产负债科目取最新一期（含季报），缺则回退评分基准
     // 年报行——与施洛斯账面锚（最新期每股净资产）对齐。scoring.py 的 price_references 同一条规则。
     var latestBaPR = baList.length ? baList[baList.length - 1] : null;
-    function balPR(key) {
-      var v = (latestBaPR && latestBaPR[key] != null) ? latestBaPR[key] : (lastBa ? lastBa[key] : null);
-      return v == null ? null : v;
-    }
-    var ca = balPR('流动资产合计');
-    var tl = balPR('负债合计');
-    var ncav = (ca != null && tl != null) ? ca - tl : null;
     var lastEq = equityOf(latestBaPR);
     if (lastEq == null) lastEq = equityOf(lastBa);
     // 每股净资产优先用指标字段（数据源按财报算好、随财报更新，与实时价无关），
@@ -2367,7 +2247,6 @@
     var bps = latestField(d.indicators, '每股净资产');
     // 股本优先用财报实收资本（最新年报），快照 mcap/price 会随实时价抖动（快照舍入/滞后）
     var shares = shareCount(d.balance, mcap0 != null ? mcap0 / price0 : null, bps);
-    var ncavPs = (ncav != null && shares) ? ncav / shares : null;   // 每股净流动资产
     if (bps == null && lastEq != null && shares) bps = lastEq / shares;
     if (bps == null && pb0 != null && pb0 > 0) bps = price0 / pb0;
     var epsTtm = epsTtmField(d.indicators);
@@ -2446,27 +2325,22 @@
       termDeposit: ncParts.termDeposit, restricted: rstV,
       noteReport: noteFound ? noteFound[0] : null
     } : null;
-    var fpe = fairPe(va.netCagr5);
     // 低于一分钱（含负值与浮点零渣）的参考价一律视为无
     function ref(v) { return (v != null && v >= MIN_PRICE_REF) ? v : null; }
     // 资产派卖价只在估值射程内给出：现价已在 anchor 的 SELL_BAND 倍之外，说明该派的资产口径
     // 对这只股票没有「该卖」的意见（它从来不是这只股票的估值方法），留空。
     // 现价无快照的情形已在函数开头整体返回空，这里不必再判。
     function band(anchor) { return (anchor == null || price0 <= SELL_BAND * anchor) ? anchor : null; }
-    var ncavRef = ref(ncavPs);
     var sRef = ref(bps);
     // TTM 每股亏损（≤0）时基于 EPS 的估值锚无意义，锚位与买入价一并置空（避免负价/误导价）
     var epsOk = epsTtm != null && epsTtm > 0;
-    var gACons = band(ncavRef);
     var gDCons = epsOk ? ref(G_D_PE_FULL * epsTtm) : null;
     var sCons = band(sRef);
-    var bCons = epsOk ? ref(fpe * epsTtm) : null;
-    // 公允卖价跟着保守卖价同生同灭：每派公允都是保守的 ≥1.3 倍，保守过了一分钱下限
+    // 公允卖价跟着保守卖价同生同灭：公允是保守的 ≥1.3 倍，保守过了一分钱下限
     // 公允必然也过；但若各自独立套下限，会在保守差一点、公允刚过点时只留半档，
     // 而卖点筛选要求「同时 ≥ 保守与公允」，半档等于把这家公司永久排除。
     // 买点不挂卖点：锚为空才没有买点；资产派「出射程」只抹掉两档卖价，买点作为目标价照旧给出。
     return {
-      fairLiq: ncavRef,
       netCashRatio: netCashRatio,
       wCash: weightedCash,
       intDebt: intDebtLatest,
@@ -2474,11 +2348,6 @@
       // 宽口径金额 = 加权类现金 − 负债合计（列表「净现金(减全部负债)」列用，本币亿）
       netCashB: (weightedCash != null && tlLatest != null) ? weightedCash - tlLatest : null,
       netCashCalc: netCashCalc,
-      grahamAgg: {
-        buy: (ncavRef != null) ? ref(G_A_PNCAV_FULL * ncavRef) : null,
-        sellCons: gACons,
-        sellFair: (gACons != null) ? 1.5 * gACons : null
-      },
       grahamDef: {
         buy: (gDCons != null) ? ref(BUY_MARGIN * gDCons) : null,
         sellCons: gDCons,
@@ -2488,16 +2357,11 @@
         buy: (sRef != null) ? ref(S_PB_FULL * sRef) : null,
         sellCons: sCons,
         sellFair: (sCons != null) ? 1.5 * sCons : null
-      },
-      buffett: {
-        buy: (bCons != null) ? ref(BUY_MARGIN * bCons) : null,
-        sellCons: bCons,
-        sellFair: (bCons != null) ? fpe * epsTtm * 1.3 : null
       }
     };
   }
 
-  // 渲染四大评分卡（格雷厄姆进取/防御、施洛斯、巴菲特芒格）
+  // 渲染两派评分卡（格防御、施洛斯）
 
   function fmtPct(v) {
     if (v == null || isNaN(v)) return '-';
@@ -2757,7 +2621,6 @@ export {
   it,
   MIN_PRICE_REF,
   BUY_MARGIN,
-  G_A_PNCAV_FULL,
   G_D_PE_FULL,
   FX_TO_CNY,
   toCny,
@@ -2817,7 +2680,6 @@ export {
   intDebtOf,
   weightedCashOf,
   netCashFormula,
-  fairPe,
   priceReferences,
   scoreCalcText,
   ST_FIN_KW,

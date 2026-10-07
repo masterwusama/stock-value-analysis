@@ -198,19 +198,18 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
     { key: 'basic', no: '①', navTitle: '基础财务信息' },
     { key: 'value', no: '②', navTitle: '通用价值标准' },
     { key: 'graham', no: '③', navTitle: '格雷厄姆烟蒂', title: '格雷厄姆烟蒂标准评判',
-      html: '<div class="score-grid"><div class="score-card" id="stock-score-graham-agg"></div><div class="score-card" id="stock-score-graham-def"></div></div>' },
+      html: '<div class="score-grid"><div class="score-card" id="stock-score-graham-def"></div></div>' },
     { key: 'schloss', no: '④', navTitle: '施洛斯烟蒂', title: '施洛斯烟蒂标准评判', card: 'stock-score-schloss' },
-    { key: 'buffett', no: '⑤', navTitle: '巴菲特芒格', title: '巴菲特芒格价值标准评判', card: 'stock-score-buffett' },
-    { key: 'fraud', no: '⑥', navTitle: '造假风险', title: '财务报表造假可能性分析', card: 'stock-score-fraud' },
-    { key: 'mgmt', no: '⑦', navTitle: '管理水平', title: '管理层管理水平评分', card: 'stock-score-mgmt' },
-    { key: 'cycle', no: '⑧', navTitle: '周期位置', title: '周期位置 · 周期性行业判定', card: 'stock-score-cycle',
+    { key: 'fraud', no: '⑤', navTitle: '造假风险', title: '财务报表造假可能性分析', card: 'stock-score-fraud' },
+    { key: 'mgmt', no: '⑥', navTitle: '管理水平', title: '管理层管理水平评分', card: 'stock-score-mgmt' },
+    { key: 'cycle', no: '⑦', navTitle: '周期位置', title: '周期位置 · 周期性行业判定', card: 'stock-score-cycle',
       tail: '<div class="stock-chart-block" id="stock-cycle-chart-block" style="display:none"><h4>历年财报周期位置评分趋势（分数越低越接近周期底部）</h4>' +
         '<div class="stock-chart" id="stock-chart-cycle"></div>' +
         '<p class="stock-chart-note">逐年回溯：以各年报年为窗口末尾取最近 8 年年报，按与当期相同的 8 维逻辑打分；单季环比逐年参与（历史年用该年自身单季营收环比，末年用最新单季环比），各年均为满 8 维、同口径可比。</p></div>' },
-    { key: 'value-score', no: '⑨', navTitle: '价值综合分', title: '价值综合分 · 便宜与质量的证据', card: 'stock-score-value' },
+    { key: 'value-score', no: '⑧', navTitle: '价值综合分', title: '价值综合分 · 便宜与质量的证据', card: 'stock-score-value' },
     { key: 'recommend', no: 'R', navTitle: '综合推荐', title: '综合推荐分 · 门槛内的价值×成长合成', card: 'stock-score-recommend' },
-    { key: 'growth', no: '⑩', navTitle: '成长综合分', title: '成长综合分 · 过去五年的增长证据', card: 'stock-score-growth' },
-    { key: 'trap', no: '⑪', navTitle: '价值陷阱分', title: '价值陷阱分 · 坏消息证据', card: 'stock-score-trap' },
+    { key: 'growth', no: '⑨', navTitle: '成长综合分', title: '成长综合分 · 过去五年的增长证据', card: 'stock-score-growth' },
+    { key: 'trap', no: '⑩', navTitle: '价值陷阱分', title: '价值陷阱分 · 坏消息证据', card: 'stock-score-trap' },
   ];
 
   // 空态格悬停说明（判不动＝原料缺失/前提不满足，不计入该项得分）：各卡表格统一
@@ -283,19 +282,19 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       stripChip('F', '造假', 'sec-fraud') +
       '</div>';
 
-    // Wind 事件覆盖层当前代码条目（⑥⑦优化说明 + ⑫事件模块共用）；无事件数据（港美股/未抓公司）为 null
+    // Wind 事件覆盖层当前代码条目（⑤⑥优化说明 + ⑪事件模块共用）；无事件数据（港美股/未抓公司）为 null
     var ovD = (state.eventOverlay && state.eventOverlay[d.code]) ? state.eventOverlay[d.code] : null;
-    // 尾部模块注册表：⑫ 事件（有 Wind 明细才出）→ ⑬ 股本事件（编号顶上空缺）。
+    // 尾部模块注册表：⑪ 事件（有 Wind 明细才出）→ ⑫ 股本事件。
     // navTitle/no 在这里定（模块文件不知道自己前面的编号），has 门控在模块里
     var tailMods = [Object.assign({ navTitle: '事件与股东' }, evMod)];
     if (evMod.has(d)) {
-      tailMods.push(Object.assign({ no: '⑬', navTitle: '股本事件' }, acMod));
-    } else {
       tailMods.push(Object.assign({ no: '⑫', navTitle: '股本事件' }, acMod));
+    } else {
+      tailMods.push(Object.assign({ no: '⑪', navTitle: '股本事件' }, acMod));
     }
     var hasEvents = evMod.has(d);
     var hasAct = acMod.has(d);
-    // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑪ 恒在，⑫ ⑬ 按有无数据出
+    // 各模块锚点导航（点击平滑滚动，避免与 #/code 路由冲突）：①-⑩ 恒在，⑪ ⑫ 按有无数据出
     html += '<nav class="va-nav" aria-label="详情模块导航">' +
       SECTION_DEFS.concat(tailMods).filter(function (m) {
         return m.navTitle && (!m.has || m.has(d));   // 无 has＝恒出（①②与评分卡节）
@@ -326,8 +325,6 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       kv('市净率', fmtNum(s.pb)) +
       kv('总市值', fmtCap(s.market_cap)) +
       kv('流通市值', fmtCap(s.float_market_cap)) +
-      kv('公允清算价值', '<span title="(流动资产合计-负债合计)/财报股本，格雷厄姆清算口径，随财报更新">' +
-        (sc.priceRefs && sc.priceRefs.fairLiq != null ? fmtNum(sc.priceRefs.fairLiq) : '-') + '</span>') +
       kv('净现金/市值', (function () {
         var r = sc.priceRefs || {};
         var tip = netCashFormula(r) ||
@@ -501,7 +498,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       '<p class="stock-chart-note">CAGR 基于 ' + va.growthNote + '；PEG = PE(TTM) / 净利5年CAGR，&lt;1 低估、1~2 合理、&gt;2 偏贵。</p></div>';
     html += '</section>'; // 模块二结束
 
-    // ---- 评分卡各节（③~⑪ + R）：壳由 SECTION_DEFS 生成，内容经下方任务队列填充 ----
+    // ---- 评分卡各节（③~⑩ + R）：壳由 SECTION_DEFS 生成，内容经下方任务队列填充 ----
     SECTION_DEFS.forEach(function (m) {
       if (!m.title) return;   // ①② 在上面内联构建（依赖 ctx），这里只出评分卡节
       html += '<section id="sec-' + m.key + '" class="stock-section va-module">' +
@@ -550,7 +547,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
           buildList(d, key, host(key));
           bindMoreButtons();
         } else {
-          // 注册表模块（zygc 子块 / ⑫⑬ 整节）：build 接 (d, ctx, hostEl)，宿主节点
+          // 注册表模块（zygc 子块 / ⑪⑫ 整节）：build 接 (d, ctx, hostEl)，宿主节点
           // 注入与绑定写在各模块文件里
           var mod = { zygc: zygcMod, events: evMod, actions: acMod }[key];
           var shellEl = document.querySelector('#stock-detail-body [data-lazy="' + key + '"]');
@@ -1051,9 +1048,9 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       '<p class="score-note">' + ma.note + '</p>' + eventEnhFooter(ov, ma.total, 'mgmt');
   }
 
-  /* ---------------- ⑨ 公司事件与股东结构（一次性 Wind 明细） ---------------- */
+  /* ---------------- ⑧ 公司事件与股东结构（一次性 Wind 明细） ---------------- */
 
-  // 事件明细是否含任意非空数据（决定 ⑧ 后是否插入 ⑨ 模块）
+  // 事件明细是否含任意非空数据（决定 ⑦ 后是否插入 ⑧ 模块）
 
   function cycleCard(ca) {
     function dimRows(items) {
@@ -1154,10 +1151,8 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
     var curPrice = ((sc.d || {}).snapshot || {}).price;
     var refs = sc.priceRefs || {};
     var cards = [
-      ['stock-score-graham-agg', sc.grahamAgg, refs.grahamAgg],
       ['stock-score-graham-def', sc.grahamDef, refs.grahamDef],
-      ['stock-score-schloss', sc.schloss, refs.schloss],
-      ['stock-score-buffett', sc.buffett, refs.buffett]
+      ['stock-score-schloss', sc.schloss, refs.schloss]
     ];
     cards.forEach(function (trio) {
       var el = $(trio[0]);
@@ -1183,7 +1178,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         var el = $(a.getAttribute('data-scroll'));
         if (!el) return;
         // 目标在懒模块里且还没构建：先同步构建再滚，不跳空壳。目标本身是懒壳
-        //（⑫⑬ 整节）与目标内含懒壳（① 里的图表/对比/分红/报告/主营）都要覆盖
+        //（⑪⑫ 整节）与目标内含懒壳（① 里的图表/对比/分红/报告/主营）都要覆盖
         var targets = el.matches('[data-lazy]') ? [el]
           : Array.prototype.slice.call(el.querySelectorAll('[data-lazy]'));
         targets.forEach(function (lz) { if (buildLazy) buildLazy(lz.dataset.lazy); });
@@ -1275,7 +1270,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
   /* ---------------- 列表页悬浮代入式（多行纯文本） ----------------
    * 与详情页评分卡同一批现算函数（fraudAnalysis/managementAnalysis/cycleAnalysis/trapScore/
    * growthScore/valueScore/recommendScore/valueScores），这里只把卡面压成多行文本——
-   * 数值口径不允许在这里出现第二套。which ∈ grahamAgg/grahamDef/schloss/buffett/
+   * 数值口径不允许在这里出现第二套。which ∈ grahamDef/schloss（格攻/巴菲特 2026-10-06 移除）
    * fraud/mgmt/cycle/trap/growth/value/recommend。列表页动态 import 本库后按格调用。
    */
 

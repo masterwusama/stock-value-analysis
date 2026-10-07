@@ -70,7 +70,7 @@ async function render(code) {
     const L = await ensureLegacy()
     if (!alive || seq !== renderSeq) return
     // Wind 事件覆盖层接管:API scores.wind 即原 events/index.json byCode 条目全量
-    // (⑥⑦优化脚注 + ⑨事件总览芯片读 state.eventOverlay[d.code])
+    // (⑤⑥优化脚注 + ⑧事件总览芯片读 state.eventOverlay[d.code])
     if (d.scores && d.scores.wind) {
       L.state.eventOverlay = { [d.code]: d.scores.wind }
     }

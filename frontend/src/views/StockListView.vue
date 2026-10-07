@@ -26,10 +26,8 @@ const COLS = [
   { key: 'pe_ttm', label: 'PE(TTM)', group: 'quote' },
   { key: 'pb', label: 'PB', group: 'quote' },
   { key: 'market_cap', label: '市值(亿)', group: 'quote' },
-  { key: 'score_graham_agg', label: '格进取', group: 'school', edge: true },
-  { key: 'score_graham_def', label: '格防御', group: 'school' },
+  { key: 'score_graham_def', label: '格防御', group: 'school', edge: true },
   { key: 'score_schloss', label: '施洛斯', group: 'school' },
-  { key: 'score_buffett', label: '巴菲特', group: 'school' },
   { key: 'fraud', label: '造假', group: 'score', edge: true },
   { key: 'mgmt', label: '管理', group: 'score' },
   { key: 'cycle', label: '周期', group: 'score' },
@@ -40,9 +38,7 @@ const COLS = [
   { key: 'growth', label: '成长', growth: true, group: 'score' },
   // 推荐列：门槛外的 0.6×V + 0.4×G（资格线：造假≤40·陷阱≤20·中报≤−70%），门槛外整格 `-`
   { key: 'recommend', label: '推荐', group: 'score' },
-  // 清算列：格内是每股清算价值绝对值，排序走性价比（后端 fair_liq 排折价率 1-现价/清算价值）
-  { key: 'fair_liq', label: '清算', ratio: true, group: 'asset', edge: true },
-  // 净现金三件套（等式顺序：加权现金−有息负债=净现金），紧贴宽口径比值列。
+  // 净现金三件套（等式顺序：加权现金−有息负债=净现金），紧贴宽口径比值列。（清算价值列随格攻派移除）
   // 两个「净现金」口径不同：本组是亿（减有息负债），比值列是 %（减负债合计）——列名与
   // 小注直接标明，悬停各有代入式
   { key: 'w_cash', label: '加权现金(亿)', group: 'asset' },
@@ -57,15 +53,13 @@ const COLS = [
   // 列头排序键 buy_* 走的是"买入性价比"（现价相对买价的折价深度，后端算），不是买价绝对值；
   // 格内保守/公允两档小字仍按各自卖价排。键名与 score_daily 列/SecurityItem 字段保持一致。
   // 排在股本事件之前：价格参考是估值域的延伸，紧贴资产组；事件是消息域，放表尾。
-  { key: 'buy_graham_agg', label: '格进取 买/保/公', ref: true, school: 'grahamAgg', group: 'ref', edge: true },
-  { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef', group: 'ref' },
+  { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef', group: 'ref', edge: true },
   { key: 'buy_schloss', label: '施洛斯 买/保/公', ref: true, school: 'schloss', group: 'ref' },
-  { key: 'buy_buffett', label: '巴菲特 买/保/公', ref: true, school: 'buffett', group: 'ref' },
   { key: null, label: '定增', noSort: true, tip: SEO_TIP, group: 'event', edge: true },
   { key: null, label: '回购', noSort: true, tip: BUY_TIP, group: 'event' },
 ]
 // 两级表头：组标签行由 COLS 归并派生（span = 组内列数），列名行沿用原 v-for
-const GROUP_LABEL = { id: '标的', quote: '行情', school: '四派评分', score: '量化评分', asset: '资产 · 分位', event: '股本事件', ref: '买卖参考价' }
+const GROUP_LABEL = { id: '标的', quote: '行情', school: '两派评分', score: '量化评分', asset: '资产 · 分位', event: '股本事件', ref: '买卖参考价' }
 const COL_GROUPS = COLS.reduce((acc, c) => {
   const last = acc[acc.length - 1]
   if (last && last.key === c.group) last.span++
@@ -89,7 +83,7 @@ const noSt = ref(false)
 //（一个信号都判不了）的标的在勾选时会连同门排除，默认不勾才不会让人误以为「剩下的都干净」。
 const noGate = ref(false)
 const GATE_TIP = '排除触发硬门槛的标的：最近一份年报的审计意见非标准无保留 / 简称含 ST / *ST（交易所风险警示）/ Wind 有违规立案处罚记录 / 最新年报归母权益为负。'
-  + '这四类是定性否决，不进任何分数（四派分照旧），所以触发者出现在高分前排并不罕见（实测 344 家触发，其中 24 家四派最高分 ≥ 70）。'
+  + '这四类是定性否决，不进任何分数（两派分照旧），所以触发者出现在高分前排并不罕见（实测 344 家触发，其中 24 家两派最高分 ≥ 70）。'
   + '注意：本开关只保留「明确未触发」的标的，一个信号都判不了的（未抓财务、无审计也无权益数据）会一并被排除'
 const industries = ref([])
 // 细分（Phase 3）：主营构成词典归属，仅 A 股有值；选项在 loadIndustries 时一并拉取
@@ -109,13 +103,13 @@ const error = ref('')
 
 // 筛选(语义同原版):造假≤/管理≥/买点多选×折扣%/卖点多选(现价≥公允卖价即命中,公允恒高于保守);空值=不限
 // 规模相关:剔除ST(低 PB 假便宜的重灾区)、行业单选(全市场几十个字)、市值区间(本币亿)、净现金/市值区间(%)、PB 十年分位区间(0~100)
-const SCHOOLS = [['grahamAgg', '格进取'], ['grahamDef', '格防御'], ['schloss', '施洛斯'], ['buffett', '巴菲特']]
-const flt = reactive({ fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', liqDisc: '', buyDays: '', seoDays: '', buys: [], discount: '', sells: [], bm: [] })
+const SCHOOLS = [['grahamDef', '格防御'], ['schloss', '施洛斯']]
+const flt = reactive({ fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', buyDays: '', seoDays: '', buys: [], discount: '', sells: [], bm: [] })
 const gateFlag = ref('')
-// 评分基准报告期距今多少月（接口 report_age_max）：四派分永远建在最新年报上，那一期越旧分越旧。
+// 评分基准报告期距今多少月（接口 report_age_max）：两派分永远建在最新年报上，那一期越旧分越旧。
 // 阈值取 13 月：上一年 12-31 的年报最迟 12 个月龄，超出去就是再上一年度。
 const AGE_TIP = '评分用的财报期（最新年报）距今 ≤ 多少月：填 13 就是只要「基准年报还是上一年度」的公司；'
-  + '超出的那些是新一期年报还没披露（或还没回灌），四派分与买卖参考价都建在再上一年的财报上。留空不限；'
+  + '超出的那些是新一期年报还没披露（或还没回灌），两派分与买卖参考价都建在再上一年的财报上。留空不限；'
   + '美股有几个财年不在 12-31 收尾的公司（Copart/Cisco/Intuit 那类，实测 7 家），采集层把期次归一到 12-31，'
   + '它们的基准期会显示成未来期（期龄负数），不是算错，也不会被这个门槛误拦（门槛只卡上限）'
 // 市值框让用户填“亿”(与列头 市值(亿) 同口径),发请求时转回接口单位元：
@@ -145,7 +139,7 @@ const NCR_CELL_TIP = '净现金/市值（最近一期财报），≥100% 表示�
   + '其他流动资产里的定期存款与货币资金里的受限部分按财报附注拆分折算，逐家代入式见详情页 ① 快照的该格'
 // PB 十年分位：口径整份在外源那边（窗口长度、样本是否含极早期点、亏损期计不计），我们无法复算也不去复算，
 // 所以文案只说「外源口径」不落具体厂商——2026-10 起 A 股是东财免费源、港股是 Wind 时代存量，来源见详情页。
-// 这一层不参与四派评分与买卖点，只用来筛与看。
+// 这一层不参与两派评分与买卖点，只用来筛与看。
 const PB_TIP = 'PB 近十年分位（外源口径，0~100，越低越接近十年低位）：分位由外源按自己的窗口与样本算，'
   + '我们只负责取回与置空（PB 为负或算不出、外源日期过旧的都置空，实测亏损/停牌股会置空）；'
   + '未覆盖或已置空的公司（列面显示 -）不进区间，设任一门槛即被排除；'
@@ -157,7 +151,7 @@ const pbCellTip = (s) => 'PB 近十年分位（外源口径）：十年内 PB �
   + (s.pb_pctile == null ? '（无值）' : fmt(s.pb_pctile, 1) + '%')
   + '，样本 ' + (s.pb_days == null ? '-' : s.pb_days)
   + (data.value?.valuation_date ? '，外源观测日 ' + data.value.valuation_date : '')
-  + '；点击列头可按分位排序，此列仅展示与筛选，不进四派评分'
+  + '；点击列头可按分位排序，此列仅展示与筛选，不进两派评分'
 
 const ym = (v) => (v ? String(v).slice(0, 7) : '-')
 const qty = (n) => n == null ? '-' : n >= 1e8 ? fmt(n / 1e8) + '亿' : n >= 1e4 ? fmt(n / 1e4) + '万' : fmt(n, 0)
@@ -290,7 +284,7 @@ const NCB_TIP = '净现金(减全部负债) ＝ 加权类现金 − 负债合计
 function gateTip(s) {
   const f = (s.gate_flags || []).map((k) => GATE_TEXT[k] || k)
   return '触发硬门槛：' + (f.join('、') || '（后端未给出行因）')
-    + '。这类定性否决不进任何分数，四派分照旧；要排掉请勾筛选栏的「排除门槛」'
+    + '。这类定性否决不进任何分数，两派分照旧；要排掉请勾筛选栏的「排除门槛」'
 }
 // 期龄超 13 月才标：没超标的就是正常路径（年报当年 4 月披露、下半年读到 8~12 月龄），标出来只会成屏噪声
 const STALE_MONTHS = 13
@@ -300,7 +294,7 @@ function ageTip(s) {
   if (m == null) return '评分基准报告期未知（这一行的评分行缺失或旧于本次口径）'
   // 月数是相对这一行自己的快照日算的（美股会比顶部全局快照日旧一天），不报出来就像算错了
   return `评分用的是 ${s.report_date} 年报（距本行快照日 ${s.score_date} ${m} 个月）`
-    + (m > STALE_MONTHS ? '：新一期年报还没出或还没回灌，四派分与买卖参考价都建在这份旧财报上' : '')
+    + (m > STALE_MONTHS ? '：新一期年报还没出或还没回灌，两派分与买卖参考价都建在这份旧财报上' : '')
 }
 // ST/退市风险预警（scoring._st_risk，同名 JS 镜像 stockLegacy.stRiskOf）：简称还没变色前，
 // 用上市规则的触发要件提前亮牌。⚠ 琥珀=关注（1），红=高危（2）；旗语文案与后端规则一一对应
@@ -332,7 +326,7 @@ function toggleFlt(arr, key, on) {
   if (!on && i >= 0) arr.splice(i, 1)
 }
 function resetFlt() {
-  Object.assign(flt, { fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', liqDisc: '', buyDays: '', seoDays: '', buys: [], discount: '', sells: [], bm: [] })
+  Object.assign(flt, { fraudMax: '', mgmtMin: '', recMin: '', capMin: '', capMax: '', ncrMin: '', ncrMax: '', pbpMin: '', pbpMax: '', ageMax: '', peMin: '', peMax: '', pbMin: '', pbMax: '', divMin: '', buyDays: '', seoDays: '', buys: [], discount: '', sells: [], bm: [] })
   gateFlag.value = ''
   stMode.value = ''
   industry.value = ''
@@ -356,7 +350,7 @@ const fltCount = () =>
   (flt.buys.length ? 1 : 0) + (flt.sells.length ? 1 : 0) + (flt.bm.length ? 1 : 0) +
   ((flt.recMin !== '' ? 1 : 0) + (flt.peMin !== '' ? 1 : 0) + (flt.peMax !== '' ? 1 : 0) +
    (flt.pbMin !== '' ? 1 : 0) + (flt.pbMax !== '' ? 1 : 0) + (flt.divMin !== '' ? 1 : 0) +
-   ((flt.liqDisc !== '' ? 1 : 0) + (flt.buyDays !== '' ? 1 : 0) + (flt.seoDays !== '' ? 1 : 0)) +
+   ((flt.buyDays !== '' ? 1 : 0) + (flt.seoDays !== '' ? 1 : 0)) +
    (gateFlag.value ? 1 : 0)) +
   (stMode.value ? 1 : 0) +
   (industry.value ? 1 : 0) + (exIndustries.value.length ? 1 : 0) + (noSt.value ? 1 : 0) + (noGate.value ? 1 : 0)
@@ -394,7 +388,6 @@ async function load() {
       pb_min: flt.pbMin === '' ? null : Number(flt.pbMin),
       pb_max: flt.pbMax === '' ? null : Number(flt.pbMax),
       div_min: flt.divMin === '' ? null : pctToRatio(flt.divMin),
-      liq_disc_max: flt.liqDisc === '' ? null : Number(flt.liqDisc),
       buyback_days: flt.buyDays === '' ? null : Number(flt.buyDays),
       seo_days: flt.seoDays === '' ? null : Number(flt.seoDays),
       ex_industry: exIndustries.value.length ? exIndustries.value.join(',') : null,
@@ -499,7 +492,6 @@ watch([market, board, industry, niche, kwDebounced, noSt, noGate, windMode, sort
     if (flt.pbMin !== '') q.pbmin = flt.pbMin
     if (flt.pbMax !== '') q.pbmax = flt.pbMax
     if (flt.divMin !== '') q.dmin = flt.divMin
-    if (flt.liqDisc !== '') q.ldc = flt.liqDisc
     if (flt.buyDays !== '') q.bbd = flt.buyDays
     if (flt.seoDays !== '') q.sed = flt.seoDays
     if (flt.buys.length) q.buys = flt.buys.join(',')
@@ -542,7 +534,7 @@ onMounted(() => {
   flt.peMin = s('pemin'); flt.peMax = s('pemax')
   flt.pbMin = s('pbmin'); flt.pbMax = s('pbmax')
   flt.divMin = s('dmin')
-  flt.liqDisc = s('ldc'); flt.buyDays = s('bbd'); flt.seoDays = s('sed')
+  flt.buyDays = s('bbd'); flt.seoDays = s('sed')
   flt.buys = s('buys').split(',').filter((x) => SCHOOLS.some(([k]) => k === x))
   flt.discount = s('disc')
   flt.sells = s('sells').split(',').filter((x) => SCHOOLS.some(([k]) => k === x))
@@ -566,13 +558,13 @@ const score = (n) => n == null ? '-' : n.toFixed(1)
 // 价格参考列(原版语义):现价≤买价绿;现价≥保守/公允卖价红;公允缺失时留空不占位
 // 字段名 = 前缀与流派键都转 snake:sell_cons_graham_agg 等
 const snake = (v) => v.replace(/([A-Z])/g, '_$1').toLowerCase()
-const REF_LABELS = { grahamAgg: '格·进取', grahamDef: '格·防御', schloss: '施洛斯', buffett: '巴菲特' }
+const REF_LABELS = { grahamDef: '格·防御', schloss: '施洛斯' }
 const refKey = (k, kind) => snake(kind) + '_' + snake(k)
 const refBuy = (s, k) => s[refKey(k, 'buy')]
 const refCons = (s, k) => s[refKey(k, 'sellCons')]
 const refFair = (s, k) => s[refKey(k, 'sellFair')]
 // 买入性价比：现价相对买入参考价的偏离，负数=已经比建议买价便宜。
-// 后端 buy_* 与 fair_liq 排序键排的就是这个比率的相反数（折价率），响应里没有对应字段，
+// 后端 buy_* 排序键排的就是这个比率的相反数（折价率），响应里没有对应字段，
 // 故这里用同一公式在前端算出来给 tooltip 和行内展示用——两边口径必须一致，
 // 连 MIN_PRICE_REF 这道门槛也要一致，否则被后端判成无值的行会在前端显示出一个假折价。
 const MIN_PRICE_REF = 0.01
@@ -580,9 +572,6 @@ const refSpace = (s, k) => {
   const b = refBuy(s, k)
   return b == null || b < MIN_PRICE_REF || s.price == null ? null : s.price / b - 1
 }
-// 清算列同理：格内是每股清算价值绝对值，排序用的是现价相对它的偏离
-const liqSpace = (s) => (s.fair_liq == null || s.fair_liq < MIN_PRICE_REF || s.price == null
-  ? null : s.price / s.fair_liq - 1)
 // 折最深到 100% 有界，溢价无上界：999% 以上统一简写成 溢999%（精确值看悬停），
 // 卡片那一栏只有 68px，多一个 > 就会把末尾的 % 挤出去。
 const refSpaceText = (v) => v == null ? ''
@@ -597,13 +586,12 @@ function sortActive(c) {
   const s = snake(c.school)
   return ['buy', 'sell_cons', 'sell_fair'].some((k) => sort.value === `${k}_${s}`)
 }
-// 表头提示：买价与清算价值两档排的都是折价率，要说清「排序看比率、格内是绝对值」
+// 表头提示：买价档排的是折价率，要说清「排序看比率、格内是绝对值」
 function thTip(c) {
   // 静态口径说明（股本事件两列既不排序也不筛选，列头是唯一的解释入口）
   if (c.tip) return c.tip
   if (!c.key) return ''
   if (c.ref) return '按买入性价比排序：现价相对买入参考价的折价越深越靠前（保守/公允价点格内小字），再点切换升/降序'
-  if (c.ratio) return '按清算性价比排序：现价相对每股清算价值折得越深越靠前（格内是清算价值本身），再点切换升/降序'
   if (c.trap) return TRAP_TIP + '｜点击按陷阱分排序（降序＝最可疑的在前），再点切换升/降序'
   if (c.value) return V_TIP + '｜点击按价值分排序（降序＝最便宜且有质量的在前），再点切换升/降序'
   if (c.growth) return G_TIP + '｜点击按成长分排序（降序＝过去五年更能长的在前），再点切换升/降序'
@@ -614,11 +602,6 @@ const refTitle = (s, k) => {
   const sp = refSpace(s, k)
   const tail = sp == null ? '' : `｜现价较买价${sp <= 0 ? '折价' : '溢价'} ${sp >= 9.995 ? '>999' : (Math.abs(sp) * 100).toFixed(1)}%`
   return `${REF_LABELS[k]}：买 ${f(refBuy(s, k))} / 保卖 ${f(refCons(s, k))} / 公卖 ${f(refFair(s, k))}${tail}`
-}
-const liqTitle = (s) => {
-  const sp = liqSpace(s)
-  const tail = sp == null ? '' : `｜现价较清算价值${sp <= 0 ? '折价' : '溢价'} ${sp >= 9.995 ? '>999' : (Math.abs(sp) * 100).toFixed(1)}%`
-  return `公允清算价值估算：(流动资产合计-负债合计)/股本${tail}`
 }
 // 陷阱分格子：格内是分，右上角是「可判几项」，档位与着色按 C 查（见 TRAP_BAND_CUTS 的注释）
 function bandOfC(c) {
@@ -696,8 +679,8 @@ const tip = reactive({ show: false, x: 0, y: 0, text: '', loading: false })
 let tipToken = 0
 let tipTimer = null
 const TIP_WHICH = {
-  score_graham_agg: 'grahamAgg', score_graham_def: 'grahamDef',
-  score_schloss: 'schloss', score_buffett: 'buffett',
+  score_graham_def: 'grahamDef',
+  score_schloss: 'schloss',
   fraud: 'fraud', mgmt: 'mgmt', cycle: 'cycle',
   trap: 'trap', growth: 'growth', value: 'value', recommend: 'recommend',
 }
@@ -791,17 +774,14 @@ const SORT_VAL_FMT = {
   growth: (s) => '成长 ' + score(s.growth),
   value: (s) => '价值 ' + score(s.value),
   recommend: (s) => '推荐 ' + score(s.recommend),
-  fair_liq: (s) => '清算 ' + fmt(s.fair_liq),
   net_cash_ratio: (s) => '净现金/市值 ' + score2(s.net_cash_ratio),
   pb_pctile: (s) => 'PB分位 ' + pbCell(s),
   w_cash: (s) => '加权现金 ' + yi(s.weighted_cash) + (s.market !== 'A' ? s.currency : ''),
   net_cash_w: (s) => '净现金·扣有息 ' + yi(s.net_cash_w) + (s.market !== 'A' ? s.currency : ''),
   int_debt: (s) => '有息负债 ' + yi(s.int_debt) + (s.market !== 'A' ? s.currency : ''),
   net_cash_b: (s) => '净现金 ' + yi(s.net_cash_b) + (s.market !== 'A' ? s.currency : ''),
-  score_graham_agg: (s) => '格进取 ' + score(s.score_graham_agg),
   score_graham_def: (s) => '格防御 ' + score(s.score_graham_def),
   score_schloss: (s) => '施洛斯 ' + score(s.score_schloss),
-  score_buffett: (s) => '巴菲特 ' + score(s.score_buffett),
 }
 const sortValChip = (s) => (SORT_VAL_FMT[sort.value] ? SORT_VAL_FMT[sort.value](s) : null)
 const cls = (n) => n > 0 ? 'up' : n < 0 ? 'down' : 'flat'
@@ -833,7 +813,7 @@ function toggleSort() {
 
 // 排序 chip 的键直接从 COLS 派生，与桌面表头可排序列一一对应，后端 sort= 白名单不会失配。
 // 保守/公允卖价不进面板，靠卡片里点卖价小字触发（同桌面表格格内小字）。
-// 按性价比排的两组（四派买价、清算价值）在名字上就标出来，免得看着像按绝对值排
+// 按性价比排的（两派买价）在名字上就标出来，免得看着像按绝对值排
 const SORT_CHIPS = COLS.filter((c) => c.key)
   .map((c) => [c.key, c.ref ? c.label.split(' ')[0] + '折价' : c.ratio ? c.label + '性价比' : c.label])
 const SORT_NAME = Object.fromEntries(SORT_CHIPS)
@@ -1004,8 +984,6 @@ const REF_COLS = COLS.filter((c) => c.ref)
       <label class="cb" title="毛利率较 5 年前降幅 ≤3pp（回测转亏 lift 0.83）"><input type="checkbox"
         :checked="flt.bm.includes('pricing')"
         @change="toggleFlt(flt.bm, 'pricing', $event.target.checked); applyFlt()">定价权</label>
-      <label class="num" title="清算折价 ≤（%）：现价 ≤ 每股清算价值×80% 填 80。账面派的折价买入门槛（买点+打折只覆盖收益派的 EPS 锚）；现价或清算缺失的公司不进区间">清算折价≤
-        <input v-model="flt.liqDisc" type="number" min="0" placeholder="不限" @change="applyFlt">%</label>
       <label class="num" title="近 N 天有回购（公告日或完成日落窗内；无回购记录的公司不命中）">回购≤
         <input v-model="flt.buyDays" type="number" min="0" step="10" placeholder="天" @change="applyFlt">天</label>
       <label class="num" title="近 N 天有定增发行（发行日落窗内；发行日缺失取上市日的采集约定）">定增≤
@@ -1185,11 +1163,9 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td>{{ fmt(s.pe_ttm) }}</td>
             <td>{{ fmt(s.pb) }}</td>
             <td>{{ yi(s.market_cap) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
-            <!-- 主观评价分 11 格：悬停给逐项代入式浮层（scoreHover），原生 title 让位给浮层 -->
-            <td class="gedge calc" @mouseenter="scoreHover($event, s, 'score_graham_agg')" @mouseleave="hideScoreTip">{{ score(s.score_graham_agg) }}</td>
-            <td class="calc" @mouseenter="scoreHover($event, s, 'score_graham_def')" @mouseleave="hideScoreTip">{{ score(s.score_graham_def) }}</td>
+            <!-- 主观评价分 9 格：悬停给逐项代入式浮层（scoreHover），原生 title 让位给浮层 -->
+            <td class="gedge calc" @mouseenter="scoreHover($event, s, 'score_graham_def')" @mouseleave="hideScoreTip">{{ score(s.score_graham_def) }}</td>
             <td class="calc" @mouseenter="scoreHover($event, s, 'score_schloss')" @mouseleave="hideScoreTip">{{ score(s.score_schloss) }}</td>
-            <td class="calc" @mouseenter="scoreHover($event, s, 'score_buffett')" @mouseleave="hideScoreTip">{{ score(s.score_buffett) }}</td>
             <td class="gedge calc" @mouseenter="scoreHover($event, s, 'fraud')" @mouseleave="hideScoreTip">{{ score(dispScore(s, 'fraud')) }}</td>
             <td class="calc" @mouseenter="scoreHover($event, s, 'mgmt')" @mouseleave="hideScoreTip">{{ score(dispScore(s, 'mgmt')) }}</td>
             <td class="calc" @mouseenter="scoreHover($event, s, 'cycle')" @mouseleave="hideScoreTip">{{ score(s.cycle) }}</td>
@@ -1197,8 +1173,6 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td class="calc" :class="'sc-' + vGrade(s)" @mouseenter="scoreHover($event, s, 'value')" @mouseleave="hideScoreTip">{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></td>
             <td class="calc" :class="'sc-' + gGrade(s)" @mouseenter="scoreHover($event, s, 'growth')" @mouseleave="hideScoreTip">{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></td>
             <td class="calc" :class="'sc-' + rGrade(s)" @mouseenter="scoreHover($event, s, 'recommend')" @mouseleave="hideScoreTip">{{ score(s.recommend) }}</td>
-            <td class="c-liq gedge" :class="{ 'r-hit': s.fair_liq != null && s.price != null && s.price <= s.fair_liq }"
-                :title="liqTitle(s)">{{ fmt(s.fair_liq) }}<i v-if="sort === 'fair_liq' && liqSpace(s) != null" class="rf-sp">{{ refSpaceText(liqSpace(s)) }}</i></td>
             <td :title="WCASH_TIP">{{ yi(s.weighted_cash) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :title="IDEBT_TIP">{{ yi(s.int_debt) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :title="NCW_TIP">{{ yi(s.net_cash_w) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
@@ -1456,8 +1430,6 @@ table.grid-list th, table.grid-list td { padding: 6px 6px; }
 .grid-list .name-cell .nm-row b { font-size: 13px; }
 .grid-list .name-cell .cd { font-size: 11px; color: var(--sub); font-variant-numeric: tabular-nums; }
 .grid-list .name-cell .nm-sub { display: flex; align-items: center; gap: 6px; margin-top: 1px; font-size: 11px; color: var(--sub); }
-/* 清算列按性价比排序时数字后面还跟着折价小标签，不约束会折成两行把整行撑高 */
-table.grid-list .c-liq { white-space: nowrap; }
 /* 行业名最长 20 字（“铁路、船舶、航空航天和其他运输设备制造业”），不约束会单列吃掉 260px；截断后完整名走 title */
 table.grid-list .ind {
   display: inline-block;
@@ -1545,7 +1517,7 @@ table.grid-list .ind {
 .sc-ref .r-buy, .sc-ref .r-sell { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 题头行带折价标签时同样绝不折行——折成两行会把该列撑高、与邻列的买/保/公错位 */
 .sc-ref em { white-space: nowrap; overflow: hidden; }
-/* 折价标签 .rf-sp 只在按性价比排的那几列渲染（四派「买」见 buySortSchool、清算见 sort 判断），
+/* 折价标签 .rf-sp 只在按性价比排的那几列渲染（两派「买」见 buySortSchool），
    全列同时摊开会破坏表宽。卡片放题头行（价格行只有 ≈68px 内容区，接在买价后面会被省略号吃掉），表格放数字后面 */
 .rf-sp { font-style: normal; font-size: 9px; opacity: 0.78; margin-left: 2px; }
 /* 卖价小字是可点的排序入口：桌面靠下划线提示，触屏没有 hover，改按压反馈 + 加高点击区 */

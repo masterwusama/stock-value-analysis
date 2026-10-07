@@ -827,16 +827,12 @@
 
 /* ---- M2/M3 移动端（≤600px）：评分表得分列右 sticky + 读法折叠 + 触控目标 ---- */
 @media (max-width: 600px) {
-  /* 得分列右 sticky：仅「以得分为末列」的卡（四派/造假/管理）；V/G/R/T 的末列是
+  /* 得分列右 sticky：仅「以得分为末列」的卡（两派/造假/管理）；V/G/R/T 的末列是
      口径/说明文本，钉住反而挡视线，故不套。 -6px 阴影提示右侧还有列可滚 */
-  #stock-score-graham-agg .stock-compare td:last-child,
-  #stock-score-graham-agg .stock-compare th:last-child,
   #stock-score-graham-def .stock-compare td:last-child,
   #stock-score-graham-def .stock-compare th:last-child,
   #stock-score-schloss .stock-compare td:last-child,
   #stock-score-schloss .stock-compare th:last-child,
-  #stock-score-buffett .stock-compare td:last-child,
-  #stock-score-buffett .stock-compare th:last-child,
   #stock-score-fraud .stock-compare td:last-child,
   #stock-score-fraud .stock-compare th:last-child,
   #stock-score-mgmt .stock-compare td:last-child,
@@ -846,10 +842,8 @@
     background: #fff;
     box-shadow: -6px 0 6px -6px rgba(0, 0, 0, .3);
   }
-  #stock-score-graham-agg .stock-compare thead th:last-child,
   #stock-score-graham-def .stock-compare thead th:last-child,
   #stock-score-schloss .stock-compare thead th:last-child,
-  #stock-score-buffett .stock-compare thead th:last-child,
   #stock-score-fraud .stock-compare thead th:last-child,
   #stock-score-mgmt .stock-compare thead th:last-child { background: #f7f8fa; }
 
