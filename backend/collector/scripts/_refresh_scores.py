@@ -43,7 +43,7 @@ from actions_lookup import seo_actions  # noqa: E402  查本地定增快照，�
 DATA = HERE.parent / "data"
 INDEX_PATH = DATA / "index.json"
 LOCK_PATH = DATA / ".fetch.lock"
-KEYS = ("grahamAgg", "grahamDef", "schloss", "buffett")
+KEYS = ("grahamDef", "schloss")   # 格攻/巴菲特 2026-10-06 移除,不再回写 index
 
 
 def main():
