@@ -141,7 +141,7 @@ def holder_pick(row: dict, htype: str):
 
 
 def school_cols(school: str):
-    """index.json 流派键 → score_daily 列名前缀。"""
+    """index.json 流派键 → score_daily 列名前缀。（格攻/巴菲特 2026-10-06 移除）"""
     return {"grahamAgg": "graham_agg", "grahamDef": "graham_def"}.get(school, school)
 
 
@@ -320,10 +320,8 @@ def build_score_rows(index, trade_date, db):
             # 那轮 5095/6939 行如此），报告龄与「这批分用的哪一期财报」双双无法回答。
             "report_date": (parse_date(sc.get("reportDate")) or parse_date(calc.get("report"))
                             or trade_date),
-            "score_graham_agg": sc.get("grahamAgg"),
             "score_graham_def": sc.get("grahamDef"),
             "score_schloss": sc.get("schloss"),
-            "score_buffett": sc.get("buffett"),
             "fraud": sc.get("fraud"),
             "mgmt": sc.get("mgmt"),
             "cycle": sc.get("cycle"),
@@ -345,7 +343,6 @@ def build_score_rows(index, trade_date, db):
             # 空串归一成 NULL：无旗就是无旗，别让 '' 和 NULL 两种「无」并存
             "st_flags": (sc.get("stFlags") or None),
             "interim_dip": sc.get("interimDip"),
-            "fair_liq": refs.get("fairLiq"),
             "w_cash": refs.get("wCash"),
             "int_debt": refs.get("intDebt"),
             "net_cash_w": refs.get("netCashW"),
@@ -354,7 +351,8 @@ def build_score_rows(index, trade_date, db):
             "net_cash_calc": calc or None,
             "updated_at": parse_dt(index["updated_at"]),
         }
-        for school in ("grahamAgg", "grahamDef", "schloss", "buffett"):
+        # 两派（格攻/巴菲特 2026-10-06 移除,列已 DROP）
+        for school in ("grahamDef", "schloss"):
             col = school_cols(school)
             r = refs.get(school) or {}
             row[f"buy_{col}"] = r.get("buy")

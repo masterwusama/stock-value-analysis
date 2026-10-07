@@ -285,7 +285,7 @@ def value_analysis(d, now=None):
 
     # ---- 成长性 ----
     # 基期必须真是 5 年前：早先直接取 annual[0]，窗口等于数据有多深就多深（实测 6911 家里
-    # 97.2% 跨度≠5 年，7 年 4051 家、19 年 176 家），却按「5 年 CAGR」喂给 _fair_pe 与
+    # 97.2% 跨度≠5 年，7 年 4051 家、19 年 176 家），却按「5 年 CAGR」口径标定（原喂巴菲特合理 PE,该派已移除）与
     # 巴菲特净利成长项（阈值 10% 是按 5 年标定的）。取不晚于 last_year-5 的最近年报作基期，
     # 历史不足 5 年时退回最早年报（与 management_analysis 的营收 CAGR 同口径）。
     net_cagr5 = None
@@ -386,29 +386,13 @@ def value_scores(d, va):
     int_debt = ssum([st_debt, due1y, lt_debt, bond, lease])
     if int_debt is None:
         int_debt = 0.0
-    # 格攻净现金（2026-09 口径升级）：分子改加权类现金——交易性金融资产×1.0、应收票据×0.4、
-    # 其他流动资产非存款×0.3、附注闭合才采信的定期存款×1.0、受限货币资金剔除——分母仍是
-    # 有息负债，即格雷厄姆 net-cash 原文的「现金＋有价证券−有息债」。旧口径分子只认货币资金
-    # 一行，把存款/理财重的公司判成负净现金（603599 广信股份：账上近 80 亿类现金、窄口径
-    # −1.5 亿）。报表行随批次 1 取最新一期，季报行整行缺/货币资金缺回退年报行。
-    _ba_day = str((latest_ba or {}).get('报告日') or '')[:10] or last_date
-    _nf = _note_latest(d.get('notes'), _ba_day)
-    w_cash_a = _weighted_cash(latest_ba, _nf[1] if _nf else None)
-    if w_cash_a is None:
-        _nf_a = _note_latest(d.get('notes'), last_date)
-        w_cash_a = _weighted_cash(last_ba, _nf_a[1] if _nf_a else None)
-    net_cash = (w_cash_a - int_debt) if w_cash_a is not None else None
-    ncav = ca - tl if (ca is not None and tl is not None) else None
     wc = ca - cl if (ca is not None and cl is not None) else None
     ltd = ssum([due1y, lt_debt, bond, lease])
     if ltd is None:
         ltd = 0.0
     cur_ratio = ca / cl if (ca is not None and cl is not None and cl > 0) else None
     liq_ratio = ca / tl if (ca is not None and tl is not None and tl > 0) else None
-    pncav = mcap / ncav if (mcap is not None and ncav is not None and ncav > 0) else None
-    pnetcash = mcap / net_cash if (mcap is not None and net_cash is not None and net_cash > 0) else None
     pepb = pe * pb if (pe is not None and pb is not None) else None
-    intang_share = intang / assets if (intang is not None and assets is not None and assets > 0) else None
 
     # 近5年年报净利润（盈利稳定性）与近5年净利累计增长
     # pos_n 只数有数的行；有效行不足 5 时整项判不动（None → _school_total 中性）：
@@ -433,44 +417,10 @@ def value_scores(d, va):
         if bv is not None and bv > 0:
             grow5 = net_profit / bv - 1.0
 
-    # ---- ROE 近 5 年年报序列：水平取中位数，持续性取「达标（≥10%）年数占比」----
-    # 不用均值：披露口径的 ROE 在薄权益/负权益处会炸到 ±几千个百分点（实测 155 家有单年 >100%，
-    # 美股 90 家最集中），均值与中位数在这份数据上的相关系数只有 0.2486，6912 家里 402 家
-    # （5.8%）两种算法会跨过 15% 这条线，且错的方向随机：Home Depot 均值 −4357%（某年权益为负）
-    # 而中位 +385%，被误判 0 分；O'Reilly 均值 984% 而中位 −168%，白拿满分。中位数只取中间那一年，
-    # 炸群的一年进不了统计量。早先这两个 ROE 项（护城河 4 + 盈利质量 25）同用这一个均值，
-    # 实测相关 0.9801，等于 29/100 押在同一个数上——现拆成「水平」与「持续」两个量。
-    roe_vals = [v for v in va['dupontRoe'] if v is not None]
-    n_roe = len(roe_vals)
-    roe_med5 = None
-    roe_ok_frac = None
-    if n_roe:
-        sv = sorted(roe_vals)
-        mid = n_roe // 2
-        roe_med5 = sv[mid] if n_roe % 2 else (sv[mid - 1] + sv[mid]) / 2.0
-    # 不足 3 年无从谈「持续」，按缺失处理（_school_total 会把它当中性，不虚给也不白扣）
-    if n_roe >= 3:
-        roe_ok_frac = len([v for v in roe_vals if v >= 0.10]) / float(n_roe)
-
-    # ---- 格雷厄姆 · 进取型烟蒂 ----
-    g_a_items = (
-        # 价格/净流动资产（市值/NCAV）≤ 0.67×，30 分
-        None if ncav is None else (lerp_score(pncav, G_A_PNCAV_FULL, 1.5, 30, 0) if ncav > 0 else 0.0),
-        # 价格/净现金 ≤ 1×，20 分
-        None if net_cash is None else (lerp_score(pnetcash, 1, 2, 20, 0) if net_cash > 0 else 0.0),
-        # 流动资产/总负债 ≥ 2，20 分
-        lerp_score(liq_ratio, 1, 2, 0, 20),
-        # 最新年报净利润 > 0，15 分
-        15.0 if (ttm_np is not None and ttm_np > 0) else 0.0,
-        # 资产负债率 ≤ 60%，10 分
-        lerp_score(debtr, 0.6, 0.8, 10, 0),
-        # 连续分红 ≥ 3 年，5 分
-        (5.0 if div_consecutive >= 3 else (2.5 if div_consecutive >= 1 else 0.0)),
-    )
-    g_a_total = _school_total(g_a_items, (30, 20, 20, 15, 10, 5))
-
     # ---- 格雷厄姆 · 防御型烟蒂（规模硬门槛 + 负分惩罚）----
     # 门槛按人民币当量计：assets 是本币原值，港美股不折就会降档，见 FX_TO_CNY
+    # （2026-10-06 起产品口径收两派:格攻/巴菲特的分数与价格整体移除,依据见
+    #   docs/设计-四派买点信号回测.md v2 判决书——两线收益侧证据为负）
     def size_score(v):
         if v is None:
             return None
@@ -617,46 +567,19 @@ def value_scores(d, va):
     # 正分项归一 + 9 个扣分项原样相加：扣分项缺数据本就给 0，不参与归一（理由见 _school_total）
     s_total = _school_total(s_items, (25, 20, 20, 15, 10, 10), risk_items)
 
-    # ---- 巴菲特芒格 ----
-    moat_items = (
-        lerp_score(g_margin, 0.2, 0.4, 0, 5),          # 销售毛利率 ≥ 40%
-        # 近5年 ROE ≥ 10% 的达标年数占比：2/5 起给分，5/5 满分（护城河看的是持续，不是某一年）
-        lerp_score(roe_ok_frac, 0.4, 1.0, 0, 4),
-        # 只认无形资产、不含商誉：A 股 33,318 个「公司×年」实测（scripts/fraud_validity.py B 节），
-        # 商誉/总资产 ≥10% 那组其后出现大额减值（≥净资产5%）的比例 29.01% vs 其余 12.28%
-        # （lift 2.36、z=+20.7、四档单调），无形 ≥10% 那组 13.73% vs 13.22%（lift 1.04，分不开）。
-        # 商誉是减值前兆而非定价权证据，且它在施洛斯侧已按 /归母权益 扣分，同侧再给分是自我反号
-        lerp_score(intang_share, 0, 0.1, 0, 3),        # 无形资产占比 ≥ 10%
-        # 连续分红 ≥ 5 年且分红率 ≤ 70%
-        (3.0 if (va['payout'] is not None and va['payout'] <= 0.7) else 1.5)
-        if div_consecutive >= 5 else 0.0,
-    )
-    b_items = (
-        # ROE 水平档：与护城河那 4 分测的不是同一个量（一边是近5年中位数是否 ≥15%，
-        # 一边是达标年数占比），实测 corr(中位数, 达标占比) = 0.1012，不再是一个变量押 29 分
-        lerp_score(roe_med5, 0.10, 0.15, 0, 25),       # ROE 近5年中位数 ≥ 15%
-        lerp_score(n_margin, 0.05, 0.10, 0, 15),       # 净利率 ≥ 10%
-        lerp_score(debtr, 0.5, 0.75, 15, 0),           # 负债率 ≤ 50%
-        lerp_score(va['ratio5'], 0.5, 1, 0, 15),       # 5年净现比 ≥ 1
-        lerp_score(va['netCagr5'], 0, 0.1, 0, 15),     # 净利 5 年 CAGR ≥ 10%
-    )
-    # 缺得最多的是净现比（23.8%）与净利 5 年 CAGR（32.4%），各 15 分，早先一律白扣
-    b_total = _school_total(moat_items + b_items, (5, 4, 3, 3, 25, 15, 15, 15, 15))
-
     return {
-        'grahamAgg': g_a_total,
         'grahamDef': g_d_total,
         'schloss': s_total,
-        'buffett': b_total,
     }
 
 
 # ---- 价格参考（买入/保守卖出/公允卖出）----
-# 三档都锚定各流派自己的估值阈值，不做任何反推：
-#   买点   = 账面派（格攻/施洛斯）取资产折价线；收益派（格防/巴菲特）取保守卖价 × 2/3 安全边际
-#   保守卖 = 该派核心估值锚：格攻 每股净流动资产、格防 15×EPS、施洛斯 每股净资产、巴菲特 公允PE×EPS
-#   公允卖 = 保守卖上浮：格攻/施洛斯 1.5 倍（正是价格项归零点）、格防 4/3 倍（PE 20，半分位）、
-#            巴菲特 1.3 倍（无对应评分项）
+# 三档都锚定各流派自己的估值阈值，不做任何反推（2026-10-06 起产品口径收两派:
+# 格攻/巴菲特两线在 buy_validity v2 判决书里收益侧证据为负,分数与价格整体移除;
+# 历史判决表留在 docs/设计-四派买点信号回测.md）：
+#   买点   = 账面派（施洛斯）取资产折价线；收益派（格防）取保守卖价 × 2/3 安全边际
+#   保守卖 = 该派核心估值锚：施洛斯 每股净资产、格防 15×EPS
+#   公允卖 = 保守卖上浮：施洛斯 1.5 倍（正是价格项归零点）、格防 4/3 倍（PE 20，半分位）
 # 两条限制：
 #   ① 收益派的 EPS 锚先用四道可信度门槛过滤（符号、隐含 PE、量级背离、经常性口径），过不了
 #      就没有锚，三档一起空；
@@ -664,9 +587,8 @@ def value_scores(d, va):
 #      资产锚）内给出——资产锚是清算底，对 99% 的市场它不构成卖出参考。
 # 曾用「二分反推使总分 ≥ 90 的最高价」，实测 6939 家里 56%~96% 的公司分数上限本就不足
 # 90，tgt = min(90, t_max) 把目标悄悄降级成公司自己的上限，产出的买价与 90 分再无关系；
-# 且买价中位数只有现价的 8%（格攻）~40%（格防），即要跌 60%~92% 才触发，不是参考价。
-BUY_MARGIN = 2.0 / 3.0    # 收益派（格防/巴菲特）买点相对公允倍数的安全边际
-G_A_PNCAV_FULL = 0.67     # 格攻：市值/净流动资产 ≤ 0.67 拿满 30 分，亦是买点倍数
+# 且买价中位数只有现价的 8%~40%，即要跌 60%~92% 才触发，不是参考价。
+BUY_MARGIN = 2.0 / 3.0    # 收益派（格防）买点相对公允倍数的安全边际
 G_D_PE_FULL = 15.0        # 格防：市盈率 ≤ 15 拿满 5 分，亦是保守卖价倍数
 S_PB_FULL = 0.75          # 施洛斯：市净率 ≤ 0.75 拿满 25 分，亦是买点倍数
 # 低于一分钱的参考价一律视为「无」：没有任何市场按这个价位报价，而它当分母会把
@@ -699,17 +621,10 @@ RECURRING_MIN_RATIO = 0.5
 # 等于对几乎整个市场亮红灯。实测（6939 家，有锚家数 → 其中现价≥保守卖价的比例）：
 #   格攻   4435 → 245 家，命中率 99.2% → 84.9%
 #   施洛斯 6809 → 2337 家，命中率 90.6% → 72.7%
-# 收益派两派不套射程（现价高于 15×EPS 或公允 PE 是有意义的信号），命中率仍为 83% 左右——
+# 收益派不套射程（现价高于 15×EPS 是有意义的信号），命中率 83% 左右——
 # 市场确实长期站在格雷厄姆的 PE 15 线之上，这是口径本身的性质，不是缺陷。
 # 取 2 倍是为了让账面派的公允卖价（1.5× 锚，即评分里价格项的归零点）留在射程内。
 SELL_BAND = 2.0
-
-
-def _fair_pe(net_cagr5):
-    """巴菲特合理市盈率 = 净利5年CAGR×100，夹在 [8, 25]；无数据取 15"""
-    if net_cagr5 is None:
-        return 15.0
-    return max(8.0, min(25.0, net_cagr5 * 100.0))
 
 
 def _ttm_net_profit(rows, field='净利润'):
@@ -870,7 +785,7 @@ def _weighted_cash(ba_row, note=None):
 
     定期存款/受限货币资金来自财报附注（note 字典），闭合才采信；存款不超过「其他流动资产」
     科目值，受限的按 0 折。行缺或货币资金缺（银行/外资口径行）→ None；其余科目缺按 0 折入。
-    price_references（最新一期）与 value_scores 格攻净现金（年报行）共用这一条折算。
+    price_references（最新一期）净现金族共用这一条折算。
     """
     if not ba_row or ba_row.get('货币资金') is None:
         return None
@@ -895,23 +810,20 @@ def _weighted_cash(ba_row, note=None):
 
 
 def price_references(d, va):
-    """对应 JS priceReferences：公允清算价值 + 四大流派买入/保守卖出/公允卖出价格参考
-    fairLiq = 每股公允清算价值（流动资产合计-负债合计）/财报股本，格雷厄姆清算口径"""
+    """对应 JS priceReferences：净现金族 + 两派（施洛斯/格防）买入/保守卖出/公允卖出价格参考。
+    （格攻的 fairLiq 与巴菲特三档 2026-10-06 随产品口径收两派移除）"""
     s = d.get('snapshot') or {}
     price0, mcap0 = s.get('price'), s.get('market_cap')
     pe0, pb0 = s.get('pe_ttm'), s.get('pb')
     if price0 is None or price0 <= 0:
-        return {'fairLiq': None,
-                'netCashRatio': None,
+        return {'netCashRatio': None,
                 'wCash': None,
                 'intDebt': None,
                 'netCashW': None,
                 'netCashB': None,
                 'netCashCalc': None,
-                'grahamAgg': {'buy': None, 'sellCons': None, 'sellFair': None},
                 'grahamDef': {'buy': None, 'sellCons': None, 'sellFair': None},
-                'schloss': {'buy': None, 'sellCons': None, 'sellFair': None},
-                'buffett': {'buy': None, 'sellCons': None, 'sellFair': None}}
+                'schloss': {'buy': None, 'sellCons': None, 'sellFair': None}}
 
     # ---- 基础量 ----
     # 批次 1（2026-09）：清算口径的资产负债科目取最新一期（含季报），缺则回退评分基准
@@ -923,14 +835,6 @@ def price_references(d, va):
     ba_list = sorted(d.get('balance') or [], key=lambda r: str(r.get('报告日') or ''))
     last_ba = sheet_row_by_date(ba_list, last_date) if last_date else None
 
-    def g(key):
-        v = ba_list[-1].get(key) if ba_list else None
-        if v is None and last_ba is not None:
-            v = last_ba.get(key)
-        return v
-
-    ca, tl = g('流动资产合计'), g('负债合计')
-    ncav = (ca - tl) if (ca is not None and tl is not None) else None
     last_eq = equity_of(ba_list[-1]) if ba_list else None
     if last_eq is None:
         last_eq = equity_of(last_ba)
@@ -939,7 +843,6 @@ def price_references(d, va):
     bps = _latest_field(d.get('indicators') or [], '每股净资产')
     # 股本优先用财报实收资本（最新年报），快照 mcap/price 会随实时价抖动（快照舍入/滞后）
     shares = _share_count(d.get('balance') or [], mcap0 / price0 if mcap0 is not None else None, bps)
-    ncav_ps = ncav / shares if (ncav is not None and shares) else None
     if bps is None and last_eq is not None and shares:
         bps = last_eq / shares
     if bps is None:
@@ -1031,8 +934,6 @@ def price_references(d, va):
                       'restricted': rst_v,
                       'noteReport': note_day}
                      if has_core else None)
-    fair_pe = _fair_pe(va.get('netCagr5'))
-
     def ref(v):
         """低于一分钱（含负值与浮点零渣）的参考价一律视为无"""
         return v if (v is not None and v >= MIN_PRICE_REF) else None
@@ -1043,16 +944,13 @@ def price_references(d, va):
         现价无快照的情形已在函数开头整体返回空，这里不必再判"""
         return anchor if anchor is None or price0 <= SELL_BAND * anchor else None
 
-    ncav_ref = ref(ncav_ps)
     s_ref = ref(bps)
     # TTM 每股亏损（≤0）时基于 EPS 的估值锚无意义，锚位与买入价一并置空（避免负价/误导价）
     eps_ok = eps_ttm is not None and eps_ttm > 0
-    gA_cons = band(ncav_ref)
     gD_cons = ref(G_D_PE_FULL * eps_ttm) if eps_ok else None
     s_cons = band(s_ref)
-    b_cons = ref(fair_pe * eps_ttm) if eps_ok else None
 
-    # 公允卖价跟着保守卖价同生同灭：每派公允都是保守的 ≥1.3 倍，保守过了一分钱下限
+    # 公允卖价跟着保守卖价同生同灭：公允是保守的 ≥1.3 倍，保守过了一分钱下限
     # 公允必然也过；但若各自独立套下限，会在保守差一点、公允刚过点时只留半档，
     # 而卖点筛选要求「同时 ≥ 保守与公允」，半档等于把这家公司永久排除。
     # 买点不挂卖点：锚为空才没有买点；资产派「出射程」只抹掉两档卖价，买点作为目标价照旧给出。
@@ -1062,18 +960,12 @@ def price_references(d, va):
     # 本币亿；比值口径保留在筛选 net_cash_ratio 与详情页 ①）
     int_debt_latest = _int_debt(latest_ba)
     return {
-        'fairLiq': ncav_ref,
         'netCashRatio': net_cash_ratio,
         'wCash': weighted_cash,
         'intDebt': int_debt_latest,
         'netCashW': (weighted_cash - int_debt_latest) if weighted_cash is not None else None,
         'netCashB': (weighted_cash - tl_latest) if (weighted_cash is not None and tl_latest is not None) else None,
         'netCashCalc': net_cash_calc,
-        'grahamAgg': {
-            'buy': ref(G_A_PNCAV_FULL * ncav_ref) if ncav_ref is not None else None,
-            'sellCons': gA_cons,
-            'sellFair': (1.5 * gA_cons) if gA_cons is not None else None,
-        },
         'grahamDef': {
             'buy': ref(BUY_MARGIN * gD_cons) if gD_cons is not None else None,
             'sellCons': gD_cons,
@@ -1083,11 +975,6 @@ def price_references(d, va):
             'buy': ref(S_PB_FULL * s_ref) if s_ref is not None else None,
             'sellCons': s_cons,
             'sellFair': (1.5 * s_cons) if s_cons is not None else None,
-        },
-        'buffett': {
-            'buy': ref(BUY_MARGIN * b_cons) if b_cons is not None else None,
-            'sellCons': b_cons,
-            'sellFair': (fair_pe * eps_ttm * 1.3) if b_cons is not None else None,
         },
     }
 

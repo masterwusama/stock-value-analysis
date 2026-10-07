@@ -176,9 +176,11 @@ class FinNote(Base):
 
 
 class ScoreDaily(Base):
-    """每日评分快照:四流派分/造假/管理/周期 + 价格参考 + Wind 事件增量。
+    """每日评分快照:两派分(施洛斯/格防)/造假/管理/周期 + 价格参考 + Wind 事件增量。
 
     列表页的全部筛选与排序均在本表 + quote_daily 上 SQL 完成。
+    （格攻/巴菲特两派 2026-10-06 整体移除——buy_validity v2 判决两线收益侧证据为负；
+    列已从表上 DROP,历史口径见 docs/设计-四派买点信号回测.md）
     """
 
     __tablename__ = "score_daily"
@@ -186,10 +188,8 @@ class ScoreDaily(Base):
     sid: Mapped[int] = mapped_column(primary_key=True)
     trade_date: Mapped[date] = mapped_column(primary_key=True)
     report_date: Mapped[date] = mapped_column(nullable=False)
-    score_graham_agg: Mapped[float | None] = mapped_column(Double)
     score_graham_def: Mapped[float | None] = mapped_column(Double)
     score_schloss: Mapped[float | None] = mapped_column(Double)
-    score_buffett: Mapped[float | None] = mapped_column(Double)
     fraud: Mapped[float | None] = mapped_column(Double)
     mgmt: Mapped[float | None] = mapped_column(Double)
     cycle: Mapped[float | None] = mapped_column(Double)
@@ -223,7 +223,6 @@ class ScoreDaily(Base):
     # （阈值来历 scripts/dip_validity.py：转亏 lift 7.8×、年报复证 lift 3.3×）。
     # NULL = 最新一期已是年报 / 双期数据缺一，不是「没恶化」。
     interim_dip: Mapped[float | None] = mapped_column(Double)
-    fair_liq: Mapped[float | None] = mapped_column(Double)
     # 净现金三件套（本币，最新一期财报）：加权类现金、有息负债、净现金=加权−有息。
     # 与 net_cash_ratio（减全部负债的宽口径比值）并存：本组回答「活钱够不够还有息债」，
     # 那一列回答「净资产缓冲」。列表三列与排序用；口径差见说明书 §2.1。
@@ -247,18 +246,12 @@ class ScoreDaily(Base):
     st_flags: Mapped[str | None] = mapped_column(String(64))
     net_cash_ratio: Mapped[float | None] = mapped_column(Double)
     net_cash_calc: Mapped[dict | None] = mapped_column(JSON)
-    buy_graham_agg: Mapped[float | None] = mapped_column(Double)
-    sell_cons_graham_agg: Mapped[float | None] = mapped_column(Double)
-    sell_fair_graham_agg: Mapped[float | None] = mapped_column(Double)
     buy_graham_def: Mapped[float | None] = mapped_column(Double)
     sell_cons_graham_def: Mapped[float | None] = mapped_column(Double)
     sell_fair_graham_def: Mapped[float | None] = mapped_column(Double)
     buy_schloss: Mapped[float | None] = mapped_column(Double)
     sell_cons_schloss: Mapped[float | None] = mapped_column(Double)
     sell_fair_schloss: Mapped[float | None] = mapped_column(Double)
-    buy_buffett: Mapped[float | None] = mapped_column(Double)
-    sell_cons_buffett: Mapped[float | None] = mapped_column(Double)
-    sell_fair_buffett: Mapped[float | None] = mapped_column(Double)
     wind_fraud_delta: Mapped[float | None] = mapped_column(Double)
     wind_mgmt_delta: Mapped[float | None] = mapped_column(Double)
     wind_flags: Mapped[list | None] = mapped_column(JSON)
@@ -279,10 +272,8 @@ class ScoreDaily(Base):
         Index("idx_list_trap", "trade_date", "trap"),
         Index("idx_list_growth", "trade_date", "growth"),
         Index("idx_list_value", "trade_date", "value"),
-        Index("idx_list_graham_agg", "trade_date", "score_graham_agg"),
         Index("idx_list_graham_def", "trade_date", "score_graham_def"),
         Index("idx_list_schloss", "trade_date", "score_schloss"),
-        Index("idx_list_buffett", "trade_date", "score_buffett"),
     )
 
 
