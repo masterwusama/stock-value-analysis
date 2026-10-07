@@ -144,13 +144,12 @@ def check_company(code):
     # 评分快照 vs index.json
     sc_src = idx_entry(code)["scores"]
     sc = api["scores"]
-    for k in ("grahamAgg", "grahamDef", "schloss", "buffett", "fraud", "mgmt", "cycle"):
+    for k in ("grahamDef", "schloss", "fraud", "mgmt", "cycle"):
         assert sc[k] == sc_src[k], f"score {k}: {sc[k]} != {sc_src[k]}"
-    for school in ("grahamAgg", "grahamDef", "schloss", "buffett"):
+    for school in ("grahamDef", "schloss"):
         for kk in ("buy", "sellCons", "sellFair"):
             a, b = sc["priceRefs"][school][kk], sc_src["priceRefs"][school][kk]
             assert a == b, f"priceRefs {school}.{kk}: {a} != {b}"
-    assert sc["priceRefs"]["fairLiq"] == sc_src["priceRefs"]["fairLiq"]
 
     # Wind 事件/股东分组条数(有事件文件的公司才检)
     ev_path = DATA / "events" / f"{code}.json"

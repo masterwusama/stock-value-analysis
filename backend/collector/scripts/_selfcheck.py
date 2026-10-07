@@ -87,31 +87,20 @@ for c in idx['companies']:
     cc = cfg.get(c['code'])
     if cc is not None:
         check(c.get('name') == cc[1], f'{c["code"]} 名称与自选清单不一致: idx={c.get("name")} cfg={cc[1]}')
-    # 分数范围（防御型/施洛斯按设计含负分惩罚项，下限不是 0）
+    # 分数范围（防御型/施洛斯按设计含负分惩罚项，下限不是 0；格攻/巴菲特 2026-10-06 移除）
     s = c.get('scores') or {}
-    for k, lo in (('grahamAgg', 0), ('grahamDef', -30), ('schloss', -37), ('buffett', 0)):
+    for k, lo in (('grahamDef', -30), ('schloss', -37)):
         v = s.get(k)
         check(v is None or lo - 1e-9 <= v <= 100 + 1e-9, f'{c["code"]} {k} 超范围: {v}')
 
 # ---------- 2) priceRefs 内部一致性 ----------
-n_fairliq = 0
 n_netcash = 0
 for c in idx['companies']:
     pr = (c.get('scores') or {}).get('priceRefs') or {}
-    fa = pr.get('fairLiq')
 
     def close(a, b, tol=1e-6):
         return a is not None and b is not None and abs(a - b) <= max(tol, abs(b) * tol)
 
-    if fa is not None:
-        n_fairliq += 1
-        ga = pr.get('grahamAgg') or {}
-        # 出射程时格攻两档卖价为空，清算价值本身与现价无关、始终给出（见 scoring.py SELL_BAND）
-        cons_ga = ga.get('sellCons')
-        check(cons_ga is None or close(fa, cons_ga),
-              f'{c["code"]} fairLiq({fa}) 与 grahamAgg.sellCons({cons_ga}) 不符')
-        check(cons_ga is None or close(ga.get('sellFair'), 1.5 * cons_ga),
-              f'{c["code"]} grahamAgg.sellFair != 1.5×sellCons')
     # 净现金/市值：字段存在且是有限数（重负债基建可为深度负值，不设量级硬边界）
     ncr = pr.get('netCashRatio')
     check(ncr is None or (isinstance(ncr, (int, float)) and math.isfinite(ncr)),
@@ -147,17 +136,15 @@ for c in idx['companies']:
             # ncr 与 calc 同出自一次打分,严格容差就该过;红即真不同步。
             check(abs(recalc - ncr) <= max(1e-6, abs(ncr) * 1e-6),
                   f'{c["code"]} netCashCalc 反算({recalc}) != netCashRatio({ncr})')
-    # 四派三档都是保守卖价的固定倍数（scoring.py 的锚常量），买点为空只允许是
+    # 两派三档都是保守卖价的固定倍数（scoring.py 的锚常量），买点为空只允许是
     # 「倍数×保守卖价 跌破一分钱下限」这一种原因，否则说明 ref/锚另有问题
-    for tag, (bm, fm) in (('grahamAgg', (0.67, 1.5)),
-                          ('grahamDef', (2.0 / 3.0, 4.0 / 3.0)),
-                          ('schloss', (0.75, 1.5)),
-                          ('buffett', (2.0 / 3.0, 1.3))):
+    for tag, (bm, fm) in (('grahamDef', (2.0 / 3.0, 4.0 / 3.0)),
+                          ('schloss', (0.75, 1.5))):
         r = pr.get(tag) or {}
         buy, cons, fair = r.get('buy'), r.get('sellCons'), r.get('sellFair')
         if cons is None:
             # 收益派没有锚就是没有锚，三档一起空；账面派出射程只空卖价，买点是目标价、与现价无关
-            check(buy is None or tag in ('grahamAgg', 'schloss'),
+            check(buy is None or tag in ('schloss',),
                   f'{c["code"]} {tag} 保守卖价为空却仍给了买点({buy})')
             continue
         check(close(fair, fm * cons),
@@ -167,7 +154,7 @@ for c in idx['companies']:
         # 买点必须严格低于保守卖点：同价意味着「买入区」与「卖出区」在同一点相遇，无参考价值
         check(buy is None or buy < cons, f'{c["code"]} {tag}.buy({buy}) >= sellCons({cons})')
     # 一分钱下限：低于它的参考价没有任何市场能成交，留着还会把「折价率 1-现价/买价」吹成天文数字
-    for tag in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
+    for tag in ('grahamDef', 'schloss'):
         r = pr.get(tag) or {}
         for k in ('buy', 'sellCons', 'sellFair'):
             v = r.get(k)
@@ -198,7 +185,7 @@ for c in idx['companies']:
         if not ok:
             mismatch.append(f'{c["code"]}.{path}: stored={b} recompute={a}')
 
-    for k in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
+    for k in ('grahamDef', 'schloss'):
         cmp_val(k, py.get(k), stored.get(k))
     pstored = stored.get('priceRefs') or {}
     for k, sub in (py.get('priceRefs') or {}).items():
@@ -239,7 +226,7 @@ for code in ('600741', '600585', '601163', '000726', '601717'):
         fails.append(f'{code} 报告期格式异常: {ind_latest}/{inc_latest}')
 
 print()
-print(f'== 汇总 == 公司数 {len(companies)} | fairLiq 有值 {n_fairliq} 家 | 净现金/市值有值 {n_netcash} 家 | 失败 {len(fails)} 项 | 瞬态 warn {len(warns)} 项')
+print(f'== 汇总 == 公司数 {len(companies)} | 净现金/市值有值 {n_netcash} 家 | 失败 {len(fails)} 项 | 瞬态 warn {len(warns)} 项')
 # 全市场语料下失败可达数千条，逐条打印没有诊断价值：按“去掉代码、数字归一”的同类聚合
 groups = {}
 for x in fails:

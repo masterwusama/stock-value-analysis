@@ -246,8 +246,8 @@ check(va_m['ratioYears'] == 4 and close(va_m['ratio5'], 1.0),
 # 空输入不等于四派都算不出：盈利稳定性、连续分红这类项仍能确定地给 0 分或负分（0/5 年为正
 # → −5），归一后照样出分。这里要守的是「不抛异常、不出 NaN、落在各派设计区间内」，
 # 上下限与 _selfcheck.py 一致。
-RANGE = (('grahamAgg', 0.0, 100.0), ('grahamDef', -30.0, 100.0),
-         ('schloss', -37.0, 100.0), ('buffett', 0.0, 100.0))
+RANGE = (('grahamDef', -30.0, 100.0), ('schloss', -37.0, 100.0))
+# （格攻/巴菲特 2026-10-06 移除,其值域探针随派退役;两线收益侧负证据见 buy_validity v2 判决书）
 EXTREME = {
     'empty': company(ind=[], ba=[], cf=[], snap={}),
     'neg_equity': company(ba=[ba_row(eq=-1e9, 商誉=7e9)]),
@@ -418,7 +418,7 @@ check(b_snap_nocap['evaluated'] == 7 and b_snap_nocap['total'] is not None,
 _d_ref, _d_bq = bq_case(None), bq_case({'market_cap': 1e11})
 _va_ref, _va_bq = value_analysis(_d_ref), value_analysis(_d_bq)
 check(value_scores(_d_ref, _va_ref) == value_scores(_d_bq, _va_bq),
-      "批次行情动了四派总分或价格锚（清算/净现金）")
+      "批次行情动了两派总分或净现金锚")
 check(price_references(_d_ref, _va_ref) == price_references(_d_bq, _va_bq),
       "批次行情动了 12 个买卖参考价")
 check(growth_score(_d_ref) == growth_score(_d_bq) and trap_score(_d_ref) == trap_score(_d_bq),
@@ -429,63 +429,50 @@ check(_kept(compute_scores(_d_ref)) == _kept(compute_scores(_d_bq)),
       f"compute_scores 全字段里除 value/valueEval/recommend 外出现了差异："
       f"{[k for k in _kept(compute_scores(_d_ref)) if _kept(compute_scores(_d_ref))[k] != _kept(compute_scores(_d_bq))[k]]}")
 
-# ==================== 6c) 格攻净现金：分子=加权类现金−有息负债（2026-09 口径升级） ====================
-# 旧分子只认货币资金一行，把存款/理财重的公司判成负净现金（603599 实例）。探针只认
-# 「加一项类现金资产恰好把该项从 0 翻到满 20」这一件事——默认 fixture mcap=1e9，
-# 翻正后 pnetcash≪1，故差值必须恰为 20。
+# ==================== 6c) 净现金加权分子（2026-09 口径升级；原锚格攻分项,收两派后改锚净现金列） ====================
+# 旧分子只认货币资金一行，把存款/理财重的公司判成负净现金（603599 实例）。探针锚
+# priceReferences.netCashW（加权类现金−有息负债，列表「净现金」列的数据面）：
+# 加一项类现金资产，净现金金额应按其折算权重精确上移。
+def ncw(**kw):
+    d = company(**kw)
+    return price_references(d, value_analysis(d))['netCashW']
+
 _nc_base = {'货币资金': 100e8, '短期借款': 120e8}
-g_nc0 = probe('nc_old0', company(ba=[ba_row(**_nc_base)], **V_BASE))['grahamAgg']
-g_nc_fin = probe('nc_fin', company(
-    ba=[ba_row(交易性金融资产=60e8, 其他流动资产=30e8, **_nc_base)], **V_BASE))['grahamAgg']
-check(abs(g_nc_fin - g_nc0 - 20) < 1e-9,
-      f"交易性金融资产 60 亿＋其他流动 30 亿应把格攻净现金项从 0 翻到满 20：{g_nc0} → {g_nc_fin}")
-g_nc_nonote = probe('nc_nonote', company(
-    ba=[ba_row(货币资金=40e8, 短期借款=120e8, 其他流动资产=100e8)], **V_BASE))['grahamAgg']
-g_nc_dep = probe('nc_dep', company(
-    ba=[ba_row(货币资金=40e8, 短期借款=120e8, 其他流动资产=100e8)],
-    notes={LAST: {'termDeposit': 90e8}}, **V_BASE))['grahamAgg']
-check(abs(g_nc_dep - g_nc_nonote - 20) < 1e-9,
-      f"附注定期存款 90 亿（自其他流动拆出）应把该项再从 0 翻到满 20：{g_nc_nonote} → {g_nc_dep}")
+g_nc0 = ncw(ba=[ba_row(**_nc_base)], **V_BASE)
+g_nc_fin = ncw(ba=[ba_row(交易性金融资产=60e8, 其他流动资产=30e8, **_nc_base)], **V_BASE)
+check(abs(g_nc_fin - g_nc0 - 69e8) < 1e-3,
+      f"交易性金融资产 60 亿（×1.0）＋其他流动 30 亿（×0.3）应让净现金 +69 亿：{g_nc0} → {g_nc_fin}")
+g_nc_nonote = ncw(ba=[ba_row(货币资金=40e8, 短期借款=120e8, 其他流动资产=100e8)], **V_BASE)
+g_nc_dep = ncw(ba=[ba_row(货币资金=40e8, 短期借款=120e8, 其他流动资产=100e8)],
+               notes={LAST: {'termDeposit': 90e8}}, **V_BASE)
+check(abs(g_nc_dep - g_nc_nonote - 63e8) < 1e-3,
+      f"附注定期存款 90 亿自其他流动拆出（+90 存款 −27 剩余×0.3 折损）应让净现金 +63 亿："
+      f"{g_nc_nonote} → {g_nc_dep}")
 
-# ==================== 6d) 批次 1/2：时点类吃最新季报 + 盈利判定 TTM ====================
-# A) 资产负债表科目取最新一期：同一张年报行之上叠一张季报行，流动资产 4e10→2.5e10
-#    （仍 > 负债合计 2e10，NCAV 项不动），liq_ratio 2.0→1.25 → 格攻该项 20→5，总差恰为 −15。
-g_bal_annual = probe('bal_annual', company(ba=[ba_row()], **V_BASE))['grahamAgg']
-g_bal_interim = probe('bal_interim', company(
-    ba=[ba_row(), ba_row(day='2025-06-30', ca=2.5e10)], **V_BASE))['grahamAgg']
-check(abs(g_bal_interim - g_bal_annual + 15) < 1e-9,
-      f"季报行流动资产 4e10→2.5e10 应让格攻恰降 15 分（liq_ratio 2.0→1.25）：{g_bal_annual} → {g_bal_interim}")
+# ==================== 6d) 批次 1：时点类吃最新季报（原锚格攻分项,收两派后改锚净现金列） ====================
+# 资产负债表科目取最新一期：年报行之上叠一张「货币资金 40 亿」的季报行，净现金
+# 分子应从年报的 10 亿切到季报的 40 亿（无有息负债,netCashW=加权类现金）。
+# （原 B) TTM 转负探针随格攻盈利项退役——该行为只剩格攻分在消费。）
+g_bal_annual = ncw(ba=[ba_row()], **V_BASE)
+g_bal_interim = ncw(ba=[ba_row(), ba_row(day='2025-06-30', 货币资金=40e8)], **V_BASE)
+check(abs(g_bal_interim - g_bal_annual - 30e8) < 1e-3,
+      f"季报行货币资金 40 亿应让净现金从 10 亿切到 40 亿：{g_bal_annual} → {g_bal_interim}")
 
-# B) 盈利状态按 TTM：年报净利 +10 亿，但 2025H1 累计 −8 亿（上年同期 +5 亿）
-#    → TTM = −8 + 10 − 5 = −3 亿 < 0，格攻盈利项 15 → 0，总差恰为 −15。
-#    （indicators 无季报行时 TTM 回退年报，探针 bal_* 系列顺带钉住该回退。）
-ind_ttm = [ind_row('2024-06-30', net=5e8)] + \
-          [ind_row(f'{y}-12-31') for y in YEARS] + \
-          [ind_row('2025-06-30', net=-8e8)]
-g_ttm_base = probe('ttm_base', company(**V_BASE))['grahamAgg']
-g_ttm_flip = probe('ttm_flip', company(
-    **{k: v for k, v in V_BASE.items() if k != 'ind'}, ind=ind_ttm))['grahamAgg']
-check(abs(g_ttm_flip - g_ttm_base + 15) < 1e-9,
-      f"TTM 净利转负（年报为正）应让格攻盈利项恰降 15 分：{g_ttm_base} → {g_ttm_flip}")
+# ==================== 6e) 有息负债市场别名（原锚格攻分项,收两派后改锚 intDebt 列） ====================
+# 美股拆分键别名：叠一张只有「长期负债(本期部分) 9e9 ＋ 资本租赁债务(非流动) 5e9」的
+# 季报行——别名不生效则有息负债 0；生效则 14e9。
+# （原 B) 负债率现算探针随格攻/巴菲特的负债率分项退役。）
+def intdebt(**kw):
+    d = company(**kw)
+    return price_references(d, value_analysis(d))['intDebt']
 
-# ==================== 6e) 有息负债市场别名 + 负债率现算 ====================
-# A) 美股拆分键别名：叠一张只有「长期负债(本期部分) 9e9 ＋ 资本租赁债务(非流动) 5e9」的
-#    季报行——别名不生效则 int_debt=0、净现金 1e9 拿满 20 分；生效则净现金 −13e9 归零。
-g_alias_off = probe('debt_alias_off', company(ba=[ba_row()], **V_BASE))['grahamAgg']
-g_alias_on = probe('debt_alias_on', company(
+g_alias_off = intdebt(ba=[ba_row()], **V_BASE)
+g_alias_on = intdebt(
     ba=[ba_row(), ba_row(day='2025-06-30',
                          **{'长期负债(本期部分)': 9e9, '资本租赁债务(非流动)': 5e9})],
-    **V_BASE))['grahamAgg']
-check(abs(g_alias_on - g_alias_off + 20) < 1e-9,
-      f"美股拆分键别名（本期长债+资本租赁 14e9）应让净现金项从满 20 归 0：{g_alias_off} → {g_alias_on}")
-
-# B) 负债率现算：季报行 tl 2e10→3.5e10（ca 同步 7e10 保持 liq_ratio=2 不动、NCAV 仍为正）
-#    → 现算负债率 0.875 越过 0.8 满严重线，格攻负债率项 10 → 0，总差恰为 −10。
-g_dr_base = probe('dr_base', company(ba=[ba_row()], **V_BASE))['grahamAgg']
-g_dr_flip = probe('dr_flip', company(
-    ba=[ba_row(), ba_row(day='2025-06-30', ca=7e10, tl=3.5e10)], **V_BASE))['grahamAgg']
-check(abs(g_dr_flip - g_dr_base + 10) < 1e-9,
-      f"季报负债率现算 0.875（年报 0.4）应让格攻负债率项恰降 10 分：{g_dr_base} → {g_dr_flip}")
+    **V_BASE)
+check(abs(g_alias_on - g_alias_off - 14e9) < 1e-3,
+      f"美股拆分键别名应让有息负债恰为 14e9：{g_alias_off} → {g_alias_on}")
 if not ALT:
     # R = 0.6×V + 0.4×G：批次行情动了 V，R 只许按 0.6 的权重跟着挪（门槛状态不许变——门槛输入不含 V）
     _cs_ref, _cs_bq = compute_scores(_d_ref), compute_scores(_d_bq)
@@ -527,7 +514,7 @@ if not ALT:
         E_EXP[name] = {'equities': [expected], 'trap': scores['trap'],
                        'trapEval': scores['trapEval'],
                        'priceRefs': {k: scores['priceRefs'][k] for k in
-                                     ('grahamAgg', 'grahamDef', 'schloss', 'buffett')}}
+                                     ('grahamDef', 'schloss')}}
 
     for i, key in enumerate(PARENT_KEYS):
         for amount in (0.0, -1e9, 1e10):
@@ -620,7 +607,7 @@ else:
     else:
         js = json.loads(js_out.stdout)
         for name, t in EXP.items():
-            for key in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
+            for key in ('grahamDef', 'schloss'):
                 p, j = t[key], (js.get(name) or {}).get(key)
                 check(close(p, j, 1e-9), f"{name}.{key}: Python={p} JS={j}")
         for name, (tot, ev) in G_EXP.items():

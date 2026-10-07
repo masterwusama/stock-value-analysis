@@ -61,12 +61,9 @@ async function main() {
     }
 
     out[code] = {
-      grahamAgg: num(vs.grahamAgg.total),
       grahamDef: num(vs.grahamDef.total),
       schloss: num(vs.schloss.total),
-      buffett: num(vs.buffett.total),
       priceRefs: {
-        fairLiq: num(pr.fairLiq),
         netCashRatio: num(pr.netCashRatio),
         wCash: num(pr.wCash),
         intDebt: num(pr.intDebt),
@@ -81,10 +78,8 @@ async function main() {
           restricted: num(pr.netCashCalc.restricted),
           noteReport: pr.netCashCalc.noteReport == null ? null : pr.netCashCalc.noteReport,
         },
-        grahamAgg: refs('grahamAgg'),
         grahamDef: refs('grahamDef'),
         schloss: refs('schloss'),
-        buffett: refs('buffett'),
       },
       fraud: num((m.fraudAnalysis(d) || {}).total),
       mgmt: num((m.managementAnalysis(d) || {}).total),

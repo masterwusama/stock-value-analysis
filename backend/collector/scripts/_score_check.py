@@ -36,7 +36,7 @@ for f in sorted(companies_dir.glob('*.json')):
     code = d['code']
     py = compute_scores(d)
     js = js_scores.get(code, {})
-    for key in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
+    for key in ('grahamDef', 'schloss'):
         p, j = py[key], js.get(key)
         if p is None and j is None:
             continue
@@ -44,7 +44,7 @@ for f in sorted(companies_dir.glob('*.json')):
             diffs.append((code, key, p, j))
     # 价格参考对比（金额为量级较大的数值，用相对容差）
     py_refs, js_refs = py.get('priceRefs') or {}, js.get('priceRefs') or {}
-    for key in ('grahamAgg', 'grahamDef', 'schloss', 'buffett'):
+    for key in ('grahamDef', 'schloss'):
         pr, jr = py_refs.get(key) or {}, js_refs.get(key) or {}
         for fld in ('buy', 'sellCons', 'sellFair'):
             p, j = pr.get(fld), jr.get(fld)
@@ -53,12 +53,6 @@ for f in sorted(companies_dir.glob('*.json')):
             tol = 1e-9 if p is None else max(1e-9, abs(p) * 1e-9)
             if p is None or j is None or abs(p - j) > tol:
                 diffs.append((code, key + '.' + fld, p, j))
-    # 公允清算价值（每股）对比
-    p, j = py_refs.get('fairLiq'), js_refs.get('fairLiq')
-    if p is None and j is None:
-        pass
-    elif p is None or j is None or abs(p - j) > max(1e-9, abs(p or 0) * 1e-9):
-        diffs.append((code, 'fairLiq', p, j))
     # 净现金/市值（比率）对比
     p, j = py_refs.get('netCashRatio'), js_refs.get('netCashRatio')
     if p is None and j is None:

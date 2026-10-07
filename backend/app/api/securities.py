@@ -41,8 +41,8 @@ EVENT_GROUPS = {
 HOLDER_GROUPS = {"top10": "top10", "top10_float": "top10_float",
                  "institution": "institutions", "controller": "actual_controller",
                  "unlock": "unlock"}
-# score_daily 列前缀 → 原 index.json scores 流派键
-SCHOOL_KEYS = {"graham_agg": "grahamAgg", "graham_def": "grahamDef", "schloss": "schloss", "buffett": "buffett"}
+# score_daily 列前缀 → 原 index.json scores 流派键（格攻/巴菲特 2026-10-06 移除）
+SCHOOL_KEYS = {"graham_def": "grahamDef", "schloss": "schloss"}
 
 
 def _f(v):
@@ -126,10 +126,8 @@ class SecurityItem(BaseModel):
     pe_ttm: float | None = None
     pb: float | None = None
     market_cap: float | None = None
-    score_graham_agg: float | None = None
     score_graham_def: float | None = None
     score_schloss: float | None = None
-    score_buffett: float | None = None
     fraud: float | None = None
     mgmt: float | None = None
     cycle: float | None = None
@@ -190,25 +188,18 @@ class SecurityItem(BaseModel):
     wind_fraud_delta: float | None = None
     wind_mgmt_delta: float | None = None
     wind_flags: list | None = None
-    # 价格参考(原列表"买/保/公"四流派合并列 + 清算/净现金)
-    fair_liq: float | None = None
+    # 价格参考(原列表"买/保/公"两派 + 净现金;格攻清算价值与巴菲特三档 2026-10-06 移除)
     net_cash_ratio: float | None = None
     # PB 近十年历史分位（Wind 口径，百分比数值 0~100）。列表页只放这一列：PE 分位对亏损
     # 标的恒置空会留大片 "-"，PS 分位没有并列的可读宽度。days 是外源实际用的交易日数。
     pb_pctile: float | None = None
     pb_days: int | None = None
-    buy_graham_agg: float | None = None
-    sell_cons_graham_agg: float | None = None
-    sell_fair_graham_agg: float | None = None
     buy_graham_def: float | None = None
     sell_cons_graham_def: float | None = None
     sell_fair_graham_def: float | None = None
     buy_schloss: float | None = None
     sell_cons_schloss: float | None = None
     sell_fair_schloss: float | None = None
-    buy_buffett: float | None = None
-    sell_cons_buffett: float | None = None
-    sell_fair_buffett: float | None = None
     # 最近一次定增 / 回购（列表两列）。只有 A 股有这两个源，港股、美股该字段整体为 null，
     # A 股但一笔都没发生过的则是 {seo: null, buy_latest: null, buy_done: null}——
     # 「没有这笔」与「这个市场没这个源」是两件事，前端只在后者上打 "-（无此源）"
@@ -235,10 +226,8 @@ SORT_COLS = {
     "market_cap": QuoteDaily.market_cap,
     "pe_ttm": QuoteDaily.pe_ttm,
     "pb": QuoteDaily.pb,
-    "score_graham_agg": ScoreDaily.score_graham_agg,
     "score_graham_def": ScoreDaily.score_graham_def,
     "score_schloss": ScoreDaily.score_schloss,
-    "score_buffett": ScoreDaily.score_buffett,
     "fraud": ScoreDaily.fraud,
     "mgmt": ScoreDaily.mgmt,
     "cycle": ScoreDaily.cycle,
@@ -259,11 +248,11 @@ SORT_COLS = {
     # PB 十年分位：升序 = 处在自身十年最低那一头（分位本身已是跨市场可比的 0~100）
     "pb_pctile": ValuationPctile.pb_pctile,
 }
-# 价格参考列的排序口径：买价与每股清算价值都是"每家自己的"绝对值，跨标的比大小没有意义
-# (5 元的票不比 50 元的便宜；每股清算 860 的 NVR 现价 6327，按绝对值反倒占了榜首)，
-# 故 buy_* 与 fair_liq 排的是折价率 1 - 现价/参考值，降序 = 相对参考值打得最深的第一屏。
+# 价格参考列的排序口径：买价是"每家自己的"绝对值，跨标的比大小没有意义
+# (5 元的票不比 50 元的便宜)，
+# 故 buy_* 排的是折价率 1 - 现价/参考值，降序 = 相对参考值打得最深的第一屏。
 # 响应字段与格内数字仍是绝对值，只有排序键换成了比率。
-_SCHOOLS = ("graham_agg", "graham_def", "schloss", "buffett")
+_SCHOOLS = ("graham_def", "schloss")
 # 低于一分钱的参考值不算参考值：评分公式相减会留下 1e-17 这种浮点零渣，
 # 当分母能把折价率吹到 1e20 量级；而一分以下的价格没有任何标的真能买入。
 MIN_PRICE_REF = 0.01
@@ -284,7 +273,6 @@ def _discount(ref_col):
 
 
 SORT_COLS.update({f"buy_{s}": _discount(getattr(ScoreDaily, f"buy_{s}")) for s in _SCHOOLS})
-SORT_COLS["fair_liq"] = _discount(ScoreDaily.fair_liq)
 SORT_COLS.update({
     col: getattr(ScoreDaily, col)
     for s in _SCHOOLS
@@ -294,16 +282,12 @@ SORT_COLS.update({
 
 # 列表筛选:买点/卖点复选键(与原页 data-flt-buy 一致) → score_daily 价格参考列
 FLT_BUY_COLS = {
-    "grahamAgg": ScoreDaily.buy_graham_agg,
     "grahamDef": ScoreDaily.buy_graham_def,
     "schloss": ScoreDaily.buy_schloss,
-    "buffett": ScoreDaily.buy_buffett,
 }
 FLT_SELL_COLS = {
-    "grahamAgg": (ScoreDaily.sell_cons_graham_agg, ScoreDaily.sell_fair_graham_agg),
     "grahamDef": (ScoreDaily.sell_cons_graham_def, ScoreDaily.sell_fair_graham_def),
     "schloss": (ScoreDaily.sell_cons_schloss, ScoreDaily.sell_fair_schloss),
-    "buffett": (ScoreDaily.sell_cons_buffett, ScoreDaily.sell_fair_buffett),
 }
 
 # 市场板块(全市场 5500 只规模下的基本维度):按代码前缀判定,无需额外字段
@@ -536,7 +520,6 @@ def list_securities(
     pb_min: FiniteF | None = Query(None, description="PB ≥"),
     pb_max: FiniteF | None = Query(None, description="PB ≤"),
     div_min: FiniteF | None = Query(None, description="股息率 ≥（小数比率，0.04=4%；NULL=无分红数据的公司自动排除）"),
-    liq_disc_max: FiniteF | None = Query(None, description="清算折价 ≤（百分比，80=现价≤清算价值×80%；现价/清算均缺的公司不进区间）"),
     buyback_days: int | None = Query(None, description="近 N 天有回购（公告日或完成日落窗内；无回购记录的公司不命中）"),
     seo_days: int | None = Query(None, description="近 N 天有定增发行（发行日落窗内；发行日缺失取上市日的采集约定）"),
     gate_flag: str | None = Query(None, description="硬门槛单项反查：audit_qualify/risk_warning/case_filed/neg_equity（命中该项目的公司）"),
@@ -548,7 +531,7 @@ def list_securities(
     buys: str | None = Query(None, max_length=64, description="买点复选(逗号分隔,同时满足)"),
     sells: str | None = Query(None, max_length=64, description="卖点复选(现价≥公允卖价即命中,公允恒高于保守)"),
     discount: float | None = Query(None, gt=0, le=500, description="买点折扣%,仅与 buys 配合"),
-    sort: str = Query("code", description=f"排序字段: {'/'.join(SORT_COLS)}（buy_* 与 fair_liq 是折价率 1-现价/参考值，降序=相对参考值折得最深；响应里仍是绝对值）"),
+    sort: str = Query("code", description=f"排序字段: {'/'.join(SORT_COLS)}（buy_* 是折价率 1-现价/参考值，降序=相对参考值折得最深；响应里仍是绝对值）"),
     order: Literal["asc", "desc"] = Query("asc"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -631,10 +614,6 @@ def list_securities(
     for _b in [x for x in (bm or "").split(",") if x in ("light", "pricing")]:
         conds.append(ScoreDaily.bm_light.is_(True) if _b == "light"
                      else ScoreDaily.bm_pricing.is_(True))
-    if liq_disc_max is not None:
-        conds.append(QuoteDaily.price.isnot(None))
-        conds.append(ScoreDaily.fair_liq.isnot(None))
-        conds.append(QuoteDaily.price <= ScoreDaily.fair_liq * (liq_disc_max / 100.0))
     if buyback_days is not None and buyback_days > 0:
         _since_bb = date.today() - timedelta(days=buyback_days)
         conds.append(Security.sid.in_(
@@ -744,10 +723,8 @@ def list_securities(
             pe_ttm=_f(quote.pe_ttm) if quote else None,
             pb=_f(quote.pb) if quote else None,
             market_cap=_f(quote.market_cap) if quote else None,
-            score_graham_agg=score.score_graham_agg if score else None,
             score_graham_def=score.score_graham_def if score else None,
             score_schloss=score.score_schloss if score else None,
-            score_buffett=score.score_buffett if score else None,
             fraud=score.fraud if score else None,
             mgmt=score.mgmt if score else None,
             cycle=score.cycle if score else None,
@@ -779,22 +756,15 @@ def list_securities(
             wind_mgmt_delta=_f(score.wind_mgmt_delta) if score else None,
             wind_flags=score.wind_flags if score else None,
             wind_hit=bool(score is not None and score.wind_overlay is not None),
-            fair_liq=_f(score.fair_liq) if score else None,
             net_cash_ratio=_f(score.net_cash_ratio) if score else None,
             pb_pctile=_f(val.pb_pctile) if val else None,
             pb_days=val.pb_days if val else None,
-            buy_graham_agg=_f(score.buy_graham_agg) if score else None,
-            sell_cons_graham_agg=_f(score.sell_cons_graham_agg) if score else None,
-            sell_fair_graham_agg=_f(score.sell_fair_graham_agg) if score else None,
             buy_graham_def=_f(score.buy_graham_def) if score else None,
             sell_cons_graham_def=_f(score.sell_cons_graham_def) if score else None,
             sell_fair_graham_def=_f(score.sell_fair_graham_def) if score else None,
             buy_schloss=_f(score.buy_schloss) if score else None,
             sell_cons_schloss=_f(score.sell_cons_schloss) if score else None,
             sell_fair_schloss=_f(score.sell_fair_schloss) if score else None,
-            buy_buffett=_f(score.buy_buffett) if score else None,
-            sell_cons_buffett=_f(score.sell_cons_buffett) if score else None,
-            sell_fair_buffett=_f(score.sell_fair_buffett) if score else None,
             # 三态契约（见 ActionsCell 注释）：港美股无此源 → null；A 股但一笔都没有 →
             # 空 cell（seo/buy 全 None）。只收录有行的 sid 是历史写法，A 股零行与港美股
             # 同形，前端无法区分「没有这笔」与「这个市场没这个源」
@@ -853,7 +823,7 @@ def _load_scores(db: Session, sid: int) -> dict | None:
     ).scalars().first()
     if not s:
         return None
-    refs = {"fairLiq": s.fair_liq, "netCashRatio": s.net_cash_ratio,
+    refs = {"netCashRatio": s.net_cash_ratio,
             "wCash": s.w_cash, "intDebt": s.int_debt, "netCashW": s.net_cash_w,
             "netCashB": s.net_cash_b}
     if s.net_cash_calc:
@@ -867,10 +837,8 @@ def _load_scores(db: Session, sid: int) -> dict | None:
     out = {
         "tradeDate": s.trade_date.isoformat(),
         "reportDate": s.report_date.isoformat(),
-        "grahamAgg": s.score_graham_agg,
         "grahamDef": s.score_graham_def,
         "schloss": s.score_schloss,
-        "buffett": s.score_buffett,
         "fraud": s.fraud,
         "mgmt": s.mgmt,
         "cycle": s.cycle,

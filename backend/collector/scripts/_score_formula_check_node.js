@@ -52,7 +52,7 @@ async function main() {
     const tp = m.trapScore(d) || {};
     const pr = m.priceReferences(d, m.valueAnalysis(d));
     const refs = {};
-    for (const key of ['grahamAgg', 'grahamDef', 'schloss', 'buffett']) {
+    for (const key of ['grahamDef', 'schloss']) {
       const r = pr[key] || {};
       refs[key] = { buy: num(r.buy), sellCons: num(r.sellCons), sellFair: num(r.sellFair) };
     }
@@ -61,10 +61,8 @@ async function main() {
       trap: num(tp.total),
       trapEval: num(tp.na ? null : (tp.eff ? tp.eff.evaluated : null)),
       priceRefs: refs,
-      grahamAgg: num(vs.grahamAgg.total),
       grahamDef: num(vs.grahamDef.total),
       schloss: num(vs.schloss.total),
-      buffett: num(vs.buffett.total),
       growth: num(gs.total),
       growthEval: num(gs.eff ? gs.eff.evaluated : null),
       value: num(vscore.total),

@@ -115,10 +115,8 @@ CREATE TABLE score_daily (
 	sid INTEGER NOT NULL, 
 	trade_date DATE NOT NULL, 
 	report_date DATE NOT NULL, 
-	score_graham_agg DOUBLE, 
 	score_graham_def DOUBLE, 
 	score_schloss DOUBLE, 
-	score_buffett DOUBLE, 
 	fraud DOUBLE, 
 	mgmt DOUBLE, 
 	cycle DOUBLE, 
@@ -134,7 +132,6 @@ CREATE TABLE score_daily (
 	recommend DOUBLE, 
 	recommend_gate VARCHAR(16), 
 	interim_dip DOUBLE, 
-	fair_liq DOUBLE, 
 	w_cash DOUBLE, 
 	int_debt DOUBLE, 
 	net_cash_w DOUBLE, 
@@ -146,18 +143,12 @@ CREATE TABLE score_daily (
 	st_flags VARCHAR(64), 
 	net_cash_ratio DOUBLE, 
 	net_cash_calc JSON, 
-	buy_graham_agg DOUBLE, 
-	sell_cons_graham_agg DOUBLE, 
-	sell_fair_graham_agg DOUBLE, 
 	buy_graham_def DOUBLE, 
 	sell_cons_graham_def DOUBLE, 
 	sell_fair_graham_def DOUBLE, 
 	buy_schloss DOUBLE, 
 	sell_cons_schloss DOUBLE, 
 	sell_fair_schloss DOUBLE, 
-	buy_buffett DOUBLE, 
-	sell_cons_buffett DOUBLE, 
-	sell_fair_buffett DOUBLE, 
 	wind_fraud_delta DOUBLE, 
 	wind_mgmt_delta DOUBLE, 
 	wind_flags JSON, 
@@ -172,7 +163,6 @@ CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 
 CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 
-CREATE INDEX idx_list_buffett ON score_daily (trade_date, score_buffett);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
 
@@ -186,7 +176,6 @@ CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
 
 CREATE INDEX idx_list_value ON score_daily (trade_date, value);
 
-CREATE INDEX idx_list_graham_agg ON score_daily (trade_date, score_graham_agg);
 
 CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
 

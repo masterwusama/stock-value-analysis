@@ -24,7 +24,7 @@ IDX = json.load(io.open(LEGACY_DATA_DIR / "data" / "index.json", encoding="utf-8
 # index quote 快照)——市值门槛的归属只由库决定,文件侧无法预测,集合对账时豁免
 NO_INDEX_QUOTE = {c["code"] for c in IDX["companies"]
                   if not (c.get("quote") or {}).get("market_cap")}
-COLS = {"grahamAgg": "grahamAgg", "grahamDef": "grahamDef", "schloss": "schloss", "buffett": "buffett"}
+COLS = {"grahamDef": "grahamDef", "schloss": "schloss"}
 # 板块前缀(与 app/api/securities.py BOARDS 一致)
 BOARDS = {"shMain": ("60",), "szMain": ("00",), "gem": ("30",),
           "star": ("68",), "bj": ("92", "83", "87", "43")}
@@ -215,9 +215,9 @@ NO_IND = {str(_c["code"]) for _c in IDX["companies"] if not _c.get("industry")}
 
 cases_list = [
     {"fraud_max": 20}, {"fraud_max": 50}, {"mgmt_min": 70}, {"mgmt_min": 60, "market": "A"},
-    {"buys": ["grahamAgg"]}, {"buys": ["grahamAgg"], "discount": 120},
-    {"buys": ["schloss", "buffett"]}, {"buys": ["schloss", "buffett"], "discount": 90},
-    {"sells": ["buffett"]}, {"sells": ["grahamDef", "schloss"]},
+    {"buys": ["schloss"]}, {"buys": ["schloss"], "discount": 120},
+    {"buys": ["grahamDef", "schloss"]}, {"buys": ["grahamDef", "schloss"], "discount": 90},
+    {"sells": ["schloss"]}, {"sells": ["grahamDef", "schloss"]},
     {"fraud_max": 40, "mgmt_min": 50, "buys": ["grahamDef"], "discount": 130},
     # 全市场规模维度：板块 / ST
     {"board": "bj"}, {"board": "gem"}, {"board": "star"}, {"board": "shMain"},
@@ -398,9 +398,8 @@ else:
     if _gone:
         fails += 1
 
-# 列表价格参考字段 vs index.json priceRefs(买/保/公 ×4流派 + 清算/净现金)
-SCHOOL_COLS = {"grahamAgg": "graham_agg", "grahamDef": "graham_def",
-               "schloss": "schloss", "buffett": "buffett"}
+# 列表价格参考字段 vs index.json priceRefs(买/保/公 ×2派 + 净现金;格攻/巴菲特已移除)
+SCHOOL_COLS = {"grahamDef": "graham_def", "schloss": "schloss"}
 ref_bad, ref_n = [], 0
 all_items = api_flt_items({})
 for c in IDX["companies"]:
@@ -408,8 +407,7 @@ for c in IDX["companies"]:
     if not it:
         continue
     refs = (c.get("scores") or {}).get("priceRefs") or {}
-    pairs = [(refs.get("fairLiq"), it.get("fair_liq")),
-             (refs.get("netCashRatio"), it.get("net_cash_ratio"))]
+    pairs = [(refs.get("netCashRatio"), it.get("net_cash_ratio"))]
     for k, col in SCHOOL_COLS.items():
         r = refs.get(k) or {}
         for skey, dk in (("buy", "buy_%s"), ("sellCons", "sell_cons_%s"), ("sellFair", "sell_fair_%s")):
@@ -627,7 +625,7 @@ else:
 # 表头排序：前端可发的每个 sort 键都要 200 + 单调有序 + NULL 不占首页。
 # 曾经的 bug：列表 COLS 拿流派驼峰键（grahamAgg）当排序键，而后端白名单只有列名，
 # 点四派参考价列头直接 400、整表变“加载失败”；前后端键名漂移无人拦截。
-sort_keys = (["code", "price", "pe_ttm", "pb", "market_cap", "fair_liq", "net_cash_ratio",
+sort_keys = (["code", "price", "pe_ttm", "pb", "market_cap", "net_cash_ratio",
               "pb_pctile", "fraud", "mgmt", "cycle", "trap", "growth", "value"]
              + [f"score_{c}" for c in SCHOOL_COLS.values()]
              + [f"{p}_{c}" for c in SCHOOL_COLS.values()
@@ -638,11 +636,11 @@ sort_bad = []
 def sort_val(it, k):
     """该排序键在这一行上的期望值。
 
-    buy_* 与 fair_liq 排的都是折价率 1 - 现价/参考值（响应里这些字段仍是绝对值），
+    buy_* 排的是折价率 1 - 现价/参考值（响应里这些字段仍是绝对值），
     故按后端 _discount 同一公式现算，含参考值过低/缺失即 NULL 的那道判定；门槛常量
     直接取后端的 MIN_PRICE_REF，不在这边重抄一遍，免得两边各自改了还互相认为对方错。
     """
-    if not (k.startswith("buy_") or k == "fair_liq"):
+    if not k.startswith("buy_"):
         return it.get(k)
     ref, price = it.get(k), it.get("price")
     if ref is None or ref < MIN_PRICE_REF or price is None:

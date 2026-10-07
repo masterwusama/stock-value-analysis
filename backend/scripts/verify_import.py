@@ -5,9 +5,12 @@
 不再硬编码博客仓库——全市场回灌后博客那份 54 只的旧 JSON 会对不上答案。
 """
 import json
+import sys
 from pathlib import Path
 
 from sqlalchemy import case, func, select
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # backend/,直接 python scripts/verify_import.py 也能跑
 
 from app.config import LEGACY_DATA_DIR
 from app.db import SessionLocal
@@ -64,9 +67,9 @@ src_sc = next(c["scores"] for c in idx["companies"] if c["code"] == "002027")
 sid2 = db.execute(select(Security.sid).where(Security.code == "002027")).scalar_one()
 s = db.execute(select(ScoreDaily).where(ScoreDaily.sid == sid2)
                .order_by(ScoreDaily.trade_date.desc()).limit(1)).scalar_one()
-print(f"  DB:   buffett={s.score_buffett} fraud={s.fraud} mgmt={s.mgmt} buy_schloss={s.buy_schloss}")
-print(f"  JSON: buffett={src_sc['buffett']} fraud={src_sc['fraud']} mgmt={src_sc['mgmt']} buy={src_sc['priceRefs']['schloss']['buy']}")
-assert float(s.score_buffett) == src_sc["buffett"]
+print(f"  DB:   schloss={s.score_schloss} fraud={s.fraud} mgmt={s.mgmt} buy_schloss={s.buy_schloss}")
+print(f"  JSON: schloss={src_sc['schloss']} fraud={src_sc['fraud']} mgmt={src_sc['mgmt']} buy={src_sc['priceRefs']['schloss']['buy']}")
+assert float(s.score_schloss) == src_sc["schloss"]
 assert float(s.buy_schloss) == src_sc["priceRefs"]["schloss"]["buy"]
 ov = json.loads((DATA / "events" / "index.json").read_text(encoding="utf-8"))["byCode"]
 if "002027" in ov:
