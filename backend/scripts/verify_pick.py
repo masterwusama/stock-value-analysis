@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.pick import (  # noqa: E402
     BUY_MIN, STRONG_CAP_FLOOR, STRONG_MIN, STUB_BUY_MIN, WATCH_MIN,
-    _discounts, _expected_annual, _report_late, _synth,
+    _discounts, _expected_annual, _listed_cutoff, _report_late, _synth,
 )
 
 PASS = FAIL = 0
@@ -71,6 +71,20 @@ def test_report_late():
     check("缺一年=12月", _report_late(date(2024, 12, 31), today) == 12)
     check("未来报告期=0", _report_late(date(2026, 6, 30), today) == 0)
     check("空=0", _report_late(None, today) == 0)
+
+
+def test_listed_cutoff():
+    """上市 ≤5 年排除的边界。保留条件 = list_date < cutoff(严格):
+    上市恰满 5 年当天仍在排除窗,超一天即保留。"""
+    today = date(2026, 10, 12)
+    cut = _listed_cutoff(today)
+    check("cutoff=5年前的今天", cut == date(2021, 10, 12), str(cut))
+    check("老股保留", date(2000, 1, 1) < cut)
+    check("上市5年+1天保留", date(2021, 10, 11) < cut)
+    check("上市恰满5年排除", not (date(2021, 10, 12) < cut))
+    check("上市5年差一天排除", not (date(2021, 10, 13) < cut))
+    check("今年新股排除", not (date(2025, 1, 1) < cut))
+    check("闰年2/29日不炸", _listed_cutoff(date(2028, 2, 29)) == date(2023, 2, 28))
 
 
 def test_discounts():
@@ -223,6 +237,7 @@ def test_live():
 if __name__ == "__main__":
     test_expected_annual()
     test_report_late()
+    test_listed_cutoff()
     test_discounts()
     test_synth_avoid()
     test_synth_tiers()

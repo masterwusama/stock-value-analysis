@@ -28,7 +28,7 @@ from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -41,6 +41,20 @@ router = APIRouter(prefix="/api/pick", tags=["pick"])
 
 # 市场范围:本模块只服务 A股/港股(美股不在本次推荐范围)
 MARKETS = ("A", "HK")
+
+# 次新股不进掘金板:上市 ≤5 年的标的整体过滤(评分所依据的「5 年」轴对它们大多判不动,
+# 强推/烟蒂通道的置信度也不成立)。能查到上市日期才判——港股通标的库内 list_date 全缺,
+# NULL 不是「次新」而是「无从判」,保留(宁多看不少看)。分界用「今天的年月日回退 5 年」
+# 而非天数:闰日会让固定天数在边界上漂一天,恰满 5 年当天必须仍在排除窗内。
+LIST_AGE_MIN_YEARS = 5
+
+
+def _listed_cutoff(today: date) -> date:
+    """保留窗下界:上市日**严格早于**此日才保留;恰满 5 年当天与更新者都排除。"""
+    try:
+        return date(today.year - LIST_AGE_MIN_YEARS, today.month, today.day)
+    except ValueError:  # 今天是 2/29:5 年前的规则日按 2/28 算
+        return date(today.year - LIST_AGE_MIN_YEARS, 2, 28)
 
 # HKD→CNY 当量系数,与 scoring.FX_TO_CNY 的 HK 档一致,只用于市值门槛
 HK_TO_CNY = 0.92
@@ -418,7 +432,8 @@ def _load_base(db: Session, fresh: bool = False):
         .join(qd, qd.c.sid == ScoreDaily.sid)
         .join(QuoteDaily, (QuoteDaily.sid == ScoreDaily.sid)
               & (QuoteDaily.trade_date == qd.c.qd))
-        .where(ScoreDaily.trade_date == td, Security.market.in_(MARKETS))
+        .where(ScoreDaily.trade_date == td, Security.market.in_(MARKETS),
+               or_(Security.list_date.is_(None), Security.list_date < _listed_cutoff(today)))
     ).all()
     vals = {v.sid: v for v in db.execute(select(ValuationPctile)).scalars()}
     cov = _research_cov()
