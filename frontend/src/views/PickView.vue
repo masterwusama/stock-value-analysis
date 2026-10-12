@@ -61,11 +61,17 @@ const MARKET_TABS = [
 
 const totalAll = computed(() => {
   if (!stats.value) return 0
-  return Object.values(stats.value).reduce((a, m) => a + Object.values(m).reduce((x, y) => x + y, 0), 0)
+  const scope = market.value ? { [market.value]: stats.value[market.value] } : stats.value
+  return Object.values(scope).reduce((a, m) => a + (m ? Object.values(m).reduce((x, y) => x + y, 0) : 0), 0)
 })
 const tierStat = (t) => {
   if (!stats.value) return 0
+  if (market.value) return stats.value[market.value]?.[t] || 0
   return (stats.value.A?.[t] || 0) + (stats.value.HK?.[t] || 0)
+}
+const mktTotal = (m) => {
+  if (!stats.value?.[m]) return 0
+  return Object.values(stats.value[m]).reduce((a, b) => a + b, 0)
 }
 
 // —— 数据装载 ——
@@ -86,6 +92,32 @@ async function loadBoard() {
   } finally {
     if (seq === boardSeq) boardLoading.value = false
   }
+}
+async function loadStars() {
+  const d = await get('/pick/stars', { limit: 12, market: market.value })
+  meta.value = d.meta
+  stats.value = d.stats
+  stars.value = d.stars
+}
+async function loadCloud() {
+  cloud.value = await get('/pick/cloud', { market: market.value })
+  await nextTick()
+  drawCloud()
+}
+async function loadIndustries() {
+  const indRes = await get('/securities/industries', { market: market.value || undefined }).catch(() => [])
+  industries.value = (Array.isArray(indRes) ? indRes : []).map((i) => i.industry).filter(Boolean)
+}
+// 市场切换:全页联动(统计 chips / 强推卡 / 散点 / 行业字典 / 清单),hash 同步
+async function setMarket(m) {
+  if (market.value === m) return
+  market.value = m
+  industry.value = ''
+  page.value = 1
+  syncHash()
+  await Promise.all([loadStars(), loadCloud()]).catch((e) => { error.value = e.message })
+  loadIndustries()
+  loadBoard()
 }
 function syncHash() {
   const q = new URLSearchParams()
@@ -212,20 +244,11 @@ onMounted(async () => {
   if (q.get('page')) page.value = Math.max(1, Number(q.get('page')) || 1)
 
   try {
-    const [starsRes, cloudRes, indRes] = await Promise.all([
-      get('/pick/stars', { limit: 12 }),
-      get('/pick/cloud', { market: '' }),
-      get('/securities/industries', { market: market.value || undefined }).catch(() => []),
-    ])
-    meta.value = starsRes.meta
-    stats.value = starsRes.stats
-    stars.value = starsRes.stars
-    cloud.value = cloudRes
-    industries.value = (Array.isArray(indRes) ? indRes : []).map((i) => i.industry).filter(Boolean)
-    loading.value = false
-    await nextTick()
-    drawCloud()
+    await loadStars()
+    await loadIndustries()
+    await loadCloud()
     chart?.on('click', onCloudClick)
+    loading.value = false
     await loadBoard()
   } catch (e) {
     error.value = e.message
@@ -251,8 +274,7 @@ onBeforeUnmount(() => {
           <div>
             <h2 class="head-title">掘金台 · 今日值得买</h2>
             <div class="head-sub">
-              覆盖 A股 {{ stats?.A ? totalAll - (stats.HK ? Object.values(stats.HK).reduce((a, b) => a + b, 0) : 0) : 0 }} ·
-              港股 {{ stats?.HK ? Object.values(stats.HK).reduce((a, b) => a + b, 0) : 0 }} 只
+              覆盖 A股 {{ mktTotal('A') }} · 港股 {{ mktTotal('HK') }} 只
               · 评分日 {{ meta?.trade_date }} · 行情 {{ meta?.quote_date }}
             </div>
           </div>
@@ -260,6 +282,13 @@ onBeforeUnmount(() => {
             大盘情绪 <b>{{ meta.sentiment.state }}</b>
             <span v-if="meta.sentiment.t != null" class="senti-t">温度 {{ meta.sentiment.t }}</span>
           </div>
+        </div>
+        <div class="mkt-row">
+          <div class="tabs">
+            <button v-for="t in MARKET_TABS" :key="t.key" class="tab" :class="{ active: market === t.key }"
+              @click="setMarket(t.key)">{{ t.label }}</button>
+          </div>
+          <span class="mkt-hint">{{ market === 'A' ? '仅 A 股' : market === 'HK' ? '仅港股' : 'A股 + 港股' }}</span>
         </div>
         <div class="stat-chips">
           <button class="chip c-strong" :class="{ on: tier === 'strong' }" @click="setFilter(() => tier = 'strong')">
@@ -325,7 +354,7 @@ onBeforeUnmount(() => {
         <div class="toolbar">
           <div class="tabs">
             <button v-for="t in MARKET_TABS" :key="t.key" class="tab" :class="{ active: market === t.key }"
-              @click="setFilter(() => market = t.key)">{{ t.label }}</button>
+              @click="setMarket(t.key)">{{ t.label }}</button>
           </div>
           <div class="tabs">
             <button v-for="t in TIER_TABS" :key="t.key" class="tab" :class="{ active: tier === t.key }"
@@ -444,6 +473,9 @@ onBeforeUnmount(() => {
 .st-cold { background: #e9f5ef; border-color: #bfe3d0; }
 
 .stat-chips { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.mkt-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.mkt-row .tabs { gap: 6px; }
+.mkt-hint { font-size: 12px; color: var(--sub); }
 .chip {
   border: 1px solid var(--line); background: var(--card); border-radius: 16px;
   padding: 5px 14px; cursor: pointer; font-size: 13px; color: var(--sub);

@@ -498,13 +498,17 @@ def pick_board(
 @router.get("/stars", response_model=PickStarsOut)
 def pick_stars(
     limit: int = Query(12, ge=1, le=50),
+    market: str | None = Query(None, pattern="^(A|HK)$",
+                               description="只返回该市场的强推名单;stats 恒为两市场全量(前端按需取)"),
     fresh: bool = Query(False),
     db: Session = Depends(get_session),
 ):
     """顶部强推名单 + 全市场分层统计 + 数据日期/情绪 meta。"""
     items, meta = _load_base(db, fresh=fresh)
-    stars = sorted((it for it in items if it.tier == "strong"),
-                   key=lambda it: -(it.pick or 0))[:limit]
+    pool = (it for it in items if it.tier == "strong")
+    if market:
+        pool = (it for it in pool if it.market == market)
+    stars = sorted(pool, key=lambda it: -(it.pick or 0))[:limit]
     stats: dict = {}
     for it in items:
         m = stats.setdefault(it.market, {t: 0 for t in TIER_KEYS})
