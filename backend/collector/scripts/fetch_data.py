@@ -581,6 +581,28 @@ def fetch_hk_dividends(code: str):
 
 _HK_INDUSTRY_CACHE = None
 
+# 港股上市日期(东财 F10 公司概况,免费):掘金台按「上市≤5年」过滤次新股,A 股日期
+# 来自同花顺 info 的「上市日期」,港股在这里补齐同名键——import_legacy 解析它回灌
+# security.list_date(COALESCE 保旧值),所以这里失败留空即可,不会弄脏库里已有日期
+HK_LIST_DATE_URL = "https://datacenter.eastmoney.com/securities/api/data/v1/get"
+
+
+def fetch_hk_list_date(code: str):
+    """港股上市日期("YYYY-MM-DD");接口失败/无数据返回 None。code 为 5 位数字。"""
+    params = {
+        "reportName": "RPT_HKF10_INFO_ORGPROFILE",
+        "columns": "SECUCODE,LISTING_DATE", "quoteColumns": "",
+        "pageNumber": 1, "pageSize": 1, "sortTypes": "", "sortColumns": "",
+        "source": "F10", "client": "PC",
+        "filter": f'(SECUCODE="{code}.HK")',
+    }
+    try:
+        data = (requests.get(HK_LIST_DATE_URL, params=params, timeout=15)
+                .json().get("result") or {}).get("data") or []
+    except Exception:
+        return None
+    raw = (data[0].get("LISTING_DATE") or "")[:10] if data else ""
+    return raw or None
 
 def hk_industry(code: str):
     """港股通名单自带的行业名（东财 f100，见 universe.load_universe_hk）。
@@ -606,6 +628,10 @@ def fetch_company_hk(code: str, name: str):
     industry = hk_industry(code)
     # 行业来自港股通名单（东财 f100）；不在名单里的港股（如非港股通标的）留空
     result["info"] = {"行业": industry} if industry else {}
+    list_date = fetch_hk_list_date(code)
+    if list_date:
+        result["info"]["上市日期"] = list_date
+    sleep_between()
 
     try:
         result["indicators"] = fetch_hk_indicators(code)
