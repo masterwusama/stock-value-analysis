@@ -14,7 +14,7 @@ FastAPI + MySQL 提供结构化查询接口，Vue 3 前端，采集层沿用经�
 且设备要先加入同一个 tailnet。服务默认只监听 `127.0.0.1:8000`，`ts.net` 是远程访问的唯一入口。
 `<设备名>.<tailnet>.ts.net` 换成自己的：Tailscale 管理台的设备列表，或本机 `tailscale status --self`。
 
-四个页面：`/#/` 全市场列表 · `/#/stock/<代码>` 单家详情 · `/#/agro` 农价与行业量价 · `/#/research` 投研库(深度研报，Markdown 文档驱动，结构见 [docs/设计-投研库模块.md](docs/设计-投研库模块.md))。
+六个页面：`/#/` 全市场列表 · `/#/pick` 掘金台(A股+港股的「值得买」分层推荐) · `/#/stock/<代码>` 单家详情 · `/#/agro` 农价与行业量价 · `/#/sentiment` 情绪日报 · `/#/research` 投研库(深度研报，Markdown 文档驱动，结构见 [docs/设计-投研库模块.md](docs/设计-投研库模块.md))。
 窄屏（≤600px）自动切换为移动版：列表改卡片、筛选与排序折叠、图表自适应。
 
 > **部署与运维请看 [docs/使用说明书.md](docs/使用说明书.md)**——三个页面怎么用、数据什么时候更新、
@@ -129,6 +129,8 @@ python -X utf8 scripts\verify_edb_merge.py  # 离线：EDB 合并防线与增量
 python -X utf8 -m scripts.fraud_validity    # 离线：造假分判别效度回测（T 年红旗 → T+1 年非标/大额减值/转亏）
 python -X utf8 -m scripts.buy_validity --check-live   # 两派买点回测的同构对拍(重建买价 vs score_daily 物化列;四派历史判决留档)
 python -X utf8 -m scripts.st_validity       # 离线：ST/退市风险预警的横截面命中面与规则自检
+python -X utf8 -m scripts.verify_pick       # 离线：掘金台合成逻辑(评级不变量/折价符号/烟蒂通道)
+python -X utf8 -m scripts.verify_pick --live   # 追加在线：端点结构/排序null垫底/筛选精确(服务需已重启到新代码)
 cd collector; python -X utf8 scripts\_valuation_check.py   # 离线：估值分位守卫与 windcode 映射
 ```
 
