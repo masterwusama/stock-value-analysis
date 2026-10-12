@@ -457,11 +457,28 @@ def _sort_key_of(sort: str):
     return key, missing
 
 
+def _parse_ex_industry(ex_industry: str | None) -> set[str] | None:
+    """排除行业复选解析(逗号分隔);无行业标注的标的不受排除影响(与列表页同口径)。
+    银行在两套行业字典里不同名:A股=货币金融服务、港股=银行,排除需两个都给。"""
+    if not ex_industry:
+        return None
+    wants = {t.strip() for t in ex_industry.split(",") if t.strip()}
+    return wants or None
+
+
+def _apply_ex_industry(items, wants: set[str] | None):
+    if wants:
+        items = [it for it in items if it.industry not in wants]
+    return items
+
+
 @router.get("/board", response_model=PickBoardOut)
 def pick_board(
     market: str | None = Query(None, pattern="^(A|HK)$", description="缺省=A+港股全量"),
     tier: str | None = Query(None, description="评级复选(逗号分隔): strong/buy/watch/na/avoid"),
     industry: str | None = Query(None, max_length=64),
+    ex_industry: str | None = Query(None, max_length=1024,
+                                    description="排除行业复选(逗号分隔,同时排除;无行业标注的标的不受影响)"),
     keyword: str | None = Query(None, max_length=32, description="代码/名称模糊匹配"),
     sort: str = Query("pick", description=f"排序键: {'/'.join(sorted(SORT_KEYS))}"),
     order: str = Query("desc", pattern="^(asc|desc)$"),
@@ -473,6 +490,7 @@ def pick_board(
     items, _ = _load_base(db, fresh=fresh)
     if market:
         items = [it for it in items if it.market == market]
+    items = _apply_ex_industry(items, _parse_ex_industry(ex_industry))
     if tier:
         wants = {t.strip() for t in tier.split(",") if t.strip()}
         bad = wants - set(TIER_KEYS)
@@ -499,12 +517,15 @@ def pick_board(
 def pick_stars(
     limit: int = Query(12, ge=1, le=50),
     market: str | None = Query(None, pattern="^(A|HK)$",
-                               description="只返回该市场的强推名单;stats 恒为两市场全量(前端按需取)"),
+                               description="只返回该市场的强推名单"),
+    ex_industry: str | None = Query(None, max_length=1024,
+                                    description="排除行业复选(逗号分隔);stats 按排除后统计,与页面所见一致"),
     fresh: bool = Query(False),
     db: Session = Depends(get_session),
 ):
     """顶部强推名单 + 全市场分层统计 + 数据日期/情绪 meta。"""
     items, meta = _load_base(db, fresh=fresh)
+    items = _apply_ex_industry(items, _parse_ex_industry(ex_industry))
     pool = (it for it in items if it.tier == "strong")
     if market:
         pool = (it for it in pool if it.market == market)
@@ -519,12 +540,14 @@ def pick_stars(
 @router.get("/cloud", response_model=list[PickCloudPoint])
 def pick_cloud(
     market: str | None = Query(None, pattern="^(A|HK)$"),
+    ex_industry: str | None = Query(None, max_length=1024, description="排除行业复选(逗号分隔)"),
     fresh: bool = Query(False),
     db: Session = Depends(get_session),
 ):
     """散点云:评级≥观察、可打分且有买点锚(折价可算)的全体。
     无锚者不进图——x 坐标只能取哨兵值,堆在左缘成柱反而误导;清单里照样可见。"""
     items, _ = _load_base(db, fresh=fresh)
+    items = _apply_ex_industry(items, _parse_ex_industry(ex_industry))
     out = []
     for it in items:
         if it.tier not in ("strong", "buy", "watch") or it.pick is None:

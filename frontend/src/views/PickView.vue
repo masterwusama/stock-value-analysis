@@ -30,6 +30,11 @@ const order = ref('desc')
 const page = ref(1)
 const PAGE_SIZE = 50
 
+// 排除行业:默认把银行整体排除(A股行业字典叫「货币金融服务」、港股叫「银行」)。
+// hash 有 ex 参数(哪怕空)以 hash 为准,否则落默认——用户主动清空后刷新不会"复活"。
+const BANK_INDUSTRIES = ['货币金融服务', '银行']
+const exIndustries = ref([...BANK_INDUSTRIES])
+
 const TIER_META = {
   strong: { label: '强推', cls: 't-strong' },
   buy: { label: '值得买', cls: 't-buy' },
@@ -82,6 +87,7 @@ async function loadBoard() {
   try {
     const d = await get('/pick/board', {
       market: market.value, tier: tier.value, industry: industry.value,
+      ex_industry: exIndustries.value.join(','),
       keyword: keyword.value, sort: sort.value, order: order.value,
       page: page.value, page_size: PAGE_SIZE,
     })
@@ -94,13 +100,15 @@ async function loadBoard() {
   }
 }
 async function loadStars() {
-  const d = await get('/pick/stars', { limit: 12, market: market.value })
+  const d = await get('/pick/stars', {
+    limit: 12, market: market.value, ex_industry: exIndustries.value.join(','),
+  })
   meta.value = d.meta
   stats.value = d.stats
   stars.value = d.stars
 }
 async function loadCloud() {
-  cloud.value = await get('/pick/cloud', { market: market.value })
+  cloud.value = await get('/pick/cloud', { market: market.value, ex_industry: exIndustries.value.join(',') })
   await nextTick()
   drawCloud()
 }
@@ -122,11 +130,46 @@ async function setMarket(m) {
 function syncHash() {
   const q = new URLSearchParams()
   for (const [k, v] of [['market', market.value], ['tier', tier.value], ['industry', industry.value],
-    ['kw', keyword.value], ['sort', sort.value], ['order', order.value], ['page', page.value > 1 ? page.value : '']]) {
+    ['ex', exIndustries.value.join(',')], ['kw', keyword.value],
+    ['sort', sort.value], ['order', order.value], ['page', page.value > 1 ? page.value : '']]) {
     if (v !== '' && v != null) q.set(k, v)
   }
   const qs = q.toString()
   history.replaceState(null, '', `#/pick${qs ? '?' + qs : ''}`)
+}
+// 排除行业变更:统计/强推卡/散点/清单全页联动
+async function applyEx() {
+  page.value = 1
+  syncHash()
+  await Promise.all([loadStars(), loadCloud()]).catch((e) => { error.value = e.message })
+  loadBoard()
+}
+function removeEx(name) {
+  exIndustries.value = exIndustries.value.filter((i) => i !== name)
+  applyEx()
+}
+// 排除面板:面板内只改草稿,「完成」才生效(避免逐项勾选时连环打接口)
+const exPanel = ref(false)
+const exSearch = ref('')
+const pendingEx = ref([])
+const exChoices = computed(() => {
+  const kw = exSearch.value.trim()
+  return industries.value.filter((i) => !kw || i.includes(kw))
+})
+function openExPanel() {
+  pendingEx.value = [...exIndustries.value]
+  exSearch.value = ''
+  exPanel.value = true
+}
+function toggleEx(i) {
+  pendingEx.value = pendingEx.value.includes(i)
+    ? pendingEx.value.filter((x) => x !== i)
+    : [...pendingEx.value, i]
+}
+function confirmEx() {
+  exIndustries.value = [...pendingEx.value]
+  exPanel.value = false
+  applyEx()
 }
 function setFilter(fn) {
   fn()
@@ -238,6 +281,7 @@ onMounted(async () => {
   if (q.get('market')) market.value = q.get('market')
   if (q.get('tier')) tier.value = q.get('tier')
   if (q.get('industry')) industry.value = q.get('industry')
+  if (q.has('ex')) exIndustries.value = q.get('ex') ? q.get('ex').split(',').filter(Boolean) : []
   if (q.get('kw')) keyword.value = q.get('kw')
   if (q.get('sort')) { sort.value = q.get('sort') }
   if (q.get('order')) order.value = q.get('order')
@@ -289,6 +333,13 @@ onBeforeUnmount(() => {
               @click="setMarket(t.key)">{{ t.label }}</button>
           </div>
           <span class="mkt-hint">{{ market === 'A' ? '仅 A 股' : market === 'HK' ? '仅港股' : 'A股 + 港股' }}</span>
+          <div class="ex-wrap">
+            <span class="ex-label">排除行业</span>
+            <span v-for="name in exIndustries" :key="name" class="ex-chip">
+              {{ name }}<i class="ex-x" title="取消排除" @click="removeEx(name)">×</i>
+            </span>
+            <button class="ex-add" @click="openExPanel">+ 添加</button>
+          </div>
         </div>
         <div class="stat-chips">
           <button class="chip c-strong" :class="{ on: tier === 'strong' }" @click="setFilter(() => tier = 'strong')">
@@ -453,11 +504,36 @@ onBeforeUnmount(() => {
           无推荐分的深折价烟蒂(施洛斯分≥70)单走烟蒂通道,封顶 65 分。
         </p>
         <p class="note-fine">
+          默认排除银行(A股行业字典记「货币金融服务」、港股记「银行」,两处一并排除,可点 chips × 取消);
           数据 {{ meta?.trade_date }} 评分 · {{ meta?.quote_date }} 行情;PB 分位取近十年(观测 &gt;45 天不用);
           港股无陷阱分与 ST 旗(不适用)。本看板是既有评分体系的决策合成,不构成投资建议。
         </p>
       </div>
     </template>
+
+    <Teleport to="body">
+      <div v-if="exPanel" class="ex-mask" @click.self="exPanel = false">
+        <div class="ex-panel">
+          <div class="ex-head">
+            <b>排除行业</b>
+            <button class="ex-close" @click="exPanel = false">×</button>
+          </div>
+          <div class="ex-sub">勾中的行业整体从推荐里去掉(两市场一起生效);无行业标注的标的不受影响</div>
+          <input v-model="exSearch" class="ex-search" placeholder="搜索行业…" />
+          <div class="ex-list">
+            <label v-for="i in exChoices" :key="i" class="ex-item">
+              <input type="checkbox" :checked="pendingEx.includes(i)" @change="toggleEx(i)" />
+              <span>{{ i }}</span>
+            </label>
+            <div v-if="!exChoices.length" class="loading">无匹配行业</div>
+          </div>
+          <div class="ex-foot">
+            <button class="ex-btn" :disabled="!pendingEx.length" @click="pendingEx = []">清空</button>
+            <button class="ex-btn ex-ok" @click="confirmEx">完成</button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -473,9 +549,34 @@ onBeforeUnmount(() => {
 .st-cold { background: #e9f5ef; border-color: #bfe3d0; }
 
 .stat-chips { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-.mkt-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.mkt-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .mkt-row .tabs { gap: 6px; }
 .mkt-hint { font-size: 12px; color: var(--sub); }
+.ex-wrap { display: flex; align-items: center; gap: 6px; margin-left: auto; flex-wrap: wrap; }
+.ex-label { font-size: 12px; color: var(--sub); }
+.ex-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px;
+  background: #fdeeee; color: #c0392b; border: 1px solid #f2c6c6; border-radius: 12px; }
+.ex-x { font-style: normal; cursor: pointer; font-weight: 700; opacity: 0.7; }
+.ex-x:hover { opacity: 1; }
+.ex-add { border: 1px dashed var(--line); background: var(--card); border-radius: 12px;
+  padding: 2px 10px; font-size: 12px; color: var(--sub); cursor: pointer; }
+.ex-add:hover { border-color: var(--accent); color: var(--accent); }
+
+.ex-mask { position: fixed; inset: 0; background: rgba(43, 52, 65, 0.35); z-index: 100;
+  display: flex; align-items: center; justify-content: center; }
+.ex-panel { background: var(--card); border-radius: 10px; width: min(420px, 92vw);
+  max-height: 78vh; display: flex; flex-direction: column; padding: 16px; }
+.ex-head { display: flex; align-items: center; justify-content: space-between; }
+.ex-close { border: none; background: none; font-size: 20px; cursor: pointer; color: var(--sub); line-height: 1; }
+.ex-sub { font-size: 12px; color: var(--sub); margin: 4px 0 10px; }
+.ex-search { padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; font-size: 14px; margin-bottom: 8px; }
+.ex-list { overflow-y: auto; min-height: 120px; border: 1px solid var(--line); border-radius: 6px; padding: 4px 0; }
+.ex-item { display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+.ex-item:hover { background: #f0f5ff; }
+.ex-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.ex-btn { padding: 6px 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); cursor: pointer; }
+.ex-btn:disabled { opacity: 40%; cursor: default; }
+.ex-ok { background: var(--accent); border-color: var(--accent); color: #fff; }
 .chip {
   border: 1px solid var(--line); background: var(--card); border-radius: 16px;
   padding: 5px 14px; cursor: pointer; font-size: 13px; color: var(--sub);
