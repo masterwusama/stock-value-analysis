@@ -1641,13 +1641,17 @@
   var R_W_VALUE = 0.6, R_FRAUD_GATE = 40, R_TRAP_GATE = 20;
 
   function recommendScore(vTotal, gTotal, fraud, trap, dip) {
-    var fail = [];
-    if (fraud != null && fraud > R_FRAUD_GATE) fail.push('fraud');
-    if (trap != null && trap > R_TRAP_GATE) fail.push('trap');
-    if (dip != null && dip <= INTERIM_DIP_GATE) fail.push('interim');
-    if (fail.length) return { total: null, gate: fail.join('+') };
+    // 陷阱线 2026-10-17 起标注不拦分：>20 的 R 照打、gate 记 'trap'（scoring.py 同步同改）。
+    // 命中顺序恒为 fraud→trap→interim；组合里有拦截项时 R=None，'trap' 只作附记。
+    var hit = [];
+    if (fraud != null && fraud > R_FRAUD_GATE) hit.push('fraud');
+    var trapHit = trap != null && trap > R_TRAP_GATE;
+    if (trapHit) hit.push('trap');
+    if (dip != null && dip <= INTERIM_DIP_GATE) hit.push('interim');
+    if (hit.indexOf('fraud') >= 0 || hit.indexOf('interim') >= 0) return { total: null, gate: hit.join('+') };
     if (vTotal == null || gTotal == null) return { total: null, gate: 'nodata' };
-    return { total: Math.round((R_W_VALUE * vTotal + (1 - R_W_VALUE) * gTotal) * 10) / 10, gate: 'pass' };
+    return { total: Math.round((R_W_VALUE * vTotal + (1 - R_W_VALUE) * gTotal) * 10) / 10,
+             gate: trapHit ? 'trap' : 'pass' };
   }
 
   // 中报恶化 dip：最新 interim（Q1/H1/Q3）的扣非同比（缺则净利同比）。评分轴只吃年报，
@@ -1705,7 +1709,7 @@
 
   var R_GATE_TEXT = {
     fraud: '造假红旗分 > 40（报表内部的量化背离过线）',
-    trap: '价值陷阱分 > 20（坏消息证据堆过「单点」档）',
+    trap: '价值陷阱分 > 20（坏消息证据堆过「单点」档——2026-10-17 起标注不拦分：R 照打并挂 ⚠ 风险标注）',
     interim: '中报恶化：最新一期季报/半年报的扣非同比 ≤ −70%（回测转亏 lift 7.8×，见 dip_validity）',
     nodata: '门槛过了，但 V/G 至少一条判不动（公开年报不足 3 期）'
   };
@@ -2447,14 +2451,19 @@
       L.push('输入：V ' + (rv.total == null ? '-' : fmtNum(rv.total)) + ' · G ' + (rg.total == null ? '-' : fmtNum(rg.total)) +
         ' · 造假 ' + (rf == null ? '-' : fmtNum(rf)) + ' · 陷阱 ' + (rt.total == null ? (rt.na ? '不适用' : '判不动') : fmtNum(rt.total)) +
         ' · 中报 dip ' + (dip == null ? '判不动' : (dip * 100).toFixed(0) + '%'));
-      L.push('门槛核查：造假 ≤ 40 ' + (rf == null ? '（判不动放行）' : rf <= R_FRAUD_GATE ? '✓' : '✗') +
-        ' · 陷阱 ≤ 20 ' + (rt.total == null ? '（不适用放行）' : rt.total <= R_TRAP_GATE ? '✓' : '✗') +
+      L.push('拦截门槛：造假 ≤ 40 ' + (rf == null ? '（判不动放行）' : rf <= R_FRAUD_GATE ? '✓' : '✗') +
         ' · 中报 dip > −70% ' + (dip == null ? '（判不动放行）' : dip > INTERIM_DIP_GATE ? '✓' : '✗'));
+      L.push('陷阱标注线 ≤ 20：' + (rt.total == null ? '（不适用）' : rt.total <= R_TRAP_GATE
+        ? '✓ 干净' : '⚠ 命中——标注不拦分，R 照打并挂风险标注'));
       if (rRec.total == null) {
         L.push('结论：无 R（' + (R_GATE_TEXT[rRec.gate] || rRec.gate) + '）——门槛外是「不过资格线」，不是 0 分');
       } else {
         L.push('＝ 0.6×' + fmtNum(rv.total) + ' + 0.4×' + fmtNum(rg.total) + ' = ' + fmtNum(rRec.total) +
           '（' + bandLabel(R_BANDS, rRec.total) + '）');
+        if (rRec.gate === 'trap') {
+          L.push('⚠ 价值陷阱标注线命中（陷阱分 ' + fmtNum(rt.total) + (rt.band ? ' · ' + rt.band.label : '') +
+            '）：便宜可能是周期底部或价值陷阱，读分时把陷阱分一节的档位与发生率一并看。');
+        }
       }
       if (dip != null && dip <= INTERIM_DIP_NOTE) {
         L.push('⚠ 中报恶化：最新一期扣非（缺则净利）同比 ' + (dip * 100).toFixed(0) + '%。评分轴只吃年报，年报之后的恶化不进任何分。');

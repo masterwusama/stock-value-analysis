@@ -36,7 +36,7 @@ const COLS = [
   { key: 'value', label: '价值', value: true, group: 'score' },
   // 成长列：格内是 G（0-100，越高越好，与陷阱分方向相反），右上角是「七项里查得动几项」
   { key: 'growth', label: '成长', growth: true, group: 'score' },
-  // 推荐列：门槛外的 0.6×V + 0.4×G（资格线：造假≤40·陷阱≤20·中报≤−70%），门槛外整格 `-`
+  // 推荐列：门槛外的 0.6×V + 0.4×G（拦截线：造假≤40·中报≤−70%；陷阱≤20 为标注线，命中挂 ⚠），被拦时整格 `-`
   { key: 'recommend', label: '推荐', group: 'score' },
   // 净现金三件套（等式顺序：加权现金−有息负债=净现金），紧贴宽口径比值列。（清算价值列随格攻派移除）
   // 两个「净现金」口径不同：本组是亿（减有息负债），比值列是 %（减负债合计）——列名与
@@ -239,15 +239,16 @@ const G_TIP = '成长综合分 G（0-100，越高越好）：净利/营收/每�
 // 各档实测未来增速刻意不复述，只在详情页给，避免两处各写一份数字。
 const G_BAND_CUTS = [[16.0, '档1 增长最弱', 'bad'], [28.3, '档2 偏低', 'low'], [47.7, '档3 中位', 'mid'], [69.0, '档4 偏高', 'mid']]
 const R_TIP = '综合推荐分 R（0-100，越高越好）：门槛外的 0.6×价值综合分 V + 0.4×成长综合分 G。'
-  + '三道发分门槛——造假 ≤ 40 · 陷阱 ≤ 20 · 中报恶化 dip ≤ −70%（判不动的门槛输入按无证据放行，港美股陷阱/扣非缺失侧 dip 不适用）。'
-  + '门槛外的公司显示 -，那是「不过资格线」不是 0 分；悬停可见具体原因（fraud/trap/interim/nodata）。'
+  + '两道拦截门槛——造假 ≤ 40 · 中报恶化 dip ≤ −70%（判不动的门槛输入按无证据放行，港美股扣非缺失侧 dip 不适用）；'
+  + '陷阱 ≤ 20 是风险标注线（2026-10 起不再拦分）：命中时 R 照打、分数旁挂 ⚠，档位见陷阱分列。'
+  + '被拦下的公司显示 -，那是「不过资格线」不是 0 分；悬停可见具体原因（fraud/interim/nodata）。'
   + '回测（A 股 2021~2023 事件时面板）：门槛内按无价格版五分位，其后转亏率 16.0%→2.4% 单调、减值≥5% 26.8%→3.3% 单调、逐年 3/3。'
   + '收益侧实测为负向（高分组 2 年超额跑输 10.1pp，2022~2024 质量/成长风格杀跌）——R 是排雷与选质的入口，不是买点。'
 // 档位切点镜像 stockLegacy.js 的 R_BANDS（回测面板 R_full 五分位 24/36/46/56 取整），改那边要同步这边。
 const R_BAND_CUTS = [[24, '档1 最差', 'bad'], [36, '档2 偏低', 'low'], [46, '档3 中位', 'mid'], [56, '档4 偏高', 'mid']]
 const R_GATE_LABEL = {
   fraud: '造假红旗分 > 40，被资格线拦下',
-  trap: '价值陷阱分 > 20，被资格线拦下',
+  trap: '价值陷阱分 > 20：陷阱风险标注线命中（标注不拦分，R 照打）',
   interim: '中报恶化：最新一期季报/半年报扣非同比 ≤ −70%，被资格线拦下（回测转亏 lift 7.8×）',
   nodata: '门槛已过，但 V/G 至少一条判不动（公开年报不足 3 期）',
 }
@@ -657,16 +658,28 @@ function rTitle(s) {
   const ing = []
   if (s.value != null) ing.push('V ' + s.value.toFixed(1))
   if (s.growth != null) ing.push('G ' + s.growth.toFixed(1))
+  // 陷阱标注线命中：分数照打，但把风险档位亮在浮层里（2026-10 标注制）
+  let trapNote = ''
+  if (gateHasTrap(s)) {
+    const tb = s.trap_c == null ? ''
+      : bandOfC(s.trap_c)[0] + '（陷阱分 ' + (s.trap == null ? '-' : s.trap.toFixed(1)) + ' · 证据合计 C ' + s.trap_c.toFixed(2) + '）'
+    trapNote = '｜⚠ 陷阱风险标注：' + R_GATE_LABEL.trap + (tb ? ' · ' + tb : '')
+      + '——便宜可能是周期底部或价值陷阱，读分时把陷阱列一并看'
+  }
   const mkt = s.market && s.market !== 'A'
-    ? '⚠ 港美股：三道门槛在本市场实际只剩「造假 ≤ 40」一道（陷阱口径只在 A 股成立、扣非不披露），排雷保护弱于 A 肎——读分时把造假分与 ⚑ 一并看。'
+    ? '⚠ 港美股：门槛在本市场实际只剩「造假 ≤ 40」一道（陷阱口径只在 A 股成立、扣非不披露），排雷保护弱于 A 股——读分时把造假分与 ⚑ 一并看。'
     : ''
-  return `${R_TIP}｜本标的：${label}${ing.length ? ' · ' + ing.join(' · ') : ''}${mkt ? '｜' + mkt : ''}`
+  return `${R_TIP}｜本标的：${label}${ing.length ? ' · ' + ing.join(' · ') : ''}${trapNote}${mkt ? '｜' + mkt : ''}`
 }
-// 移动卡片第二层：推荐格无分时的门槛原因速记（与详情 R 卡一致，缩写版）
+// R 已打分但陷阱标注线命中（gate 串含 trap 且非 pass）；被 fraud/interim 拦下的不在此列
+const gateHasTrap = (s) => s.recommend != null && !!s.recommend_gate
+  && String(s.recommend_gate).split('+').includes('trap')
+// 移动卡片第二层：推荐格无分时的门槛原因速记（与详情 R 卡一致，缩写版）；
+// 有分但陷阱标注线命中时同样缩写展示（'⚠陷阱'），pass/空串不显示
 const HERO_GATE = { fraud: '造假', trap: '陷阱', interim: '中报', nodata: '无数据' }
 const heroGate = (s) => {
   const g = s.recommend_gate
-  if (!g) return ''
+  if (!g || g === 'pass') return ''
   return String(g).split('+').map((k) => HERO_GATE[k] || k).join('+')
 }
 // ---- 评分格悬浮代入式（桌面） ----
@@ -1052,7 +1065,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
           <div class="sc-hero">
             <div class="hero-cell" :class="'sc-' + rGrade(s)" :title="rTitle(s)">
               <em>推荐</em>
-              <b>{{ score(s.recommend) }}<i v-if="s.recommend == null && s.recommend_gate" class="hero-na">{{ heroGate(s) }}</i></b>
+              <b>{{ score(s.recommend) }}<i v-if="heroGate(s)" class="hero-na">{{ s.recommend != null ? '⚠' : '' }}{{ heroGate(s) }}</i></b>
             </div>
             <div class="hero-cell" :class="'sc-' + trapGrade(s)" :title="trapTitle(s)">
               <em>陷阱</em><b>{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></b>
@@ -1172,7 +1185,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td class="calc" :class="'sc-' + trapGrade(s)" @mouseenter="scoreHover($event, s, 'trap')" @mouseleave="hideScoreTip">{{ score(s.trap) }}<i v-if="s.trap_eval != null" class="tp-ev">{{ s.trap_eval }}/7</i></td>
             <td class="calc" :class="'sc-' + vGrade(s)" @mouseenter="scoreHover($event, s, 'value')" @mouseleave="hideScoreTip">{{ score(s.value) }}<i v-if="s.value_eval != null" class="tp-ev">{{ s.value_eval }}/7</i></td>
             <td class="calc" :class="'sc-' + gGrade(s)" @mouseenter="scoreHover($event, s, 'growth')" @mouseleave="hideScoreTip">{{ score(s.growth) }}<i v-if="s.growth_eval != null" class="tp-ev">{{ s.growth_eval }}/7</i></td>
-            <td class="calc" :class="'sc-' + rGrade(s)" @mouseenter="scoreHover($event, s, 'recommend')" @mouseleave="hideScoreTip">{{ score(s.recommend) }}</td>
+            <td class="calc" :class="'sc-' + rGrade(s)" @mouseenter="scoreHover($event, s, 'recommend')" @mouseleave="hideScoreTip">{{ score(s.recommend) }}<i v-if="gateHasTrap(s)" class="tp-ev" title="⚠ 价值陷阱标注线命中（不拦分）：读分时把陷阱列一并看">⚠</i></td>
             <td :title="WCASH_TIP">{{ yi(s.weighted_cash) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :title="IDEBT_TIP">{{ yi(s.int_debt) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :title="NCW_TIP">{{ yi(s.net_cash_w) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>

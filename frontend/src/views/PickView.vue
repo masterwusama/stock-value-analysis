@@ -269,6 +269,9 @@ function pctText(v) {
   const a = Math.abs(v * 100).toFixed(0)
   return v < 0 ? `低${a}%` : `高${a}%`
 }
+// R 已打分但陷阱标注线命中（2026-10 标注制：分数照给、风险旗里已有「价值陷阱特征」扣分说明）
+const gateHasTrap = (s) => s.recommend != null && !!s.recommend_gate
+  && String(s.recommend_gate).split('+').includes('trap')
 
 onMounted(async () => {
   mq = window.matchMedia(MOBILE_QUERY)
@@ -385,7 +388,7 @@ onBeforeUnmount(() => {
               <div class="pm"><i>安全边际</i><b :class="s.discount < -0.01 ? 'marg-pos' : 'flat'">{{ s.discount == null ? '—' : pctText(s.discount) }}</b></div>
               <div class="pm"><i>PB十年分位</i><b>{{ s.pb_pctile == null ? '—' : s.pb_pctile.toFixed(0) + '%' }}</b></div>
               <div class="pm"><i>股息率</i><b>{{ fmtPct(s.div_yield) }}</b></div>
-              <div class="pm"><i>推荐分R</i><b>{{ s.recommend?.toFixed(0) ?? '—' }}</b></div>
+              <div class="pm"><i>推荐分R</i><b>{{ s.recommend?.toFixed(0) ?? '—' }}<span v-if="gateHasTrap(s)" class="risk-flag" title="价值陷阱标注线命中：R 照打，陷阱风险见风险旗">⚠陷阱</span></b></div>
             </div>
             <div class="pc-reasons" :title="s.reasons.join(' · ')">{{ s.reasons.slice(0, 3).join(' · ') }}</div>
             <div v-if="s.risks.length" class="pc-risks"><span v-for="r in s.risks" :key="r" class="risk-flag">{{ r }}</span></div>
@@ -450,7 +453,7 @@ onBeforeUnmount(() => {
               </td>
               <td><span class="tier-badge" :class="TIER_META[s.tier].cls">{{ TIER_META[s.tier].label }}</span></td>
               <td><b :class="{ 'pick-hi': s.tier === 'strong' }">{{ s.pick?.toFixed(0) ?? '—' }}</b></td>
-              <td :title="`价值 ${s.value?.toFixed(0) ?? '—'} · 成长 ${s.growth?.toFixed(0) ?? '—'}${s.recommend_gate ? ' · 门槛:' + s.recommend_gate : ''}`">{{ s.recommend?.toFixed(0) ?? '—' }}</td>
+              <td :title="`价值 ${s.value?.toFixed(0) ?? '—'} · 成长 ${s.growth?.toFixed(0) ?? '—'}${gateHasTrap(s) ? ' · ⚠陷阱标注（不拦分）' : (s.recommend == null && s.recommend_gate ? ' · 拦:' + s.recommend_gate : '')}`">{{ s.recommend?.toFixed(0) ?? '—' }}<span v-if="gateHasTrap(s)" class="risk-flag">⚠</span></td>
               <td :class="pctClass(s.discount)">{{ pctText(s.discount) }}</td>
               <td :class="s.pb_pctile != null && s.pb_pctile <= 25 ? 'marg-pos' : ''">{{ s.pb_pctile?.toFixed(0) ?? '—' }}{{ s.pb_pctile != null ? '%' : '' }}</td>
               <td>{{ fmtPct(s.div_yield) }}</td>

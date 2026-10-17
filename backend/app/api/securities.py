@@ -149,9 +149,10 @@ class SecurityItem(BaseModel):
     # 一起判不动，所以这一列的分数必须和可评估项数并排读
     value: float | None = None
     value_eval: int | None = None
-    # 综合推荐分 R（0~100，门槛外的 0.6×V + 0.4×G）。recommend_gate 记无分原因：
-    # fraud / trap / fraud+trap（被资格线拦下）或 nodata（门槛过了但 V/G 判不动）——
-    # 列表页的 `-` 要能区分「不过线」与「算不出」
+    # 综合推荐分 R（0~100，门槛外的 0.6×V + 0.4×G）。recommend_gate 记门槛状态：
+    # fraud / interim 及组合（被资格线拦下，R=None）或 nodata（门槛过了但 V/G 判不动）——
+    # 列表页的 `-` 要能区分「不过线」与「算不出」；'trap'（单独或在组合里）＝陷阱标注线
+    # 命中，2026-10-17 起不再拦分：R 照打，前端据此挂 ⚠ 陷阱风险标注（档位见 trap/trap_c）
     recommend: float | None = None
     recommend_gate: str | None = None
     # 中报恶化 dip：最新 interim 扣非（缺则净利）同比。NULL = 最新一期已是年报或双期缺一，

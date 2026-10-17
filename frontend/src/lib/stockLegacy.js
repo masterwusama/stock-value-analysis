@@ -642,12 +642,14 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         dip = interimDipYoy(d.indicators || []);
         var rec = recommendScore(vv.total, gg.total, fa ? fa.total : null, tpD.total, dip);
         var el = $('stock-score-recommend');
-        if (el) el.innerHTML = recommendCard(rec, vv.total, gg.total, dip, d.market);
+        if (el) el.innerHTML = recommendCard(rec, vv.total, gg.total, dip, d.market, tpD);
         var rb = rec && rec.total == null ? null : (rec ? rBandOf(rec.total) : null);
         fillStrip('R', rec ? rec.total : null, rb ? rb.grade : 'na',
           rb ? '综合推荐分 ' + fmtNum(rec.total) + ' · ' + rb.label +
-            (rec.gate ? '（门槛外：' + R_GATE_TEXT[rec.gate] + '）' : '')
-            : (rec && rec.gate ? '门槛外不算分：' + (R_GATE_TEXT[rec.gate] || rec.gate) : '综合推荐分判不动'));
+            (rec.gate === 'trap' ? '（⚠ 陷阱标注：' + R_GATE_TEXT.trap + '）' : '')
+            : (rec && rec.gate && rec.gate !== 'pass'
+              ? '门槛外不算分：' + (R_GATE_TEXT[rec.gate] || rec.gate)
+              : '综合推荐分判不动'));
       },
       function () {
         var el = $('stock-score-trap');
@@ -951,10 +953,11 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
   /* ---------------- 综合推荐分 R（门槛外的 0.6×V + 0.4×G） ----------------
    * 对应 scoring.py 的 recommend_score，出厂检验 backend/scripts/r_validity.py 三线全过
    * （甲 单调判别 / 乙 不弱于成分 / 丙 门槛剔得更坏，数字见 scoring.py 文件头）。
-   * 门槛外的公司没有 R：列表 `-` 是「不过资格线」，不是 0 分。
+   * 被资格线拦下的公司没有 R：列表 `-` 是「不过资格线」，不是 0 分；
+   * 陷阱标注线命中者 R 照打、卡片挂 ⚠（2026-10-17 标注制，见 scoring.py R_TRAP_GATE）。
    */
 
-  function recommendCard(r, vTot, gTot, dip, market) {
+  function recommendCard(r, vTot, gTot, dip, market, tpD) {
     var band = r.total == null ? null : rBandOf(r.total);
     var g = band ? band.grade : 'na';
     var head = '<div class="score-card-head"><h4>综合推荐分 R</h4>' +
@@ -963,14 +966,23 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       (band ? band.label : '门槛未过') + '</i></div></div>';
     var basis = '<p class="score-basis">R = 0.6 × 价值综合分 V + 0.4 × 成长综合分 G' +
       '（本标的：V ' + (vTot == null ? '-' : fmtNum(vTot)) + ' · G ' + (gTot == null ? '-' : fmtNum(gTot)) +
-      '）；发分前置三道门槛——造假 ≤ 40 · 陷阱 ≤ 20 · 中报恶化 dip ≤ −70%，判不动的门槛输入按' +
-      '「无证据」放行（港美股陷阱整列不适用、扣非缺失侧 dip 判不动，靠这条拿得到 R）。' +
+      '）；发分前置两道拦截门槛——造假 ≤ 40 · 中报恶化 dip ≤ −70%，判不动的门槛输入按' +
+      '「无证据」放行（扣非缺失侧 dip 判不动，靠这条拿得到 R）。陷阱 ≤ 20 是风险标注线' +
+      '（2026-10-17 起不再拦分）：命中时 R 照打、分数带 ⚠ 陷阱标注，档位与发生率见「价值陷阱分」一节。' +
       (market && market !== 'A'
-        ? '<br><b style="color:#c2571a">⚠ 港美股注意：三道门槛在本市场实际只剩「造假 ≤ 40」一道' +
+        ? '<br><b style="color:#c2571a">⚠ 港美股注意：拦截门槛在本市场实际只剩「造假 ≤ 40」一道' +
           '（陷阱口径只在 A 股成立、扣非科目港美股不披露）——本列在此市场的排雷保护弱于 A 股，' +
           '读分时请把造假分与 ⚑ 硬门槛一并看。</b>'
         : '') +
-      '门槛外的公司整格 `-`，那是「不过资格线」，不是 0 分。</p>';
+      '被拦下的公司整格 `-`，那是「不过资格线」，不是 0 分。</p>';
+    // 陷阱标注线命中：R 照打，但把「便宜可能是陷阱」亮出来（tpD 复用 R 步已算的那份，不重烧）
+    if (r.total != null && r.gate === 'trap') {
+      basis += '<p class="score-basis" style="color:#c2571a">⚠ 价值陷阱标注线命中：陷阱分 ' +
+        (tpD && tpD.total != null ? fmtNum(tpD.total) : '-') +
+        (tpD && tpD.band ? '（' + tpD.band.label + '）' : '') +
+        '。' + R_GATE_TEXT.trap + '——R 是「便宜+质量」的证据合计，坏消息成串时便宜可能是' +
+        '周期底部或价值陷阱，读分时请把陷阱分一节的档位发生率一并看。</p>';
+    }
     // 中报恶化警示：评分轴只吃年报，这里把年报盲区亮出来（不改分，600866 式实例）
     if (dip != null && dip <= INTERIM_DIP_NOTE) {
       basis += '<p class="score-basis" style="color:#c2571a">⚠ 中报恶化：最新一期季报/半年报的扣非（缺则净利）同比 ' +

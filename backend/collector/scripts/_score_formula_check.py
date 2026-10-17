@@ -481,19 +481,21 @@ if not ALT:
           and _cs_bq['recommendGate'] == _cs_ref['recommendGate'],
           f"R 没按 0.6 权重跟随 V：ΔR={_cs_bq['recommend'] - _cs_ref['recommend']} "
           f"ΔV={_cs_bq['value'] - _cs_ref['value']}")
-    # 门槛四态 + 中报恶化门槛 + 舍入口径直接钉在函数上（单个陷阱旗只到 T=10，构不出过线输入，不必绕整条链）
+    # 门槛四态（陷阱 2026-10-17 起标注不拦分）+ 中报恶化门槛 + 舍入口径直接钉在函数上
+    # （单个陷阱旗只到 T=10，构不出过线输入，不必绕整条链）
     from scoring import recommend_score as _rs
     check(_rs(80.0, 60.0, 45.0, 10.0) == (None, 'fraud')
-          and _rs(80.0, 60.0, 10.0, 25.0) == (None, 'trap')
-          and _rs(80.0, 60.0, 45.0, 25.0) == (None, 'fraud+trap')
+          and _rs(80.0, 60.0, 10.0, 25.0) == (72.0, 'trap')                 # 陷阱命中：R 照打、标注
+          and _rs(80.0, 60.0, 45.0, 25.0) == (None, 'fraud+trap')           # 拦截项在组合里时 R=None
+          and _rs(80.0, 60.0, 10.0, 25.0, -0.71) == (None, 'trap+interim')  # 陷阱只作附记
           and _rs(80.0, 60.0, 10.0, 10.0, -0.71) == (None, 'interim')
           and _rs(80.0, 60.0, 45.0, 10.0, -0.90) == (None, 'fraud+interim')
           and _rs(80.0, 60.0, 10.0, 10.0, -0.69) == (72.0, 'pass')      # 边界内侧放行
           and _rs(80.0, 60.0, 10.0, 10.0, -0.70) == (None, 'interim')   # 边界恰好拦下
           and _rs(None, 60.0, 10.0, 10.0) == (None, 'nodata')
           and _rs(80.0, 60.0, None, None) == (72.0, 'pass')
-          and _rs(85.0, 40.0, 40.0, 20.0) == (67.0, 'pass'),
-          "recommend_score 的门槛四态/中报恶化边界（−0.69 放行、−0.70 拦下）或 0.6×V+0.4×G 舍入口径不对")
+          and _rs(85.0, 40.0, 40.0, 20.0) == (67.0, 'pass'),            # 陷阱恰在线上=不命中
+          "recommend_score 的门槛状态（陷阱标注制）/中报恶化边界（−0.69 放行、−0.70 拦下）或 0.6×V+0.4×G 舍入口径不对")
 
 E_EXP = {}
 if not ALT:
@@ -582,7 +584,10 @@ if not ALT:
            'ak': SimpleNamespace(stock_financial_hk_report_em=lambda **kw: ReportRows()),
            'hk_industry': lambda code: None, 'sleep_between': lambda: None,
            'fetch_hk_indicators': lambda code: [], 'fetch_hk_snapshot': lambda code: {},
-           'fetch_hk_dividends': lambda code: []}
+           'fetch_hk_dividends': lambda code: [],
+           # 上市日期采集（东财 F10，2026-10-16 上线）是联网调用，探针离线跑必须 stub——
+           # 漏 stub 会让 fetch_company_hk 在这里 NameError，deep 链尾探针整体红
+           'fetch_hk_list_date': lambda code: None}
     exec(compile(ast.Module(body=nodes, type_ignores=[]), 'fetch_data.py', 'exec'), env)
     fetched = env['fetch_company_hk']('FIXTURE', '合成')['balance'][0]
     check(all(fetched.get(k) == v for k, v in source.items()), '新采集必须保留原始权益科目')

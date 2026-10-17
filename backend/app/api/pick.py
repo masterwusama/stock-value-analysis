@@ -7,11 +7,13 @@ valuation_pctile 十年分位 + 投研库覆盖 + 大盘情绪),本模块不做�
 即时生效——与情绪温度同一套「读时计算防双源漂移」的理由。
 
 pick 与 recommend(R)的分工:R = 0.6×价值 + 0.4×成长,回答「这家公司
-好不好、贵不贵」,它的资格线(fraud>40 / trap>20 / 中报恶化≤−0.70)已把
-不合格者拦在门外;pick 在 R 之上叠加「当下值不值得下手」——价格相对两派
-买点的安全边际、PB 十年分位的位置刻度、股息与净现金的垫子,再对灰色地带
-(造假/陷阱未到拦截线、ST 关注旗、年报基准滞后)逐项扣分。两把尺子都不
-改采集侧任何分数,只做决策合成。
+好不好、贵不贵」,它的资格线(造假>40 / 中报恶化≤−0.70)已把不合格者
+拦在门外;陷阱>20 自 2026-10-17 起改「标注不拦分」——R 照给、gate 记
+'trap',本页以既有灰带扣分与「价值陷阱特征」风险旗承接标注职责。pick 在
+R 之上叠加「当下值不值得下手」——价格相对两派买点的安全边际、PB 十年
+分位的位置刻度、股息与净现金的垫子,再对灰色地带(造假/陷阱未到拦截线、
+ST 关注旗、年报基准滞后)逐项扣分。两把尺子都不改采集侧任何分数,只做
+决策合成。
 
 分层(一票回避优先):
 - avoid  硬门槛命中(gate)/ ST 高危 / 造假分>40 —— 不该进买入区;
@@ -23,8 +25,10 @@ pick 与 recommend(R)的分工:R = 0.6×价值 + 0.4×成长,回答「这家公�
 无 R 的标的不直接出局:施洛斯分≥70 且现价较买点折 ≥10% 走烟蒂通道,
 分数封顶 65(烟蒂按定义到不了「强推」)。
 """
+import sys
 import time
 from datetime import date
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -36,6 +40,13 @@ from app.api.research import coverage as _research_cov
 from app.api.securities import RECENT_DATES, _age_months, _latest_sub
 from app.models import QuoteDaily, ScoreDaily, Security, SentimentDaily, ValuationPctile
 from collector.scripts import sentiment_score
+
+# scoring.py 是 collector 侧的平铺 import（from equity import ...），API 进程里要先把
+# collector/scripts 挂上 sys.path 才加载得动；档位表取自同一函数，不另起口径
+_CSCRIPTS = str(Path(__file__).resolve().parents[2] / "collector" / "scripts")
+if _CSCRIPTS not in sys.path:
+    sys.path.insert(0, _CSCRIPTS)
+from scoring import trap_band_of  # noqa: E402
 
 router = APIRouter(prefix="/api/pick", tags=["pick"])
 
@@ -68,8 +79,10 @@ DIV_BONUS = ((0.05, 4.0), (0.03, 2.0))                   # 股息率垫
 NCR_BONUS = ((0.50, 5.0), (0.30, 3.0))                   # 净现金/市值垫
 FRAUD_GRAY_FROM = 25.0    # 造假灰带起点(R 拦截线 40 之前开始扣)
 FRAUD_GRAY_K = 0.80       # 40 分时 −12
-TRAP_GRAY_FROM = 10.0     # 陷阱灰带起点(R 拦截线 20 之前开始扣)
+TRAP_GRAY_FROM = 10.0     # 陷阱灰带起点(R 标注线 20 之前开始扣;标注制后仍是本页的主要扣分项)
 TRAP_GRAY_K = 1.00        # 20 分时 −10
+TRAP_STRONG_MAX = 20.0    # 强推不允许陷阱标注线命中(=scoring.R_TRAP_GATE;原「R 资格线」
+                          # 天然拦住,改标注制后 R 有了、在此保住强推的「干净」)
 ST_WATCH_PENALTY = 6.0    # ST 关注旗(st_risk=1)
 DIP_PENALTY_MAX = 8.0     # 中报恶化 −0.30 起扣,按深度线性到拦截线 −0.70 扣满
 DIP_FROM = 0.30
@@ -284,7 +297,10 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late) -> dic
             risks.append(f"造假分 {fraud:.0f} 偏高")
         if trap is not None and trap > TRAP_GRAY_FROM:
             pick -= (trap - TRAP_GRAY_FROM) * TRAP_GRAY_K
-            risks.append(f"价值陷阱特征 {trap:.0f}")
+            # 档位标注用回测那张 C 分档表（scoring 同一函数，不另起口径）：
+            # 「价值陷阱特征 32·档4 成串」把风险程度直接亮在风险旗里
+            _tb = trap_band_of(s.trap_c) if s.trap_c is not None else None
+            risks.append(f"价值陷阱特征 {trap:.0f}" + (f"·{_tb['label']}" if _tb else ""))
         if st == 1:
             pick -= ST_WATCH_PENALTY
             risks.append("ST 关注旗" + (f"({s.st_flags})" if s.st_flags else ""))
@@ -301,13 +317,15 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late) -> dic
 
         pick = round(max(0.0, min(100.0, pick)), 1)
 
-    # 强推加门:安全边际/分位/股息至少一项过硬,且无关注旗、无中报恶化、年报不滞后、有规模
+    # 强推加门:安全边际/分位/股息至少一项过硬,且无关注旗、无中报恶化、年报不滞后、有规模;
+    # 陷阱标注线命中者也不进强推(分数照给、风险旗照亮,但「强推」必须干净)
     strong_ok = (
         not avoid and channel == "R"
         and ((disc is not None and disc <= -0.10)
              or (pb_pctile is not None and pb_pctile <= 25)
              or (s.div_yield is not None and s.div_yield >= 0.04))
         and st != 1 and (dip is None or dip > -DIP_FROM)
+        and (trap is None or trap <= TRAP_STRONG_MAX)
         and report_late <= STRONG_STALE
         and mcap_cny is not None and mcap_cny >= STRONG_CAP_FLOOR
     )

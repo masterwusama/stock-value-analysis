@@ -1469,10 +1469,15 @@ def value_score(d):
 #   丙：门槛剔除人群转亏率 19.3% vs 过门 5.8%（z=+24.4）、减值 19.4% vs 9.2%——剔的确实是更坏的人。
 # 两条读法警戒与 V 同源：① 便宜那 65 分在面板上只能配今天市值（前视），判决书用的是无价格版，
 # R 的高分是「质量+便宜的证据合计」不是收益预测（本库无历史行情，收益侧验证做不了）；
-# ② 门槛外的公司没有 R（列表 `-`），那是「不过资格线」不是「得 0 分」。
+# ② 被资格线拦下的公司没有 R（列表 `-`），那是「不过资格线」不是「得 0 分」；陷阱标注线
+# 命中者 R 照打、gate='trap'（前端挂风险标注），见 R_TRAP_GATE 注释。
 R_W_VALUE = 0.6          # V 权重（G 取 1−0.6）：先验声明不拟合——价值取向给量便宜+质量的 V 六成
 R_FRAUD_GATE = 40.0      # 造假分门槛（40=trap_validity 分项表里造假红旗的中带下沿，与刷池线同源量级）
-R_TRAP_GATE = 20.0       # 陷阱分门槛：出厂档位「档2 单点」上沿之内（C ≤ 0.98），只放过无证据与单点
+# 陷阱线 2026-10-17 起由「拦分」改「标注」（用户裁定：强周期底部标的 ROE/毛利率/净现比三项
+# 天然齐亮，整片被拦成 `-` 而看不到分）：>20 的 R 照打、gate 记 'trap'，由列表/掘金台/详情页
+# 挂 ⚠ 陷阱风险标注；线本身的量级仍取出厂档位「档2 单点」上沿（C ≤ 0.98）。掘金台的强推
+# 在 pick.py 侧继续把命中者排除在外——标注制的「分数照给」不等于「强推放行」。
+R_TRAP_GATE = 20.0
 
 
 # ---- 中报恶化 dip：最新 interim 扣非同比（评分轴只吃年报，这里是年报盲区的探针） ----
@@ -1525,26 +1530,31 @@ def interim_dip_yoy(indicators):
 def recommend_score(v_total, g_total, fraud, trap_total, dip=None):
     """→ (R 总分 or None, 门槛状态)。
 
-    门槛状态：'pass'（有分）/ 'fraud' / 'trap' / 'interim'（中报恶化 dip ≤ −70%，见
-    INTERIM_DIP_GATE 注释）/ 组合（'+' 连接，如 'fraud+interim'）/ 'nodata'（门槛过了
-    但 V/G 任一判不动，公开年报不足 3 期）。判不动的门槛输入（fraud/trap/dip 为 None）
-    按「无证据」放行——港美股 trap 整列不适用、扣非缺失侧 dip 判不动，靠这条拿得到 R。
+    门槛状态：'pass'（有分且干净）/ 'trap'（有分但陷阱标注线命中——R 照打，前端挂
+    价值陷阱风险标注）/ 'fraud' / 'interim'（被资格线拦下，R=None）或组合（'+' 连接，
+    顺序恒为 fraud→trap→interim，如 'fraud+trap'、'trap+interim'；拦截项在组合里时
+    R=None，'trap' 只作附记保留信息）/ 'nodata'（门槛过了但 V/G 判不动，公开年报
+    不足 3 期）。判不动的门槛输入（fraud/trap/dip 为 None）按「无证据」放行——港美股
+    trap 整列不适用、扣非缺失侧 dip 判不动，靠这条拿得到 R。
+    trap 2026-10-17 起不再拦分（动机与去向见 R_TRAP_GATE 注释）：资格线只留
+    fraud/dip 两道拦截，陷阱>20 的 gate='trap' 让前端把风险亮出来。
     stockLegacy.js 的 recommendScore 同一条规则。
     """
-    fail = []
+    hit = []
     if fraud is not None and fraud > R_FRAUD_GATE:
-        fail.append('fraud')
-    if trap_total is not None and trap_total > R_TRAP_GATE:
-        fail.append('trap')
+        hit.append('fraud')
+    trap_hit = trap_total is not None and trap_total > R_TRAP_GATE
+    if trap_hit:
+        hit.append('trap')
     if dip is not None and dip <= INTERIM_DIP_GATE:
-        fail.append('interim')
-    if fail:
-        return None, '+'.join(fail)
+        hit.append('interim')
+    if 'fraud' in hit or 'interim' in hit:
+        return None, '+'.join(hit)
     if v_total is None or g_total is None:
         return None, 'nodata'
     r = R_W_VALUE * v_total + (1.0 - R_W_VALUE) * g_total
     # 与 JS Math.round(r*10)/10 一致（Python round 为银行家舍入，不能直接用）
-    return math.floor(r * 10 + 0.5) / 10.0, 'pass'
+    return math.floor(r * 10 + 0.5) / 10.0, ('trap' if trap_hit else 'pass')
 
 
 def management_analysis(d):
