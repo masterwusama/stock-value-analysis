@@ -628,7 +628,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         vv = valueScore(d); gg = growthScore(d);
         var ve = $('stock-score-value'), ge = $('stock-score-growth');
         if (ve) ve.innerHTML = valueCard(vv);
-        if (ge) ge.innerHTML = growthCard(gg);
+        if (ge) ge.innerHTML = growthCard(gg, ca);
         var vb = vv.total == null ? null : vBandOf(vv.total);
         var gb = gg.total == null ? null : gBandOf(gg.total);
         fillStrip('V', vv.total, vb ? vb.grade : 'na',
@@ -849,7 +849,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
    * 都有；覆盖度差异由 evaluated 出——实测 A 股平均 6.58/7 项、美股只有 4.99/7。
    */
 
-  function growthCard(gs) {
+  function growthCard(gs, ca) {
     var band = gs.total == null ? null : gBandOf(gs.total);
     var g = band ? band.grade : 'na';
     var head = '<div class="score-card-head"><h4>成长综合分 G</h4>' +
@@ -857,6 +857,13 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
       (gs.total == null ? '算不出' : fmtNum(gs.total)) + '</b><i>' +
       (band ? band.label : '年报不足 3 期') + '</i></div></div>';
     if (gs.reason) return head + '<p class="score-note">' + gs.reason + '，七项全部判不动。</p>';
+    // 周期相位注记（2026-10-18）：相位项占七成权重，周期股的 G 绝对档位系统性偏低
+    // （拆分实测 58% 落档1/档2）——下滑里有周期规律的成分，与结构衰退分开读
+    var cycNote = ca && ca.cyclical
+      ? '<p class="score-basis" style="color:#c2571a">⚠ 周期相位注记：本标的判为强周期' +
+        '（位置 ' + (ca.total == null ? '-' : fmtNum(ca.total)) + '），G 对周期股的绝对档位系统性偏低——' +
+        '近五年的下滑里含周期规律，别与结构衰退同读；跨周期质量看「ROE 近 5 年中位」与价值分 V 的质量块。</p>'
+      : '';
     var rows = gs.items.map(function (x) {
       var cls = x.na ? 'sc-na' : x.sc >= 0.8 ? 'sc-good' : x.sc >= 0.4 ? 'sc-mid' : 'sc-low';
       var fmt = G_VALUE_FMT[x.key] || fmtNum;
@@ -875,7 +882,7 @@ import { detailMarket, fmtCap, cls, yiUnit, yuanUnit, kv, sheetTab } from './det
         '<td class="v"><b>' + b.s2 + '%</b></td><td class="v">' + b.s3 + '%</td>' +
         '<td class="v">' + b.neg2 + '%</td></tr>';
     }).join('');
-    return head +
+    return head + cycNote +
       '<p class="score-basis">' + gs.basis + '　可判 ' + gs.eff.evaluated + '/7 项' +
       '（分母固定为 100 权重，缺项只压低分数、不重新归一）</p>' +
       '<div class="stock-compare-wrap"><table class="stock-compare">' +

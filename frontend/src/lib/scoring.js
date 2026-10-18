@@ -1292,6 +1292,9 @@
   // 价值陷阱分评分卡：分数只是七项证据的加权合计，看得懂要靠分项三态 + 档位实测发生率
 
   var G_ITEMS = [
+    // np_g5/rev_g5 维持端点年化。「改逐年增速中位治周期相位」2026-10-18 过了拆分研究却栽在
+    // 官方三线的 T=2021 峰值锚点（medyear Q5−Q1 −0.6pp、剔锚年的 medlag ρ 翻负）——判词见
+    // g_validity.py --np-rev，别再提同一个想法；相位读法走 scoreCalcText 的周期注记。
     { key: 'np_g5', label: '净利 5 年年化增速', weight: 22, lo: -0.05, hi: 0.15 },
     { key: 'rev_g5', label: '营收 5 年年化增速', weight: 16, lo: -0.05, hi: 0.15 },
     { key: 'roe_med', label: 'ROE 近 5 年中位', weight: 16, lo: 0.05, hi: 0.18 },
@@ -2429,6 +2432,17 @@
       if (gv.total == null && gv.reason) { L.push(nm + '：算不出（' + gv.reason + '，七项全部判不动）'); return L.join('\n'); }
       L.push(nm + '：' + (gv.total == null ? '-' : fmtNum(gv.total) + '（' + bandLabel(gvb, gv.total) + '）'));
       L.push(gv.basis + '　可判 ' + gv.eff.evaluated + '/7 项（分母固定 100 权重，缺项只压低分数、不重新归一）');
+      // 周期相位注记（2026-10-18）：G 的相位项占七成权重，周期股的绝对档位系统性偏低
+      // （58% 落档1/档2）——下行段的三连降有周期规律的成分，与结构衰退要分开读。
+      // 非周期不注，避免全屏噪声；跨周期质量的锚是 ROE 中位与 V 的质量块。
+      if (which === 'growth') {
+        var cycCa = cycleAnalysis(d);
+        if (cycCa.cyclical) {
+          L.push('⚠ 周期相位注记：本标的判为强周期（位置 ' + (cycCa.total == null ? '-' : fmtNum(cycCa.total)) +
+            '），G 对周期股的绝对档位系统性偏低——近五年的下滑里含周期规律，别与结构衰退同读；' +
+            '跨周期质量看「ROE 近 5 年中位」一项与 V 的质量块。');
+        }
+      }
       (gv.items || []).forEach(function (x) {
         var gf = gvf[x.key] || fmtNum;
         if (x.na || x.sc == null) {

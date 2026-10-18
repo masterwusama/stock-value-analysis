@@ -84,7 +84,7 @@ from app.models import Security  # noqa: E402
 from scripts.fraud_validity import (Avail, ashare_sids, load_announce,  # noqa: E402
                                     load_batch, score_at, _num)
 from scripts.trap_validity import (TABLES, _g, _pad, _pear, fy_facts,  # noqa: E402
-                                   quantiles)
+                                   G_CAP, quantiles)
 from scoring import (annual_rows, compute_scores, cycle_analysis,  # noqa: E402
                      management_analysis, trap_score)
 
@@ -94,6 +94,33 @@ PANEL_YEARS = (2021, 2022, 2023)      # 有未来结局的信号年：锚点年 
 ALL_YEARS = PANEL_YEARS + (2024,)     # 2024 只用于分位保持度（它的 2 年结局要 FY2026）
 HORIZONS = (2, 3)
 NEG_MIN_PAIRS = 4    # 5 年窗本该有 5 个同比间隔，缺 1 个仍算判得动
+MED_MIN_PAIRS = 3    # 逐年增速中位的最少配对数：两期的中位就是均值，噪声当不了趋势
+
+# 拟议口径开关（--np-rev medyear）：np_g5/rev_g5 由「端点年化」改「逐年增速中位」。
+# 端点法被基期/锚点落在峰谷一锤定音（2020 疫情坑做基期能把整段吹成正数），中位法只认
+# 「典型的一年长多少」；stab/accel/roe_trend 等相位项不动。2026-10-18 拆分研究结论：
+# 线上 G 在非周期股内部几乎切不动（Q5−Q1 +1.1pp），中位法两个子面板都改善。
+MED_YEARLY = False
+# medyear 的官方三线败在 T=2021 峰值锚点（景年 +50% 被夹进中位把峰顶公司抬上 Q5，结局窗
+# 全崩）——锚点年本身正是相位点。medlag 把含锚点年的配对从窗口剔掉，让峰年吹正/谷年压负
+# 从两端同时退出。这是失败诊断后的**一发预登记补测**；再往上叠变体就是对同一面板的过拟合，不做。
+MED_LAG = False
+
+
+def _g_med(f, key, base, ay):
+    """逐年增速中位：逐年配对（基期 p>0；p>0 而 q≤0 记 −CAP），逐年夹 ±G_CAP 后取中位，
+    配对不足 MED_MIN_PAIRS 判不动。与 scoring.growth_score 的生产实现逐字同构，改要两边一起。
+    medlag 时窗口只到 ay−1（锚点年不进任何配对）。"""
+    gs = []
+    for y in range(base, ay - 1 if MED_LAG else ay):
+        p = f.get(y, {}).get(key)
+        q = f.get(y + 1, {}).get(key)
+        if p is None or q is None or p <= 0:
+            continue
+        gs.append(-G_CAP if q <= 0 else max(-G_CAP, min(G_CAP, q / p - 1.0)))
+    if len(gs) < MED_MIN_PAIRS:
+        return None
+    return statistics.median(gs)
 
 # 七项先验：(key, 标签, 权重, 0 分锚点, 100 分锚点)。锚点是**绝对阈值**，不做同市场横截面重排
 # ——任何一家公司的分只能由它自己的财务决定；横截面重排会破坏日更幂等与批次护栏，
@@ -143,6 +170,9 @@ def g_raw(f, yrs):
     cur, b = f[ay], f[base]
     for key, col in (("np_g5", "net"), ("rev_g5", "rev"), ("bps_g5", "bps")):
         out[key] = _g(cur.get(col), b.get(col), span)
+    if MED_YEARLY:                       # 拟议口径：np/rev 换逐年增速中位（锚点与权重不变）
+        out["np_g5"] = _g_med(f, "net", base, ay)
+        out["rev_g5"] = _g_med(f, "rev", base, ay)
     win = [y for y in yrs if base < y]
     roes = [f[y]["roe"] for y in win if f[y].get("roe") is not None]
     if len(roes) >= 3:
@@ -306,6 +336,9 @@ def run(years, limit=0):
                 gval, ev, sc = g_score(raw)
                 rec = {"sid": sid, "t": t, "ay": ay, "span": ay - base, "n_fy": len(yrs),
                        "raw": raw, "sc": sc, "g": gval, "ev": ev, "o": outcome(f, ay)}
+                # 周期子面板分析用：输入端各年四列原值（结局不消费它；旧 dump 无此字段，别互复用）
+                rec["ser"] = {str(y): {k: f[y].get(k) for k in ("net", "rev", "roe", "bps")}
+                              for y in yrs}
 
                 def keep(rd, _end=end, _sig=sig, _av=av):
                     return rd <= _end and _av.of(rd) <= _sig
@@ -742,8 +775,17 @@ def main():
                     help="改某项锚点，形如 accel=-0.7:0.4，可重复；只看输入端分布，不碰结局")
     ap.add_argument("--dump", default="", help="把面板观测写成 JSON，供 --load 复用（分项或结局口径改了别复用）")
     ap.add_argument("--load", default="", help="从 JSON 读回面板观测，不碰库")
+    ap.add_argument("--np-rev", choices=("endpoint", "medyear", "medlag"), default="endpoint",
+                    help="np_g5/rev_g5 算法：endpoint=端点年化（现行）；medyear=逐年增速中位（拟议，"
+                         "官方三线败在 T=2021 峰值锚点）；medlag=中位再剔锚点年配对（预登记补测）")
     a = ap.parse_args()
     variant(a.drop, a.anchor)
+    global MED_YEARLY, MED_LAG
+    MED_YEARLY = a.np_rev in ("medyear", "medlag")
+    MED_LAG = a.np_rev == "medlag"
+    if MED_YEARLY:                       # 报表标签跟着口径走，别让表头说谎
+        LABEL["np_g5"] = "净利逐年增速中位(5 年窗)"
+        LABEL["rev_g5"] = "营收逐年增速中位(5 年窗)"
     if a.load:
         obs = json.loads(Path(a.load).read_text(encoding="utf-8"))
         counts = Counter({"观测": len(obs)})
