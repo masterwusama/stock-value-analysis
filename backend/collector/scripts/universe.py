@@ -566,6 +566,58 @@ def tencent_spot(codes, quiet=False):
     return out
 
 
+def tencent_spot_hk(codes, quiet=False):
+    """港股批量行情（hk 前缀），字段与 tencent_spot 对齐。
+
+    腾讯港股行与 A 股行布局不同：46 位是英文名不是 PB，不能复用 tencent_spot
+    的偏移。实测（与东财 fetch_hk_snapshot 口径比对）：57=PE-TTM（长和 6.71 vs
+    东财 6.7094）、58=PB（腾讯 2.76 vs 东财 2.738）、44/45=流通/总市值(亿港元)、
+    39 位是静态口径 PE 不用。港股无换手率字段，恒 None。
+    """
+    import fetch_data as fd
+    out = {}
+    codes = [str(c).zfill(5) for c in codes]   # 港股 5 位，勿 zfill(6)（会撞 A 股码段）
+    batches = [codes[i:i + TENCENT_BATCH] for i in range(0, len(codes), TENCENT_BATCH)]
+    for bi, batch in enumerate(batches, 1):
+        q = ",".join("hk" + c for c in batch)
+        items = []
+        for attempt in range(3):
+            try:
+                r = requests.get(TENCENT_URL + q, timeout=15)
+                r.encoding = "gbk"
+                items = [x for x in r.text.strip().split(";") if "~" in x]
+                if len(items) >= max(1, len(batch) // 2):
+                    break
+            except Exception:
+                time.sleep(1.5 * (attempt + 1))
+        for item in items:
+            parts = item.split("~")
+            if len(parts) < 59:
+                continue
+
+            def num(i):
+                try:
+                    return float(parts[i])
+                except (TypeError, ValueError, IndexError):
+                    return None
+
+            out[str(parts[2]).zfill(5)] = {
+                "name": parts[1].strip() or None,
+                "price": num(3),
+                "change_pct": None if num(32) is None else round(num(32) / 100.0, 6),
+                "pe_ttm": num(57),
+                "pb": num(58),
+                "market_cap": None if num(45) is None else round(num(45) * 1e8, 2),
+                "float_market_cap": None if num(44) is None else round(num(44) * 1e8, 2),
+                "turnover_rate": None,
+                "time": fd.format_quote_time(parts[30]),
+            }
+        if not quiet and bi % 20 == 0:
+            print("  [腾讯港股] %d/%d 批" % (bi, len(batches)), flush=True)
+        time.sleep(0.25)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="全市场标的池")
     ap.add_argument("--force", action="store_true", help="忽略缓存重拉名单")

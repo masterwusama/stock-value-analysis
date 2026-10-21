@@ -6,7 +6,8 @@
 
 任务表(全市场 5500 只规模下的两层节奏):
     行情快照: 周一至周六 16:05 / 22:05——只刷腾讯批量估值(分钟级),
-             不重抓财务
+             不重抓财务;2026-10-21 起含港股通 621 只(此前港股行情只在
+             周六 deep 里刷,被 --max-age 跳过就断更一周,见 hk 并入记录)
     全市场深抓: 周六 09:05——财报/定期报告重抓(--resume --max-age 6, 约 4.5h),
              财务数据按季更新,周频足够; 新上市标的也在这一步进池
     农价     : 每天 09:05 / 21:05(生意社每周 2~4 次,一天 2 次足够)
@@ -14,7 +15,8 @@
              HTTP 源(新浪期货主力连续/东财宏观,收缩为 8 指标),不再依赖 Wind,云端可跑
     估值分位 : 每天 03:35——PE/PB/PS 十年分位,2026-10-04 起换免费源(东财 datacenter,
              fetch_valuation_em)刷全 A 一轮,约 110 分钟;Wind 路径退为手动
-             (python -m collector.run valuation --source wind,唯一还能刷港股的路径)
+             (python -m collector.run valuation --source wind,唯一还能刷港股分位的
+             路径;港股行情快照自 2026-10-21 起走每日 stock job,不依赖这里)
     立案公告 : 每周日 10:05——巨潮全文检索「立案告知书/行政处罚决定书」(免 Wind),
              灌 case_event 并单刷 score_daily,「正在立案」抬 ST 高危旗
     其余 Wind 侧(events/valuation 之外的 events job)仍不进调度:本机 Wind 客户端 CLI

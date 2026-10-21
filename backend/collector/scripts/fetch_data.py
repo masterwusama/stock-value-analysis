@@ -20,7 +20,7 @@
     python fetch_data.py --codes HK.00700            # 港股代码带前缀（不补零到 6 位，不会砸 A 股同名文件）
     python fetch_data.py --hk-connect --workers 6    # 只跑港股通名单（≈621 只）
     python fetch_data.py --us-indexes --workers 6    # 只跑美股五大指数成分（≈765 只）
-    python fetch_data.py --snapshot-only      # 仅用腾讯批量行情刷全市场估值（约 1 分钟）
+    python fetch_data.py --snapshot-only      # 仅用腾讯批量行情刷 A 股+港股通估值（约 1 分钟）
 
 index.json 采用“合并写”：每次只覆盖本次跑到的条目，其余保留，
 因此 --limit/--codes/--shard 部分执行不会把名单截断（旧版会）。
@@ -2264,8 +2264,32 @@ def _safe_crawl(item):
         return code, None, [], time.time() - t0, traceback.format_exc(limit=3)
 
 
+def _apply_spot(by_code, spot, market, now):
+    """单市场行情批 → index 条目（price/quote/quote_at）；返回命中数。
+
+    停牌/退市无价（price 缺失）时保留旧快照不抹空；不在 index 的代码忽略。
+    """
+    hit = 0
+    for code, snap in spot.items():
+        if not snap.get("price"):
+            continue
+        entry = by_code.get(f"{code}|{market}")
+        if not entry:
+            continue
+        entry["price"] = snap.get("price")
+        entry["quote"] = _quote_of(snap)
+        entry["quote_at"] = now
+        hit += 1
+    return hit
+
+
 def run_snapshot_only(args):
-    """仅刷估值快照：腾讯批量行情 → index.json 的 quote/price（分钟级日更）。"""
+    """仅刷估值快照：腾讯批量行情 → index.json 的 quote/price（分钟级日更）。
+
+    A 股 + 港股通各刷一轮（布局不同，见 universe.tencent_spot_hk）；港股财务
+    不动，仍由周六 deep 的 --hk-connect 按周重抓。行情经 quote.time 进
+    quote_daily（import_index_snapshot 不设 only-fresh 门槛），港股日更即生效。
+    """
     import universe as uni
 
     by_code = load_index_map()
@@ -2274,30 +2298,25 @@ def run_snapshot_only(args):
         return 1
     codes = sorted({key.split("|")[0] for key in by_code
                     if key.endswith("|A")})
-    print(f"[snapshot-only] 腾讯批量刷新 {len(codes)} 只 A 股估值 ...", flush=True)
-    spot = uni.tencent_spot(codes, quiet=args.quiet)
-    by_num = {key.split("|")[0]: key for key in by_code if key.endswith("|A")}
-    hit = 0
+    hk_codes = sorted({key.split("|")[0] for key in by_code
+                       if key.endswith("|HK")})
+    print(f"[snapshot-only] 腾讯批量刷新 {len(codes)} 只 A 股 + {len(hk_codes)} 只港股估值 ...",
+          flush=True)
     now = datetime.now(CN_TZ).strftime("%Y-%m-%dT%H:%M:%S+08:00")
-    for code, snap in spot.items():
-        if not snap.get("price"):
-            continue                      # 停牌/退市无价：保留旧快照，不抹空
-        key = by_num.get(code)
-        if not key:
-            continue
-        entry = by_code[key]
-        entry["price"] = snap.get("price")
-        entry["quote"] = _quote_of(snap)
-        entry["quote_at"] = now
-        hit += 1
+    hit = _apply_spot(by_code, uni.tencent_spot(codes, quiet=args.quiet), "A", now)
+    hk_hit = 0
+    if hk_codes:
+        hk_hit = _apply_spot(by_code, uni.tencent_spot_hk(hk_codes, quiet=args.quiet),
+                             "HK", now)
     items = save_index(by_code)
-    print(f"[snapshot-only] 行情更新 {hit}/{len(codes)} 只，index 共 {len(items)} 条")
-    if hit * 2 < len(codes):
+    print(f"[snapshot-only] 行情更新 {hit}/{len(codes)} 只 A 股、{hk_hit}/{len(hk_codes)} 只港股，"
+          f"index 共 {len(items)} 条")
+    if (hit + hk_hit) * 2 < len(codes) + len(hk_codes):
         # 命中率 < 50% 仍 exit 0 的话，腾讯侧断更会被记成 success——日更断了没人知道
         # （index 里留着旧价，与 fetch_prices 的断档告警形成反差）。部分成功的条目
         # 已随上面的 save_index 落盘，不回滚。退出码 6 → run.py 记 failed。
-        print(f"[snapshot-only] 行情命中率过低（{hit}/{len(codes)}），本轮记失败，"
-              f"检查腾讯行情源可用性", flush=True)
+        print(f"[snapshot-only] 行情命中率过低（{hit + hk_hit}/{len(codes) + len(hk_codes)}），"
+              f"本轮记失败，检查腾讯行情源可用性", flush=True)
         return 6
     return 0
 
