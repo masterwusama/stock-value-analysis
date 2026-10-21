@@ -4,7 +4,7 @@
 <template>
   <header class="topbar">
     <router-link to="/" class="brand">价值分析</router-link>
-    <nav>
+    <nav aria-label="主导航">
       <router-link to="/">证券列表</router-link>
       <router-link to="/pick">掘金台</router-link>
       <router-link to="/agro">农价·量价</router-link>

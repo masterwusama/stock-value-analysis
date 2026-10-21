@@ -135,15 +135,15 @@ const tocGroups = computed(() => {
 
 <style scoped>
 .res { max-width: 1100px; margin: 0 auto; }
-.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 18px; margin-bottom: 14px; }
+.card { background: #fff; border: 1px solid #e5e9f2; border-radius: 12px; padding: 14px 18px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(20, 30, 55, 0.05); }
 .err { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 8px; }
 .empty { color: #9ca3af; }
 .page-head h2 { margin: 4px 0 6px; }
 .page-head .sub { color: #6b7280; font-size: 13px; margin: 0 0 14px; }
 .page-head code { background: #f3f4f6; border-radius: 4px; padding: 0 4px; font-size: 12px; }
 
-section.card { cursor: pointer; transition: border-color 0.15s; }
-section.card:hover { border-color: #93c5fd; }
+section.card { cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+section.card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(20, 30, 55, 0.07); }
 .row1 { display: flex; align-items: center; gap: 10px; }
 .code-link { color: #2563eb; text-decoration: none; font-weight: 600; }
 .code-link:hover { text-decoration: underline; }
@@ -169,8 +169,8 @@ section.card:hover { border-color: #93c5fd; }
 .val-m { display: block; color: #9ca3af; font-size: 12px; margin-top: 2px; }
 
 .reader { display: flex; gap: 14px; align-items: flex-start; }
-/* 目录:粘性 + 限高,超长在 .toc-scroll 内部滚动;外层 details 收起时高度自然收缩 */
-.toc { position: sticky; top: 70px; width: 220px; flex-shrink: 0; font-size: 13px;
+/* 目录:粘性挂在顶栏之下 + 限高,超长在 .toc-scroll 内部滚动;外层 details 收起时高度自然收缩 */
+.toc { position: sticky; top: calc(var(--stick-top, 58px) + 10px); width: 220px; flex-shrink: 0; font-size: 13px;
   display: flex; flex-direction: column; max-height: calc(100vh - 84px); overflow: hidden; padding: 12px 12px 8px; }
 .toc > details { display: flex; flex-direction: column; min-height: 0; }
 .toc > details > summary { flex-shrink: 0; cursor: pointer; font-weight: 600; margin-bottom: 4px; }

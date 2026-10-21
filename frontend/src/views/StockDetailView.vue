@@ -128,13 +128,15 @@ onBeforeUnmount(() => {
 <style scoped>
 .detail-bar { margin-bottom: 12px; }
 .back-btn {
-  padding: 6px 16px;
+  padding: 7px 18px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 999px;
   background: var(--card);
   cursor: pointer;
   font-size: 14px;
   color: var(--txt);
+  box-shadow: var(--shadow-s, 0 1px 2px rgba(20, 30, 55, 0.05));
+  transition: border-color 0.15s, color 0.15s;
 }
 .back-btn:hover { border-color: var(--accent); color: var(--accent); }
 
@@ -159,8 +161,8 @@ onBeforeUnmount(() => {
 /* 研报入口卡:横条链接卡,与 legacy 评分卡同视觉层 */
 .res-card { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
   background: #fff; border: 1px solid #dbe7f5; border-left: 3px solid #2563eb;
-  border-radius: 8px; padding: 10px 16px; margin-bottom: 12px;
-  text-decoration: none; box-shadow: 0 1px 3px rgba(16,24,40,0.05); }
+  border-radius: 12px; padding: 10px 16px; margin-bottom: 12px;
+  text-decoration: none; box-shadow: 0 1px 2px rgba(16, 24, 40, 0.05); }
 .res-card:hover { border-color: #2563eb; }
 .rc-badge { font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 10px; flex-shrink: 0; }
 .rc-buy { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }

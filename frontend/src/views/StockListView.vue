@@ -889,7 +889,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
                 @click="board = b[0]; page = 1">{{ b[1] }}</button>
       </div>
       <input v-model="keyword" placeholder="搜索代码 / 名称" />
-      <span v-if="data" style="color: var(--sub)">共 {{ data.total }} 只 · 快照 {{ data.trade_date }}</span>
+      <span v-if="data" class="total-hint">共 {{ data.total }} 只 · 快照 {{ data.trade_date }}</span>
     </div>
 
     <div v-if="isMobile" class="m-tgls">
@@ -1345,6 +1345,8 @@ const REF_COLS = COLS.filter((c) => c.ref)
 }
 .flts .ex-clear:hover, .flts .ex-tag:hover { border-color: var(--accent); color: var(--accent); }
 .flts .disc { margin-left: 2px; }
+/* 工具条统计文案：桌面跟在搜索框后，手机与搜索框同行的弱化小字 */
+.total-hint { color: var(--sub); font-size: 12px; white-space: nowrap; }
 .flts .rst {
   margin-left: auto;
   padding: 3px 12px;
@@ -1463,21 +1465,42 @@ table.grid-list .ind {
 .stock-cards { display: flex; flex-direction: column; gap: 10px; }
 .stock-card {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: 14px;
   background: var(--card);
-  padding: 10px 12px;
+  padding: 12px 12px 10px;
   cursor: pointer;
+  box-shadow: var(--shadow-s, 0 1px 2px rgba(20, 30, 55, 0.05));
+  transition: box-shadow 0.15s, border-color 0.15s;
 }
-.stock-card:active { background: #f2f6fc; }
+.stock-card:active { border-color: var(--accent-line); box-shadow: var(--shadow-m); }
 .stock-card:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-.sc-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
-.sc-name { font-size: 15px; font-weight: 600; color: var(--txt); }
-.sc-code { font-size: 11px; color: var(--sub); }
+.sc-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sc-name { font-size: 16px; font-weight: 700; color: var(--txt); }
+.sc-code { font-size: 11px; color: var(--sub-deep, #8b95ab); font-variant-numeric: tabular-nums; }
 /* 行业最长 20 字，独占第二行，不与名称/现价抢宽度 */
 .sc-industry { font-size: 11px; color: var(--sub); flex: 1 1 100%; order: 3; }
-.sc-price { margin-left: auto; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.sc-price b { font-size: 11px; font-weight: 500; margin-left: 4px; }
+/* 现价块：价格在上、涨跌幅徽标在下，右对齐成迷你报价条 */
+.sc-price {
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.sc-price b {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #eef1f7;
+}
+.sc-price b.up { background: #fdecef; }
+.sc-price b.down { background: #e6f6ee; }
 
 /* 指标条：PE/PB/市值/造假/管理/周期/净现金·市值，按 33.33% 基准自动折行（7 枚＝三行，末行一枚） */
 .sc-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -1549,23 +1572,24 @@ table.grid-list .ind {
 .sc-na { color: #9aa5b5; }
 
 @media (max-width: 600px) {
-  /* 折叠触发按钮：36px 触控高度，展开态走主题色，箭头翻转 */
+  /* 折叠触发按钮：40px 触控高度，展开态走主题色，箭头翻转 */
   .m-tgls { display: flex; gap: 8px; margin-bottom: 8px; }
   .m-tgl {
     flex: 1 1 0;
     min-width: 0;
-    min-height: 36px;
+    min-height: 40px;
     display: inline-flex;
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    padding: 6px 10px;
+    padding: 6px 12px;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--card);
     color: var(--txt);
     cursor: pointer;
     font-size: 13px;
+    box-shadow: var(--shadow-s, 0 1px 2px rgba(20, 30, 55, 0.05));
   }
   .m-tgl.on { border-color: var(--accent); color: var(--accent); }
   .m-tgl-tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1574,7 +1598,17 @@ table.grid-list .ind {
 
   /* 筛选栏：桌面是一行约 17 个控件的横向流，手机上必然溢出。
      改成两列折行（小控件半宽，下拉/按钮/说明整行），限高内滚不吃掉首屏。 */
-  .flts { gap: 8px; max-height: 52vh; overflow-y: auto; padding-right: 2px; }
+  .flts {
+    gap: 8px;
+    max-height: 56vh;
+    overflow-y: auto;
+    padding: 12px 10px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #f8fafd;
+    margin-bottom: 12px;
+    -webkit-overflow-scrolling: touch;
+  }
   .flts > * { flex: 1 1 calc(50% - 5px); min-width: 0; }
   .flts .t, .flts .wind, .flts .ex-t, .flts .ex-box, .flts .disc, .flts .rst, .flts-hint { flex: 1 1 100%; }
   .flts .t { margin-left: 0; }
@@ -1656,11 +1690,14 @@ table.grid-list .ind {
 @media (max-width: 600px) {
   .m-tgls {
     position: sticky;
-    top: 0;
+    top: var(--topbar-h, 48px);
     z-index: 30;
     background: var(--card, #fff);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, .08);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
   }
+  /* 统计文案与搜索框同行放不下时自己换行，别把搜索框挤没 */
+  .total-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
 }
 /* ---- M1 移动卡片三层重排 ---- */
 .sc-meta {
@@ -1694,15 +1731,15 @@ table.grid-list .ind {
 .sc-hero {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
-  margin-top: 8px;
+  gap: 8px;
+  margin-top: 10px;
 }
+/* 决策格按档位上浅底色：红绿语义一眼可辨，不用先读数字 */
 .hero-cell {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px 4px;
+  border-radius: 10px;
+  padding: 7px 4px 6px;
   text-align: center;
-  background: #fff;
+  background: #f4f6fa;
 }
 .hero-cell em {
   display: block;
@@ -1711,7 +1748,7 @@ table.grid-list .ind {
   color: var(--sub);
 }
 .hero-cell b {
-  font-size: 17px;
+  font-size: 18px;
   font-variant-numeric: tabular-nums;
 }
 .hero-cell b .tp-ev { font-size: 9px; }
@@ -1721,25 +1758,37 @@ table.grid-list .ind {
   color: #a5aeb5;
   margin-left: 2px;
 }
+.hero-cell.sc-good { background: #ebf8f0; }
+.hero-cell.sc-mid { background: #fdf5e4; }
+.hero-cell.sc-low { background: #fdeeed; }
+.hero-cell.sc-bad { background: #fbe6e4; }
+.hero-cell.sc-na { background: #f4f6fa; }
 .sc-more {
-  margin-top: 8px;
+  margin-top: 10px;
   border-top: 1px dashed var(--line);
 }
 .sc-more summary {
   list-style: none;
   text-align: center;
-  padding: 7px 0 2px;
+  padding: 6px 18px;
+  margin: 10px auto 2px;
+  width: fit-content;
   font-size: 12px;
   color: var(--sub);
+  background: var(--bg, #f4f6fb);
+  border: 1px solid var(--line);
+  border-radius: 999px;
   cursor: pointer;
-  min-height: 32px;
+  min-height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: color 0.15s, border-color 0.15s;
 }
+.sc-more summary:active { color: var(--accent); border-color: var(--accent-line); }
 .sc-more summary::-webkit-details-marker { display: none; }
 .sc-more summary::after { content: ' ▾'; }
 .sc-more[open] summary::after { content: ' ▴'; }
-.sc-more[open] summary { border-bottom: 1px dashed var(--line); margin-bottom: 6px; }
+.sc-more[open] summary { border-bottom: 1px dashed transparent; margin-bottom: 6px; }
 /* 收起后 summary 承担触控目标；点开区不冒泡到卡片跳转由 @click.stop 处理 */
 </style>

@@ -257,56 +257,62 @@ function goRow(d) { loadDate(d) }
       <!-- ④ 细分板块效应 -->
       <section class="card">
         <h3>细分板块效应<span class="sub">东财行业,同行业涨停≥3家 · 比大类细一档(医药→化学制药/医疗服务/医疗器械)</span></h3>
-        <table v-if="(daily.sectors_fine || []).length" class="tbl">
-          <thead><tr><th>细分行业</th><th class="num">涨停家数</th><th class="num">占涨停%</th><th class="num">最高连板</th><th class="num">封单合计(亿)</th></tr></thead>
-          <tbody>
-            <tr v-for="s in daily.sectors_fine" :key="s.industry">
-              <td>{{ s.industry }}</td>
-              <td class="num">{{ s.limit_count }}</td>
-              <td class="num">{{ s.share_of_zt }}%</td>
-              <td class="num">{{ s.max_streak ?? '-' }}</td>
-              <td class="num">{{ s.seal_yi ?? '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="(daily.sectors_fine || []).length" class="tbl-scroll">
+          <table class="tbl">
+            <thead><tr><th>细分行业</th><th class="num">涨停家数</th><th class="num">占涨停%</th><th class="num">最高连板</th><th class="num">封单合计(亿)</th></tr></thead>
+            <tbody>
+              <tr v-for="s in daily.sectors_fine" :key="s.industry">
+                <td>{{ s.industry }}</td>
+                <td class="num">{{ s.limit_count }}</td>
+                <td class="num">{{ s.share_of_zt }}%</td>
+                <td class="num">{{ s.max_streak ?? '-' }}</td>
+                <td class="num">{{ s.seal_yi ?? '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p v-else class="empty">当日无细分板块聚集。</p>
       </section>
 
       <!-- ⑤ 大类板块效应 -->
       <section class="card">
         <h3>大类板块效应<span class="sub">证监会行业,涨停≥5家且占该行业成分≥2% · 次日溢价档 {{ daily.report.premium_hint || '-' }}</span></h3>
-        <table v-if="(daily.sectors || []).length" class="tbl">
-          <thead><tr><th>行业</th><th class="num">涨停家数</th><th class="num">占行业%</th><th class="num">成交额</th></tr></thead>
-          <tbody>
-            <tr v-for="s in daily.sectors" :key="s.industry">
-              <td>{{ s.industry }}</td>
-              <td class="num">{{ s.limit_count }}</td>
-              <td class="num">{{ s.share_of_industry }}%</td>
-              <td class="num">{{ fmtAmount(s.amount_yi * 10000) }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="(daily.sectors || []).length" class="tbl-scroll">
+          <table class="tbl">
+            <thead><tr><th>行业</th><th class="num">涨停家数</th><th class="num">占行业%</th><th class="num">成交额</th></tr></thead>
+            <tbody>
+              <tr v-for="s in daily.sectors" :key="s.industry">
+                <td>{{ s.industry }}</td>
+                <td class="num">{{ s.limit_count }}</td>
+                <td class="num">{{ s.share_of_industry }}%</td>
+                <td class="num">{{ fmtAmount(s.amount_yi * 10000) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p v-else class="empty">当日无板块效应行业(散点行情,谨慎追高)。</p>
       </section>
 
       <!-- ⑥ 候选池 -->
       <section class="card">
         <h3>候选池<span class="sub">两类板块效应行业内自然涨停 · 预期竞价溢价 {{ daily.report.premium_hint || '-' }}</span></h3>
-        <table v-if="(daily.report.candidates || []).length" class="tbl">
-          <thead><tr><th>代码/名称</th><th>大类行业</th><th>细分行业</th><th class="num">连板</th><th class="num">收盘</th><th class="num">涨跌幅</th><th class="num">成交额</th><th class="num">流通市值(亿)</th></tr></thead>
-          <tbody>
-            <tr v-for="c in daily.report.candidates" :key="c.code">
-              <td><router-link :to="'/stock/' + c.code" class="code-link">{{ c.code }} {{ c.name }}</router-link></td>
-              <td>{{ c.industry }}</td>
-              <td>{{ c.fine_industry || '-' }}</td>
-              <td class="num">{{ c.streak ?? '-' }}</td>
-              <td class="num">{{ c.price }}</td>
-              <td class="num">{{ c.chg_pct }}%</td>
-              <td class="num">{{ fmtAmount(c.amount_wan) }}</td>
-              <td class="num">{{ c.float_mcap_yi }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div v-if="(daily.report.candidates || []).length" class="tbl-scroll">
+          <table class="tbl">
+            <thead><tr><th>代码/名称</th><th>大类行业</th><th>细分行业</th><th class="num">连板</th><th class="num">收盘</th><th class="num">涨跌幅</th><th class="num">成交额</th><th class="num">流通市值(亿)</th></tr></thead>
+            <tbody>
+              <tr v-for="c in daily.report.candidates" :key="c.code">
+                <td><router-link :to="'/stock/' + c.code" class="code-link">{{ c.code }} {{ c.name }}</router-link></td>
+                <td>{{ c.industry }}</td>
+                <td>{{ c.fine_industry || '-' }}</td>
+                <td class="num">{{ c.streak ?? '-' }}</td>
+                <td class="num">{{ c.price }}</td>
+                <td class="num">{{ c.chg_pct }}%</td>
+                <td class="num">{{ fmtAmount(c.amount_wan) }}</td>
+                <td class="num">{{ c.float_mcap_yi }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <p v-else class="empty">无(当日无板块效应或全是一字板)。</p>
       </section>
 
@@ -368,13 +374,13 @@ function goRow(d) { loadDate(d) }
 
 <style scoped>
 .sent { max-width: 1100px; margin: 0 auto; }
-.card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 14px 16px; margin-bottom: 14px; }
+.card { background: #fff; border: 1px solid #e5e9f2; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px; box-shadow: 0 1px 2px rgba(20, 30, 55, 0.05); }
 .card h3 { margin: 0 0 10px; font-size: 15px; }
 .card .sub { font-weight: normal; color: #6b7280; font-size: 12px; margin-left: 8px; }
 .err { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 8px; }
 
 .head { display: flex; align-items: center; gap: 16px; }
-.badge { font-size: 30px; font-weight: 700; color: #fff; background: #6b7280; border-radius: 10px; padding: 10px 18px; }
+.badge { font-size: 28px; font-weight: 700; color: #fff; background: #6b7280; border-radius: 12px; padding: 12px 20px; box-shadow: 0 4px 14px rgba(20, 30, 55, 0.16); letter-spacing: 2px; }
 .tone-strong .badge { background: #dc2626; }  /* A股红涨 */
 .tone-warm .badge { background: #ea580c; }
 .tone-flat .badge { background: #6b7280; }
@@ -419,15 +425,17 @@ function goRow(d) { loadDate(d) }
 .tpct { width: 3em; }
 
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
-.tbl th, .tbl td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; text-align: left; }
-.tbl th { color: #6b7280; font-weight: 500; }
+.tbl th, .tbl td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: left; white-space: nowrap; }
+.tbl th { color: #6b7280; font-weight: 500; position: sticky; top: 0; background: #fff; }
 .tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
 .code-link { color: #2563eb; text-decoration: none; }
 .code-link:hover { text-decoration: underline; }
+/* 宽表横滚容器：候选池 8 列 / 历史明细 10 列在手机上靠横滑而不是压碎 */
+.tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
 /* 历史明细:整行可点,当天行高亮 */
 details > summary { cursor: pointer; font-size: 15px; font-weight: 600; margin-bottom: 8px; }
 details > summary .sub { font-weight: normal; }
-.tbl-wrap { max-height: 420px; overflow-y: auto; }
+.tbl-wrap { max-height: 420px; overflow: auto; -webkit-overflow-scrolling: touch; }
 .hrow { cursor: pointer; }
 .hrow:hover { background: #f8fafc; }
 .hrow.cur { background: #eff6ff; }
@@ -441,8 +449,34 @@ details > summary .sub { font-weight: normal; }
 .note { color: #9ca3af; font-size: 12px; line-height: 1.6; }
 .empty { color: #9ca3af; font-size: 13px; }
 @media (max-width: 600px) {
-  .head { flex-direction: column; align-items: flex-start; }
+  .head { flex-direction: column; align-items: stretch; gap: 10px; }
+  .badge { align-self: flex-start; font-size: 22px; padding: 9px 16px; border-radius: 10px; }
+  .head-meta .date { font-size: 15px; }
+  /* 六个指标从挤成一团的行改为 3×2 指标格 */
+  .inds {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin-top: 10px;
+    font-size: 12px;
+  }
+  .inds .ind {
+    background: #f6f8fc;
+    border-radius: 8px;
+    padding: 6px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+  .inds em { margin: 0; font-weight: 400; }
+  /* 翻日按钮整行、触控加高 */
+  .nav { margin-top: 10px; }
+  .nav button { flex: 1; min-height: 38px; font-size: 13px; border-radius: 9px; }
+  .trow { font-size: 12px; }
   .tbl { font-size: 12px; }
   .trend { height: 320px; }
+  .card { padding: 12px 11px; }
 }
 </style>

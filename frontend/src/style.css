@@ -1,117 +1,267 @@
+/* ════════════════════════════════════════════════════════════════
+   全站设计系统（2026-10 移动端重构）
+   本表是所有路由都加载的唯一全局样式：设计令牌、顶栏、页面容器、
+   工具条/标签、通用表格、分页、状态文案，以及它们的移动端规则。
+   断点 600px 与 stock.css / agro.css 的 @media、stockLegacy.js 的
+   mqMobile、lib/useMediaQuery.js 的 MOBILE_QUERY 四处保持一致。
+   ════════════════════════════════════════════════════════════════ */
+
 :root {
-  --bg: #f5f7fa;
+  /* 色彩：浅色主题，A股语义（红涨绿跌） */
+  --bg: #f4f6fb;
+  --bg-deep: #eef1f8;
   --card: #ffffff;
-  --line: #e3e8ef;
-  --txt: #2b3441;
-  --sub: #8a94a6;
+  --line: #e5e9f2;
+  --line-soft: #eef1f7;
+  --txt: #1d2735;
+  --sub: #68738a;
+  --sub-deep: #8b95ab;
   --up: #d03050;
-  --down: #18a058;
+  --down: #17a05a;
+  --flat: #8b95ab;
   --accent: #2d6cdf;
+  --accent-soft: #eaf1fe;
+  --accent-line: #c4d7f6;
+  --danger: #d43b3b;
+
+  /* 圆角 / 阴影 / 层级 */
+  --r-s: 8px;
+  --r-m: 12px;
+  --r-l: 16px;
+  --shadow-s: 0 1px 2px rgba(20, 30, 55, 0.05);
+  --shadow-m: 0 2px 10px rgba(20, 30, 55, 0.07);
+  --shadow-l: 0 10px 30px rgba(20, 30, 55, 0.14);
+
+  /* 吸顶栈：顶栏高度与其下各吸顶元素（详情 .va-nav、列表 .m-tgls、
+     研报 .toc）的挂靠位。改顶栏高度只改这里，四处跟随。 */
+  --topbar-h: 54px;
+  --stick-top: calc(var(--topbar-h) + 4px);
+  --scroll-mt: calc(var(--topbar-h) + 52px);
 }
 
 * { box-sizing: border-box; }
 
+html { color-scheme: light; }
+
 body {
   margin: 0;
-  background: var(--bg);
+  background:
+    radial-gradient(1200px 360px at 85% -140px, #e7edfb 0%, rgba(231, 237, 251, 0) 70%),
+    var(--bg);
+  background-attachment: fixed;
   color: var(--txt);
-  font: 14px/1.6 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font: 14px/1.6 "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Microsoft YaHei", system-ui, sans-serif;
   /* clip 而非 hidden：hidden 会把 body 变成滚动容器，进而废掉 .topbar / .va-nav / .stick 的 sticky */
   overflow-x: clip;
+  -webkit-tap-highlight-color: transparent;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 a { color: var(--accent); text-decoration: none; }
 
+::selection { background: rgba(45, 108, 223, 0.16); }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* ── 顶栏 ───────────────────────────────────────────────────────
+   桌面：吸顶毛玻璃、品牌标点、胶囊导航；
+   移动端规则在文末 @media：单行横滑导航（不再换行叠字）。 */
 .topbar {
   display: flex;
   align-items: center;
-  gap: 24px;
-  padding: 12px 24px;
-  background: var(--card);
+  gap: 26px;
+  height: var(--topbar-h);
+  padding: 0 clamp(14px, 3vw, 32px);
+  background: rgba(255, 255, 255, 0.86);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: 100;
 }
-.topbar .brand { font-size: 17px; font-weight: 700; color: var(--txt); }
-.topbar nav { display: flex; gap: 18px; }
-.topbar nav a { color: var(--sub); }
-.topbar nav a.router-link-active { color: var(--accent); font-weight: 600; }
+.topbar .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  color: var(--txt);
+  white-space: nowrap;
+}
+.topbar .brand::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+  background: linear-gradient(135deg, #4f8bff, #2d6cdf 60%, #7a5cf0);
+  box-shadow: 0 2px 6px rgba(45, 108, 223, 0.45);
+}
+.topbar nav { display: flex; gap: 6px; }
+.topbar nav a {
+  padding: 5px 13px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: var(--sub);
+  font-size: 14px;
+  transition: color 0.15s, background-color 0.15s;
+}
+.topbar nav a:hover { color: var(--accent); background: var(--accent-soft); }
+.topbar nav a.router-link-active {
+  color: #fff;
+  background: linear-gradient(135deg, #3f7bf0, #2d6cdf);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(45, 108, 223, 0.32);
+}
 
-/* 宽屏自适应：列表页 21 列在原来 1280px 的死上限下必然横向滚动，改成随视口铺开、1780px 封顶
-   （4K 屏不致拉成无限宽的一行；窄屏仍为 100% 宽，边距用 clamp 随屏宽缩放） */
-.page { width: min(100%, 1780px); margin: 0 auto; padding: 18px clamp(12px, 2vw, 40px) 60px; }
+/* 宽屏自适应：列表页 21 列在原来 1280px 的死上限下必然横向滚动，改成随视口铺开、1780px 封顶 */
+.page {
+  width: min(100%, 1780px);
+  margin: 0 auto;
+  padding: 18px clamp(12px, 2vw, 40px) calc(60px + env(safe-area-inset-bottom, 0px));
+}
 
+/* ── 卡片 ── */
 .card {
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--r-m);
   padding: 16px;
+  box-shadow: var(--shadow-s);
 }
 
+/* ── 工具条 / 标签 ── */
 .toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
 .toolbar .tabs { display: flex; gap: 6px; }
 .tab {
-  padding: 4px 14px;
+  padding: 5px 15px;
+  min-height: 30px;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 999px;
   background: var(--card);
   cursor: pointer;
   color: var(--sub);
+  font-size: 13px;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
-.tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tab:hover { color: var(--accent); border-color: var(--accent-line); }
+.tab.active {
+  background: linear-gradient(135deg, #3f7bf0, #2d6cdf);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
 .toolbar input {
-  padding: 6px 10px;
+  padding: 6px 12px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--r-s);
   width: 200px;
   font-size: 14px;
+  background: var(--card);
+  color: var(--txt);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.toolbar input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(45, 108, 223, 0.14);
 }
 
+/* ── 通用表格 ── */
 table.grid { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.grid th, table.grid td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+table.grid th, table.grid td { padding: 7px 8px; border-bottom: 1px solid var(--line-soft); text-align: right; white-space: nowrap; }
 table.grid th { color: var(--sub); font-weight: 500; cursor: pointer; user-select: none; background: var(--card); }
 table.grid th:first-child, table.grid td:first-child,
 table.grid th.l, table.grid td.l { text-align: left; }
-table.grid tbody tr:hover { background: #f0f5ff; cursor: pointer; }
+table.grid tbody tr:hover { background: #f2f6ff; cursor: pointer; }
 /* 横向滚动时的固定首列（只在需要滚动的宽表上用，见列表页 .grid-list）：
    背景必须自己不透明，否则滚动内容会从下面透出来；右侧投影提示下方还有列 */
-table.grid th.stick, table.grid td.stick { position: sticky; left: 0; z-index: 1; background: var(--card); box-shadow: 6px 0 6px -6px rgba(0, 0, 0, .25); }
-table.grid tbody tr:hover td.stick { background: #f0f5ff; }
+table.grid th.stick, table.grid td.stick { position: sticky; left: 0; z-index: 1; background: var(--card); box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.25); }
+table.grid tbody tr:hover td.stick { background: #f2f6ff; }
 table.grid thead th.stick { z-index: 2; }
 
 .up { color: var(--up); }
 .down { color: var(--down); }
-.flat { color: var(--sub); }
-.badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #eef2f8; color: var(--sub); }
+.flat { color: var(--sub-deep); }
+.badge {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: #eef2f8;
+  color: var(--sub);
+}
 
+/* ── 分页 ── */
 .pager { display: flex; gap: 12px; align-items: center; justify-content: flex-end; margin-top: 12px; color: var(--sub); }
-.pager button { padding: 4px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); cursor: pointer; }
+.pager button {
+  padding: 5px 14px;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-s);
+  background: var(--card);
+  color: var(--txt);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.pager button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 .pager button:disabled { opacity: 40%; cursor: default; }
 
 .loading { text-align: center; color: var(--sub); padding: 40px 0; }
-.error { color: var(--up); padding: 20px 0; }
+.error { color: var(--danger); padding: 20px 0; }
 
 .wip { padding: 40px; text-align: center; color: var(--sub); }
 
-/* ── 手机（≤600px）──────────────────────────────────────────────
-   这是全站唯一在所有路由都加载的样式表，故顶栏/页面容器/工具条/分页的移动端规则集中在此。
-   断点值与 stock.css、agro.css 的 @media 以及 stockLegacy.js 的 mqMobile、lib/useMediaQuery.js 保持一致。 */
+/* 动效弱化偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+  html { scroll-behavior: auto; }
+}
+
+/* ── 手机（≤600px）────────────────────────────────────────────── */
 @media (max-width: 600px) {
+  :root { --topbar-h: 48px; }
+
   /* iOS Safari 对 font-size<16px 的文本输入控件聚焦时会自动放大整页且不缩回。
      用 viewport meta 的 maximum-scale=1 压制会连带废掉无障碍缩放，故这里统一字号。
      button 不在列：按钮不触发 iOS 缩放，放大只会让 chip/tab 变臃肿。 */
   input, select, textarea { font-size: 16px; }
 
-  /* 详情页的 .va-nav 自带 sticky top:0 z-index:50，若顶栏也吸顶就会两条重叠。
-     这里让顶栏退回 static（而不是去调 z-index），全站只保留一条吸顶条。 */
-  .topbar { position: static; padding: 8px 12px; gap: 12px; }
-  .topbar .brand { font-size: 15px; }
-  .topbar nav { gap: 14px; margin-left: auto; }
-  .topbar nav a { font-size: 13px; }
+  /* 顶栏：品牌固定在左，导航单行横滑成胶囊条（不再两行叠字）；
+     吸顶保持——详情页 .va-nav / 列表 .m-tgls 改挂在它下面（--stick-top）。 */
+  .topbar { gap: 0; padding: 0 6px 0 14px; }
+  /* 右缘渐隐提示还可横滑：盖在顶栏上而不是 mask 掉导航——mask 在不滚动时
+     也会把最后一项淡掉，白纱只压 padding 区，静置时几乎不可见 */
+  .topbar::after {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 26px;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.9));
+    pointer-events: none;
+  }
+  .topbar .brand { font-size: 15px; flex: none; }
+  .topbar nav {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin-left: 10px;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .topbar nav::-webkit-scrollbar { display: none; }
+  .topbar nav a { flex: none; padding: 6px 12px; font-size: 14px; }
+  .topbar nav a.router-link-active { background: var(--accent); box-shadow: none; }
 
-  .page { padding: 12px 10px 48px; }
-  .card { padding: 12px 10px; border-radius: 8px; }
+  .page { padding: 12px 10px calc(48px + env(safe-area-inset-bottom, 0px)); }
+  .card { padding: 13px 11px; border-radius: var(--r-m); }
 
   .toolbar { gap: 8px; margin-bottom: 10px; }
   /* 市场切换标签放不下就横向滑，滚动条藏掉（iOS/Android 上默认样式很占地方） */
@@ -120,12 +270,13 @@ table.grid thead th.stick { z-index: 2; }
     overflow-x: auto;
     scrollbar-width: none;
     -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
   }
   .toolbar .tabs::-webkit-scrollbar { display: none; }
-  .tab { flex: none; white-space: nowrap; padding: 6px 12px; min-height: 32px; }
+  .tab { flex: none; white-space: nowrap; padding: 6px 13px; min-height: 32px; }
   /* 干掉桌面的固定 200px：窄屏上它会把整行挤到溢出 */
-  .toolbar input { width: auto; flex: 1 1 140px; min-width: 0; min-height: 32px; }
+  .toolbar input { width: auto; flex: 1 1 140px; min-width: 0; min-height: 34px; }
 
   .pager { flex-wrap: wrap; justify-content: center; gap: 8px; }
-  .pager button { padding: 7px 14px; }
+  .pager button { padding: 7px 16px; }
 }

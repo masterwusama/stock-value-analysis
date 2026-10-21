@@ -15,11 +15,12 @@
 /* ---------- 营收结构卡 ---------- */
 
 .agro-revenue {
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
+  border: 1px solid #e5e9f2;
+  border-radius: 12px;
   padding: 16px 18px;
   margin-bottom: 16px;
-  background: #fafafa;
+  background: #fafbfd;
+  box-shadow: 0 1px 2px rgba(20, 30, 55, 0.05);
 }
 
 .agro-revenue-head {
@@ -142,12 +143,13 @@
 }
 
 .agro-card {
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
+  border: 1px solid #e5e9f2;
+  border-radius: 12px;
   padding: 12px 14px;
   cursor: pointer;
   transition: all .15s;
   background: #fff;
+  box-shadow: 0 1px 2px rgba(20, 30, 55, 0.05);
 }
 
 .agro-card:hover {
@@ -241,9 +243,11 @@
 /* ---------- 走势图 ---------- */
 
 .agro-chart-wrap {
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
+  border: 1px solid #e5e9f2;
+  border-radius: 12px;
   padding: 14px 16px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(20, 30, 55, 0.05);
 }
 
 .agro-chart-head {
@@ -370,10 +374,11 @@
 }
 
 .edb-kpi {
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
+  border: 1px solid #e5e9f2;
+  border-radius: 12px;
   padding: 12px 14px;
   background: #fff;
+  box-shadow: 0 1px 2px rgba(20, 30, 55, 0.05);
 }
 
 .edb-kpi-name {
@@ -468,11 +473,12 @@
 /* ================= EDB 图表面板 ================= */
 
 .edb-panel {
-  border: 1px solid #e5e5e5;
-  border-radius: 8px;
+  border: 1px solid #e5e9f2;
+  border-radius: 12px;
   padding: 14px 16px;
   margin-bottom: 16px;
   background: #fff;
+  box-shadow: 0 1px 2px rgba(20, 30, 55, 0.05);
 }
 
 .edb-panel-head {

@@ -370,9 +370,9 @@
   padding: 1px 8px;
 }
 
-/* 锚点跳转到模块时,给吸顶导航让出高度,避免遮挡模块标题 */
+/* 锚点跳转到模块时,给吸顶导航让出高度,避免遮挡模块标题（顶栏+锚点导航两层） */
 .va-module {
-  scroll-margin-top: 54px;
+  scroll-margin-top: var(--scroll-mt, 92px);
 }
 
 /* ---- 价值分析（股东回报/现金流/杜邦/成长/体检） ---- */
@@ -421,11 +421,12 @@
   border: 1px solid #e0e0e0;
 }
 
-/* ---- 五大模块导航（吸顶，点击平滑滚动） ---- */
+/* ---- 五大模块导航（吸顶在顶栏之下，点击平滑滚动） ----
+   top 挂 --stick-top（=顶栏高度）：旧写法 top:0+z50 会把顶栏整个盖住 */
 .va-nav {
   position: sticky;
-  top: 0;
-  z-index: 50;
+  top: var(--stick-top, 58px);
+  z-index: 40;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -441,9 +442,10 @@
   text-decoration: none;
   background: #f3f6fa;
   border: 1px solid #e3e8f0;
-  border-radius: 14px;
-  padding: 3px 10px;
+  border-radius: 999px;
+  padding: 3px 11px;
   white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s, background-color 0.15s;
 }
 
 .va-nav a:hover {
@@ -900,8 +902,8 @@
 
 /* ---- 锚点导航：scroll-spy 当前节高亮 + 阅读进度条（chrome.js 驱动） ---- */
 .va-nav a.active {
-  background: #2b6cb0;
-  border-color: #2b6cb0;
+  background: linear-gradient(135deg, #3f7bf0, #2d6cdf);
+  border-color: transparent;
   color: #fff;
 }
 .va-progress {
@@ -918,7 +920,7 @@
 #detail-backtop {
   position: fixed;
   right: 18px;
-  bottom: 22px;
+  bottom: calc(22px + env(safe-area-inset-bottom, 0px));
   width: 40px;
   height: 40px;
   border-radius: 50%;

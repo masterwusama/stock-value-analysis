@@ -35,8 +35,8 @@ function ensureDetailChrome() {
     var body = document.getElementById('stock-detail-body');
     var bar = document.querySelector('.va-progress');
     if (body && bar) {
-      var top = body.offsetTop - 72;          // 吸顶导航高度
-      var span = body.offsetHeight - window.innerHeight + 144;
+      var top = body.offsetTop - 100;         // 顶栏(54) + 吸顶导航(~40) + 余量
+      var span = body.offsetHeight - window.innerHeight + 200;
       var p = span > 0 ? Math.max(0, Math.min(1, (y - top) / span)) : 0;
       bar.style.width = (p * 100).toFixed(1) + '%';
     }
@@ -64,7 +64,7 @@ function retargetDetailSpy() {
         a.classList.toggle('active', a.getAttribute('data-scroll') === id);
       });
     });
-  }, { rootMargin: '-52px 0px -62% 0px', threshold: 0 });
+  }, { rootMargin: '-92px 0px -62% 0px', threshold: 0 });
   document.querySelectorAll('#stock-detail-body section[id^="sec-"]').forEach(function (s) {
     spy.observe(s);
   });
