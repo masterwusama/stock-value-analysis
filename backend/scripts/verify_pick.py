@@ -44,7 +44,7 @@ def check(name, cond, detail=""):
 def S(**kw):
     """score_daily 行的最小假对象:未给的列一律 None/False。"""
     base = dict(gate=False, gate_flags=None, st_risk=None, st_flags=None,
-                fraud=None, trap=None, interim_dip=None,
+                fraud=None, trap=None, trap_c=None, interim_dip=None,
                 recommend=None, value=None, growth=None,
                 score_schloss=None, score_graham_def=None,
                 div_yield=None, net_cash_ratio=None,

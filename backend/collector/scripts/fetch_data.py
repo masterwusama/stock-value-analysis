@@ -2189,10 +2189,16 @@ def us_index_targets(quiet=False):
 
 
 def hk_connect_targets(quiet=False):
-    """港股通标的（≈621 只）→ (code, name, "HK")；行业由 fetch_company_hk 查名单缓存补齐。"""
+    """港股通标的 → (code, name, "HK")；行业由 fetch_company_hk 查名单缓存补齐。
+
+    名单每次都 force 重拉(失败自动回退旧缓存;<300 行宁回退也不写坏文件,_em_clist
+    分页不齐会抛错,所以不会落下截断的半份名单):港股通半年检讨+季度快进快出,只读
+    缓存会把已调出者永久留在库里——2026-09 半年调整调出的 16 只(天立/日清/医渡等)
+    在掘金台滞留六周,就是缓存 9/02 定格、deep 每周只读不刷的后果。
+    """
     import universe as uni
     try:
-        rows = uni.load_universe_hk(quiet=quiet)
+        rows = uni.load_universe_hk(force=True, quiet=quiet)
     except Exception as e:
         print(f"[universe] 港股通名单不可用: {e!r}", flush=True)
         return []

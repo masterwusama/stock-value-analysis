@@ -5,6 +5,8 @@
 valuation_pctile 十年分位 + 投研库覆盖 + 大盘情绪),本模块不做采集、
 不落新表:入场分 pick 与分层评级 tier 是**读时合成**,口径演进对全市场
 即时生效——与情绪温度同一套「读时计算防双源漂移」的理由。
+港股一侧只认港股通名单(推荐的前提是内地账户买得到),已调出/未调入的
+港股不进板;名单沿用采集侧 data/universe_hk.json,读不到时不过滤。
 
 pick 与 recommend(R)的分工:R = 0.6×价值 + 0.4×成长,回答「这家公司
 好不好、贵不贵」,它的资格线(造假>40 / 中报恶化≤−0.70)已把不合格者
@@ -50,7 +52,8 @@ from scoring import trap_band_of  # noqa: E402
 
 router = APIRouter(prefix="/api/pick", tags=["pick"])
 
-# 市场范围:本模块只服务 A股/港股(美股不在本次推荐范围)
+# 市场范围:本模块只服务 A股/港股(美股不在本次推荐范围);港股只保留港股通名单内
+# 的标的(名单过滤在 _load_base,读不到名单时降级为全量)。
 MARKETS = ("A", "HK")
 
 # 次新股不进掘金板:上市 ≤5 年的标的整体过滤(评分所依据的「5 年」轴对它们大多判不动,
@@ -427,6 +430,20 @@ def _sentiment_snapshot(db: Session) -> dict | None:
             "t": sc["t"] if sc else None, "red_rate": row.red_rate}
 
 
+def _hk_connect_codes() -> set[str] | None:
+    """港股通名单代码集(采集侧 data/universe_hk.json,东财港股通板块口径,周六 deep 强刷)。
+
+    读不到名单(文件缺失/损坏且联网拉取也失败)返回 None,调用侧降级为不过滤——
+    「宁多看不少看」,与 list_date 为 NULL 时保留标的同一取舍;绝不因名单故障把
+    港股整段从掘金台消失。
+    """
+    try:
+        import universe as _uni
+        return {c for c, _, _ in _uni.load_universe_hk(quiet=True)}
+    except Exception:
+        return None
+
+
 def _load_base(db: Session, fresh: bool = False):
     """全量合成行 + meta。缓存键 = (评分日, 最新行情日),同键 TTL 内直接复用。"""
     td = db.execute(select(func.max(ScoreDaily.trade_date))).scalar_one()
@@ -457,6 +474,9 @@ def _load_base(db: Session, fresh: bool = False):
     cov = _research_cov()
 
     items = [_to_item(s, sec, q, vals.get(sec.sid), cov, today) for s, sec, q in rows]
+    hk_conn = _hk_connect_codes()
+    if hk_conn is not None:
+        items = [it for it in items if it.market != "HK" or it.code in hk_conn]
     meta = {
         "trade_date": key[0],
         "quote_date": key[1],
