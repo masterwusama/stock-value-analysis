@@ -5,6 +5,8 @@
   - EM f10 jbgk   : 基金名称/跟踪指数/费率/成立日(服务端渲染 HTML,周级 TTL)
   - 腾讯 spot     : ETF 场内价/规模/52 周 + fundgz 单位净值与盘中估算(折溢价)
   - EM f10 jjcc   : 季报持仓(前十重仓,jsonp+内嵌 HTML 表),相邻季 diff → 调仓
+  - 招商基金官网  : ETF 申赎清单(PCF)全量篮子(meta.pcf='cmfchina' 的标的,
+                    ~50 只官方数量/金额,权重=金额占比,与单位净值自洽已验证)
   - 国证官网      : 980xxx 定制指数全量成份月度快照(xlsx,官方权重+行业)+指数日线;
                     名录快照(indexList)带上市指数当日 PE/PB,能覆盖则存官方值
   - EM fundmobapi : ETF 公告(移动端接口,失败降级跳过)
@@ -27,11 +29,13 @@ for _k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"
 os.environ["NO_PROXY"] = "*"
 
 import argparse
+import base64
 import datetime as dt
 import io
 import json
 import re
 import time
+import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -57,6 +61,11 @@ CNI_SAMPLE_HIST = "https://www.cnindex.com.cn/sample-detail/download-history"
 
 QTR_MAP = {"1季度": "03-31", "2季度": "06-30", "中期": "06-30", "3季度": "09-30",
            "4季度": "12-31", "年度": "12-31"}
+
+# 招商基金官网接口的签名密钥(前端 JS 静态串,公开披露页;算法见 fetch_cmf_pcf)
+CMF_SECRET = "d274d06273f96656442b0728316026a1"
+CMF_RID = "01ab90a0d4ce45f3bb35b919099d9da1"
+CMF_API = "https://www.cmfchina.com/ws-business-server/fund/getEtfStockList"
 
 
 def _get(url, params=None, headers=None, gbk=False, retries=3, timeout=15):
@@ -333,6 +342,59 @@ def cni_official_valuation(catalog, cni_code):
 
 
 # ---------------------------------------------------------------------------
+# 5.5) 招商基金官网 ETF 申赎清单(PCF):全量篮子
+# ---------------------------------------------------------------------------
+
+def fetch_cmf_pcf(code):
+    """招商基金官网 getEtfStockList → 全量申赎篮子(恒生系指数的全量成份来源)。
+
+    站点接口走国密签名(secret 为前端 JS 静态串,公开披露页):
+      key=sm3(secret)[:16];data=base64(SM4-ECB(json));sig=sm3(secret..data..rid..encrypted)
+    响应明文。权重=tdAmount/Σ(tdAmount):各券金额与官方「最小申赎单位资产净值」
+    的差恰等于现金部分(2026-10-26 实测 517362.65 vs 517268.14-(-94.51)),自洽。
+    清单 T 日开市前发布,取不到时回退前一交易日。"""
+    from gmssl import func as gfunc
+    from gmssl import sm3
+    from gmssl.sm4 import CryptSM4, SM4_ENCRYPT
+
+    key = sm3.sm3_hash(gfunc.bytes_to_list(CMF_SECRET.encode()))[:16].encode()
+    for back in range(3):  # 当日清单未出则回退,最多看 3 天(长假后首日)
+        day = dt.date.today() - dt.timedelta(days=back)
+        payload = {"startDate": day.isoformat(), "productCode": code, "pageNum": 1,
+                   "pageSize": 10000000, "isPreview": "", "siteno": "web",
+                   "merchantId": 0, "request_id": str(uuid.uuid4())}
+        crypt = CryptSM4()
+        crypt.set_key(key, SM4_ENCRYPT)
+        d64 = base64.b64encode(
+            crypt.crypt_ecb(json.dumps(payload, separators=(",", ":")).encode())).decode()
+        sig = sm3.sm3_hash(gfunc.bytes_to_list(
+            f"secret={CMF_SECRET}data={d64}request_id={CMF_RID}encrypted=true".encode()))
+        try:
+            r = _get(CMF_API, params={"data": d64, "request_id": CMF_RID, "encrypted": "true"},
+                     headers={**UA,
+                              "Referer": f"https://www.cmfchina.com/web/fundDetail/{code}/index.html",
+                              "tk-trans-merchant-key": "thinkive", "tk-trans-signature": sig})
+            lst = ((r.json().get("data") or {}).get("list")) or []
+        except Exception:  # noqa: BLE001
+            return None
+        rows, total = [], 0.0
+        for x in lst:
+            amt = _num(x.get("tdAmount"))
+            if not x.get("stockCode") or not amt or amt <= 0:
+                continue
+            total += amt
+            rows.append({"code": str(x["stockCode"]).zfill(5),
+                         "name": (x.get("stockName") or "").strip(),
+                         "shares": _num(x.get("stockNum")), "amount": amt})
+        if rows:
+            for h in rows:
+                h["weight"] = round(h["amount"] / total, 6)
+            return {"date": day.isoformat(), "rows": rows}
+        time.sleep(SLEEP)
+    return None
+
+
+# ---------------------------------------------------------------------------
 # 6) ETF 公告(EM 移动端,失败降级)
 # ---------------------------------------------------------------------------
 
@@ -485,10 +547,23 @@ def fetch_one(code, meta, catalog, force=False, today=None):
         time.sleep(SLEEP)
     ohlc = fetch_cni_ohlc(idx["cni_code"]) if idx["cni_code"] else None
 
-    # 估值自算:官方全量权重优先,无则前十重仓
+    # PCF 全量篮子(仅 meta.pcf='cmfchina' 的标的,即招商基金管理的 ETF)
+    pcf = None
+    if (meta or {}).get("pcf") == "cmfchina":
+        try:
+            pcf = fetch_cmf_pcf(code)
+        except Exception as e:  # noqa: BLE001
+            print(f"  [{code}] PCF 拉取失败: {e!r}", flush=True)
+        if pcf:
+            time.sleep(SLEEP)
+
+    # 估值自算:官方全量 > PCF 全量 > 前十重仓
     if cni and cni.get("rows"):
         base_h = cni["rows"]
         val_basis, val_basis_date = "official", cni["month"]
+    elif pcf and pcf.get("rows"):
+        base_h = pcf["rows"]
+        val_basis, val_basis_date = "pcf", pcf["date"]
     elif f10_h and f10_h["quarters"]:
         q = f10_h["quarters"][0]
         base_h = f10_h["rows"][q]
@@ -512,7 +587,7 @@ def fetch_one(code, meta, catalog, force=False, today=None):
 
     anns = fetch_anns(code)
 
-    # 调仓:季 diff(官方月度快照无历史,靠逐月累积后未来可切换月 diff)
+    # 调仓:季 diff兜底(官方/PCF 月度快照无历史,靠逐月累积后 API 层可切月 diff)
     changes = None
     if f10_h and len(f10_h["quarters"]) >= 2:
         a, b = f10_h["quarters"][0], f10_h["quarters"][1]
@@ -524,7 +599,7 @@ def fetch_one(code, meta, catalog, force=False, today=None):
         "info": basic, "index": idx, "spot": spot,
         "valuation": {"method": "calc", "basis": val_basis, "basis_date": val_basis_date,
                       "calc": calc, "series_days": series_days},
-        "holdings": {"official": cni, "f10": f10_h},
+        "holdings": {"official": cni, "pcf": pcf, "f10": f10_h},
         "changes": changes, "anns": anns,
     }
     atomic_write(out_path, payload)
@@ -553,6 +628,7 @@ def main():
     DATA.mkdir(parents=True, exist_ok=True)
     seed = {"codes": ["159263", "520550"], "meta": {
         "159263": {"index_code": "980081"},       # 国证价值100(定制指数,名录查不到)
+        "520550": {"pcf": "cmfchina"},            # 招商管理→官网申赎清单给全量篮子
     }}
     if LIST_JSON.exists():
         try:

@@ -8,7 +8,8 @@
     成份分 50 —— 持仓按权重加权推荐分 R(score_daily 最新交易日),覆盖不足按
                   覆盖率折算并披露;覆盖权重<80% 开始打折,一半封底。
     估值分 30 —— 跟踪指数 PE/PB 历史分位(自算序列,PE 0.6 / PB 0.4),越低越高;
-                  样本<30 日不给分(权重重新归一并注明);前十口径(恒生系)打 8 折。
+                  样本<30 日不给分(权重重新归一并注明);季报前十口径打 8 折
+                  (国证官方月度与招商申赎清单 PCF 均为全量,不打折)。
     股息分 20 —— 指数综合股息率阶梯(≥6% 满 20)。
     修正项 —— 溢价 >1% 每 pp 扣 3(封顶 6);折价 >1% 加 2(封顶 4);规模<2 亿扣 5。
 分层阈值与掘金台一致:≥78 strong / ≥65 buy / ≥45 watch。
@@ -126,14 +127,20 @@ def _tier_of_stock(s) -> str:
 
 
 def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot_td):
-    # ---- 持仓:official 优先,无则 f10;历史期排序供调仓 diff ----
+    # ---- 持仓:official(国证官方月度) > pcf(申赎清单全量月度) > f10(季报前十) ----
     periods = sorted({h.report_period for h in holds}, reverse=True)
     official_periods = sorted({h.report_period for h in holds if h.source == "official"},
                               reverse=True)
-    use_official = len(official_periods) >= 1
-    basis_source = "official" if use_official else "f10"
-    periods_use = official_periods if use_official else sorted(
-        {h.report_period for h in holds if h.source == "f10"}, reverse=True)
+    pcf_periods = sorted({h.report_period for h in holds if h.source == "pcf"},
+                         reverse=True)
+    if official_periods:
+        basis_source, periods_use = "official", official_periods
+    elif pcf_periods:
+        basis_source, periods_use = "pcf", pcf_periods
+    else:
+        basis_source = "f10"
+        periods_use = sorted({h.report_period for h in holds if h.source == "f10"},
+                             reverse=True)
     latest = periods_use[0] if periods_use else None
 
     rows = [h for h in holds if h.report_period == latest] if latest else []
@@ -171,19 +178,18 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
     cov = round(w_scored / w_all, 4) if w_all else 0.0
     r_avg = round(w_r / w_scored, 1) if w_scored else None
 
-    # ---- 调仓:官方月度相邻期 diff;不足两期回退 f10 季度 diff ----
+    # ---- 调仓:官方/PCF 月度相邻期 diff(不足两期回退 f10 季度 diff) ----
     changes = None
-    ch_source = use_official
-    if len(official_periods) < 2:
-        ch_source = False
-    ch_periods = (official_periods if ch_source else
-                  sorted({h.report_period for h in holds if h.source == "f10"}, reverse=True))
+    ch_source = basis_source if basis_source in ("official", "pcf") else None
+    ch_periods = periods_use if ch_source else sorted(
+        {h.report_period for h in holds if h.source == "f10"}, reverse=True)
     if len(ch_periods) >= 2:
         a, b = ch_periods[0], ch_periods[1]
         cur = {h.stock_code: h for h in holds if h.report_period == a}
         prev = {h.stock_code: h for h in holds if h.report_period == b}
         changes = {
-            "kind": "month" if ch_source else "quarter", "from": b, "to": a,
+            "kind": {"official": "month", "pcf": "pcf"}.get(ch_source, "quarter"),
+            "from": b, "to": a,
             "ins": [{"code": c, "name": cur[c].stock_name, "weight": cur[c].weight}
                     for c in cur if c not in prev],
             "outs": [{"code": c, "name": prev[c].stock_name, "weight": prev[c].weight}
@@ -234,7 +240,7 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
             raw += 0.6 * (100 - p_pe)
         if p_pb is not None:
             raw += 0.4 * (100 - p_pb)
-        factor = TOP10_VAL_FACTOR if basis_source != "official" else 1.0
+        factor = TOP10_VAL_FACTOR if basis_source == "f10" else 1.0
         parts["valuation"] = round(W_VAL * raw / 100.0 * factor, 1)
         reasons.append(f"估值分:PE 分位 {p_pe}/PB 分位 {p_pb}"
                        + ("(前十口径已打 8 折)" if factor < 1 else ""))

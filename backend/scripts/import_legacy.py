@@ -1324,6 +1324,16 @@ def import_etf(db, stats):
                         "stock_market": _mkt(h["code"]), "source": "official",
                         "weight": h.get("weight"), "industry": h.get("industry"),
                         "mcap_yi": h.get("mcap_yi"), "updated_at": upd})
+        # PCF 月度粒度:同月重跑 upsert 覆盖(权重月内最新),跨月自然累积历史
+        pcf = hold.get("pcf")
+        if pcf and pcf.get("rows"):
+            p_month = str(pcf.get("date") or "")[:7] or upd.date().isoformat()[:7]
+            for h in pcf["rows"]:
+                w_hold.add({"code": code, "report_period": p_month,
+                            "stock_code": h["code"], "stock_name": h.get("name"),
+                            "stock_market": _mkt(h["code"]), "source": "pcf",
+                            "weight": h.get("weight"), "industry": None,
+                            "mcap_yi": None, "updated_at": upd})
         f10 = hold.get("f10") or {}
         for q, rows in (f10.get("rows") or {}).items():
             for h in rows:

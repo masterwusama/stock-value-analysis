@@ -276,7 +276,7 @@ function renderChart() {
 
         <!-- ③ 跟踪指数估值序列 -->
         <section class="card">
-          <h3>跟踪指数估值<span class="sub">{{ valuation.basis === 'official' ? '国证官方权重自算(PE/PB 官方口径优先)' : '季报前十权重自算' }} · 样本逐日累积 · 下方浅灰=指数点位</span></h3>
+          <h3>跟踪指数估值<span class="sub">{{ valuation.basis === 'official' ? '国证官方权重自算(PE/PB 官方口径优先)' : valuation.basis === 'pcf' ? '申赎清单全量权重自算' : '季报前十权重自算' }} · 样本逐日累积 · 下方浅灰=指数点位</span></h3>
           <div v-if="valuation.dates?.length" ref="chartEl" class="chart"></div>
           <p v-else class="empty">估值序列尚未生成(跑一次 python -m collector.run etf)</p>
         </section>
@@ -322,7 +322,7 @@ function renderChart() {
 
         <!-- ⑤ 调仓跟踪 -->
         <section class="card" v-if="changes">
-          <h3>调仓跟踪<span class="sub">{{ changes.kind === 'month' ? '官方月度快照' : '季报持仓' }} {{ changes.from }} → {{ changes.to }}</span></h3>
+          <h3>调仓跟踪<span class="sub">{{ changes.kind === 'month' ? '官方月度快照' : changes.kind === 'pcf' ? '申赎清单月度' : '季报持仓' }} {{ changes.from }} → {{ changes.to }}</span></h3>
           <div class="chg">
             <p v-if="changes.ins.length"><em class="in">调入 {{ changes.ins.length }}</em>
               <span v-for="x in changes.ins" :key="x.code" class="chip chg-chip in">
@@ -363,7 +363,7 @@ function renderChart() {
         </section>
 
         <p class="note">口径:成份分=持仓权重加权的推荐分 R(score_daily 当日);估值序列=官方权重×腾讯个股 PE/PB 调和平均+股息率加权(国证系指数 PE/PB 优先取名录官方快照),自 {{ valuation.dates?.[0] || '-' }} 起累积;
-          折溢价=现价/最新披露单位净值-1(静态);分层阈值与掘金台一致(≥78 强推/≥65 买入/≥45 观察)。持仓来源:国证官方月度快照(全量)或 EM 季报前十(恒生系),评分覆盖不足 80% 时成份分按覆盖率折算。数据更新:每日 17:35 etf job。</p>
+          折溢价=现价/最新披露单位净值-1(静态);分层阈值与掘金台一致(≥78 强推/≥65 买入/≥45 观察)。持仓来源:国证官方月度快照或招商官网申赎清单(均全量)或 EM 季报前十(仅无全量源时,评分覆盖不足 80% 时成份分按覆盖率折算)。数据更新:每日 17:35 etf job。</p>
       </template>
     </template>
     <p v-else-if="!error" class="empty">加载中…</p>
