@@ -94,10 +94,15 @@ def main():
     # 抬成 ST 高危旗(旗发生在 score 行重建里,只灌 case_event 看不到)
     s.add_job(run_job, "cron", args=["case"], day_of_week="sun",
               hour=10, minute=5, id="case")
+    # ETF 综合评估每天一次(17:35:在 sentiment 16:30 之后、晚间 stock 22:05 之前,
+    # 成份股联动用的是当日 16:05 批次的新评分)。估值序列日更累积,分位样本满 30 日
+    # 后估值分自动纳入综合分
+    s.add_job(run_job, "cron", args=["etf"], hour=17, minute=35, id="etf")
     print("[scheduler] 已注册: stock(周一~六 16:05/22:05 估值快照) "
           "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农价,不碰 Wind) "
           "edb(周日 20:00 行业量价) valuation(每天 03:35 估值分位,免费源刷全 A) "
-          "sentiment(交易日 16:30 情绪日报) case(周日 10:05 立案/处罚公告)。"
+          "sentiment(交易日 16:30 情绪日报) case(周日 10:05 立案/处罚公告) "
+          "etf(每天 17:35 ETF 综合评估)。"
           "Ctrl+C 退出",
           flush=True)
     s.start()

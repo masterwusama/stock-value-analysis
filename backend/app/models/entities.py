@@ -614,3 +614,135 @@ class MainBusiness(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
     __table_args__ = (Index("idx_zygc_sid_date", "sid", "report_date"),)
+
+
+# ---------------------------------------------------------------------------
+# ETF 综合评估模块（fetch_etf.py 采集，import_legacy.import_etf 回灌）
+# ---------------------------------------------------------------------------
+
+class EtfInfo(Base):
+    """ETF 基础档案：一码一行。来源 EM f10 jbgk（周刷）+ 采集器指数解析。
+
+    ETF 不进 security 主表（不同资产类别、无评分行），以基金代码为自然主键；
+    index_key 为跟踪指数在库内的统一键（国证系=指数代码如 980081，
+    其余=IDX_+名称净化），etf_index_val / etf_index_close 挂同一键。
+    """
+
+    __tablename__ = "etf_info"
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(128))
+    market: Mapped[str | None] = mapped_column(String(8))          # SZ / SH
+    index_key: Mapped[str] = mapped_column(String(32), nullable=False)
+    index_name: Mapped[str | None] = mapped_column(String(64))
+    index_family: Mapped[str | None] = mapped_column(String(8))    # cni / hsi / other
+    mgmt_fee: Mapped[str | None] = mapped_column(String(32))
+    custody_fee: Mapped[str | None] = mapped_column(String(32))
+    inception: Mapped[date | None] = mapped_column(Date)
+    list_date: Mapped[date | None] = mapped_column(Date)
+    scale_text: Mapped[str | None] = mapped_column(String(64))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class EtfSpot(Base):
+    """ETF 场内日快照：腾讯行情 + pingzhongdata 单位净值。
+
+    premium_pct 为静态折溢价（现价/最新披露净值-1，免费源无盘中 IOPV）。
+    scale_yi 亿份口径的总市值（≈基金规模）。
+    """
+
+    __tablename__ = "etf_spot"
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    trade_date: Mapped[date] = mapped_column(primary_key=True)
+    price: Mapped[float | None] = mapped_column(Numeric(12, 4))
+    change_pct: Mapped[float | None] = mapped_column(Double)
+    turnover_wan: Mapped[float | None] = mapped_column(Numeric(18, 2))
+    scale_yi: Mapped[float | None] = mapped_column(Numeric(14, 3))
+    nav: Mapped[float | None] = mapped_column(Numeric(12, 4))
+    nav_date: Mapped[date | None] = mapped_column(Date)
+    premium_pct: Mapped[float | None] = mapped_column(Double)
+    week52_high: Mapped[float | None] = mapped_column(Numeric(12, 4))
+    week52_low: Mapped[float | None] = mapped_column(Numeric(12, 4))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (Index("idx_etf_spot_date", "trade_date"),)
+
+
+class EtfHolding(Base):
+    """ETF 持仓（成份股+权重），两个来源共存：
+
+    source='official'：国证官网月度快照（全量 100 只、官方权重，report_period
+    形如 '2026-09'）；source='f10'：EM 季报前十重仓（report_period 形如
+    '2026-06-30'）。stock_market 由代码位数推断（6 位 A / 5 位 HK），
+    API 层按 (code, market) join security/score_daily 取推荐分。
+    历史期逐月/逐季累积，相邻期 diff 即调仓跟踪。
+    """
+
+    __tablename__ = "etf_holding"
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    report_period: Mapped[str] = mapped_column(String(16), primary_key=True)
+    stock_code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    stock_name: Mapped[str | None] = mapped_column(String(64))
+    stock_market: Mapped[str] = mapped_column(String(4), nullable=False)
+    source: Mapped[str] = mapped_column(String(8), nullable=False)
+    weight: Mapped[float | None] = mapped_column(Double)
+    industry: Mapped[str | None] = mapped_column(String(64))
+    mcap_yi: Mapped[float | None] = mapped_column(Numeric(14, 2))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (Index("idx_etf_holding_period", "code", "report_period"),)
+
+
+class EtfIndexVal(Base):
+    """跟踪指数估值日序列：PE/PB（调和口径自算或国证官方快照）+ 股息率（自算）。
+
+    src='cni_official'（名录快照优先）或 'calc'（权重×腾讯个股估值兜底；
+    恒生系指数只有 calc）。分位在 API 层按本表现算（窗口=全部样本，
+    冷启动样本少时前端披露样本天数），不落分位列。
+    """
+
+    __tablename__ = "etf_index_val"
+
+    index_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    trade_date: Mapped[date] = mapped_column(primary_key=True)
+    pe: Mapped[float | None] = mapped_column(Double)
+    pb: Mapped[float | None] = mapped_column(Double)
+    dv: Mapped[float | None] = mapped_column(Double)
+    src: Mapped[str | None] = mapped_column(String(16))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (Index("idx_etf_val_date", "trade_date"),)
+
+
+class EtfIndexClose(Base):
+    """跟踪指数收盘点位（国证官网日线全史），估值图的底衬曲线。
+
+    独立成表是因为点位与估值两种粒度：点位有史以来天天有，估值序列从
+    采集器上线日起累积，混一张表会让分位窗口混入大量纯点位行。
+    """
+
+    __tablename__ = "etf_index_close"
+
+    index_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    trade_date: Mapped[date] = mapped_column(primary_key=True)
+    close: Mapped[float] = mapped_column(Double, nullable=False)
+
+
+class EtfAnn(Base):
+    """ETF 公告（预留表：公告源尚在接入中，采集器写空则本表保持空）。
+
+    art_code 为源侧公告 ID，(code, art_code) 自然主键。
+    """
+
+    __tablename__ = "etf_ann"
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)
+    art_code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    ann_date: Mapped[date] = mapped_column(nullable=False)
+    title: Mapped[str] = mapped_column(String(256), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    __table_args__ = (Index("idx_etf_ann_date", "code", "ann_date"),)

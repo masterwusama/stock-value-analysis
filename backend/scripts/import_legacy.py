@@ -49,6 +49,12 @@ from app.models import (
     Dividend,
     EdbIndicator,
     EdbValue,
+    EtfAnn,
+    EtfHolding,
+    EtfIndexClose,
+    EtfIndexVal,
+    EtfInfo,
+    EtfSpot,
     EtlJobLog,
     FinBalance,
     FinCashflow,
@@ -70,6 +76,7 @@ from app.models import (
 )
 
 DATA_DIR = LEGACY_DATA_DIR / "data"
+ETF_DIR = LEGACY_DATA_DIR / "data" / "etf"
 AGRO_DIR = LEGACY_DATA_DIR / "agro-price" / "data"
 SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
 
@@ -1250,7 +1257,107 @@ TABLES = [
     "fin_cashflow", "fin_balance", "fin_income", "fin_indicator", "fin_note",
     "quote_daily", "valuation_pctile", "share_action", "main_business",
     "security", "agro_price", "agro_product", "edb_value", "edb_indicator", "etl_job_log",
+    "etf_ann", "etf_holding", "etf_index_close", "etf_index_val", "etf_info", "etf_spot",
 ]
+
+
+def import_etf(db, stats):
+    """data/etf/*.json → etf_info / etf_spot / etf_holding / etf_ann，
+    data/etf/index_val/*.json → etf_index_val / etf_index_close。
+
+    全部按自然主键 upsert：序列档是「历史累积 + 当日覆盖」的权威文件，
+    每轮全量重放幂等；不追删（源文件由采集侧腰斩守卫保证不收缩）。
+    """
+    if not ETF_DIR.exists():
+        return  # 首轮采集还没跑过：无源可读不是回灌失败
+    now = datetime.now()
+    w_info = _Writer(db, stats, EtfInfo, mode="upsert", upd_coalesce=True)
+    w_spot = _Writer(db, stats, EtfSpot, mode="upsert", upd_coalesce=True)
+    w_hold = _Writer(db, stats, EtfHolding, mode="upsert", upd_coalesce=True)
+    w_ann = _Writer(db, stats, EtfAnn, mode="upsert", upd_coalesce=True)
+    w_val = _Writer(db, stats, EtfIndexVal, mode="upsert", upd_coalesce=True)
+    w_close = _Writer(db, stats, EtfIndexClose, mode="upsert")
+
+    def _mkt(code):
+        return "HK" if len(code) == 5 else "A"
+
+    for path in sorted(ETF_DIR.glob("*.json")):
+        if path.name == "etf_list.json":
+            continue
+        try:
+            src = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            stats["etf.skipped_broken"] += 1
+            continue
+        code = path.stem
+        info, idx, spot = src.get("info") or {}, src.get("index") or {}, src.get("spot") or {}
+        if not info.get("name") or not idx.get("key"):
+            stats["etf.skipped_incomplete"] += 1
+            continue
+        upd = parse_dt(src.get("updated_at")) or now
+        w_info.add({
+            "code": code, "name": info["name"],
+            "full_name": info.get("full_name"),
+            "market": "SH" if code.startswith("5") else "SZ",
+            "index_key": idx["key"], "index_name": idx.get("name"),
+            "index_family": idx.get("family"),
+            "mgmt_fee": info.get("mgmt_fee"), "custody_fee": info.get("custody_fee"),
+            "inception": _as_date(info.get("inception")),
+            "list_date": _as_date(info.get("list_date")),
+            "scale_text": info.get("scale_text"), "updated_at": upd,
+        })
+        if spot.get("price") or spot.get("nav"):
+            w_spot.add({
+                "code": code, "trade_date": upd.date(), "price": spot.get("price"),
+                "change_pct": spot.get("change_pct"), "turnover_wan": spot.get("turnover_wan"),
+                "scale_yi": spot.get("scale_yi"), "nav": spot.get("nav"),
+                "nav_date": _as_date(spot.get("nav_date")),
+                "premium_pct": spot.get("premium_pct"),
+                "week52_high": spot.get("week52_high"), "week52_low": spot.get("week52_low"),
+                "updated_at": upd,
+            })
+        hold = src.get("holdings") or {}
+        off = hold.get("official")
+        for h in (off or {}).get("rows") or []:
+            w_hold.add({"code": code, "report_period": off["month"],
+                        "stock_code": h["code"], "stock_name": h.get("name"),
+                        "stock_market": _mkt(h["code"]), "source": "official",
+                        "weight": h.get("weight"), "industry": h.get("industry"),
+                        "mcap_yi": h.get("mcap_yi"), "updated_at": upd})
+        f10 = hold.get("f10") or {}
+        for q, rows in (f10.get("rows") or {}).items():
+            for h in rows:
+                w_hold.add({"code": code, "report_period": q,
+                            "stock_code": h["code"], "stock_name": h.get("name"),
+                            "stock_market": _mkt(h["code"]), "source": "f10",
+                            "weight": h.get("weight"), "industry": None,
+                            "mcap_yi": None, "updated_at": upd})
+        for a in src.get("anns") or []:
+            if a.get("date") and a.get("title"):
+                w_ann.add({"code": code, "art_code": a.get("art_code") or a["title"][:60],
+                           "ann_date": _as_date(a["date"]), "title": a["title"],
+                           "updated_at": upd})
+    for path in sorted((ETF_DIR / "index_val").glob("*.json")):
+        try:
+            src = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            stats["etf.skipped_broken"] += 1
+            continue
+        key = src.get("index_key") or path.stem
+        upd = parse_dt(src.get("updated_at")) or now
+        for d, pe, pb, dv in zip(src.get("dates") or [], src.get("pe") or [],
+                                 src.get("pb") or [], src.get("dv") or []):
+            if pe is None and pb is None and dv is None:
+                continue
+            w_val.add({"index_key": key, "trade_date": _as_date(d), "pe": pe,
+                       "pb": pb, "dv": dv, "src": "calc", "updated_at": upd})
+        for row in src.get("close") or []:
+            if row and len(row) == 2:
+                w_close.add({"index_key": key, "trade_date": _as_date(row[0]),
+                             "close": row[1]})
+    for w in (w_info, w_spot, w_hold, w_ann, w_val, w_close):
+        w.flush()
+    db.commit()
 
 
 def clean_tables(db):
@@ -1283,6 +1390,8 @@ def main():
     ap.add_argument("--only-case", action="store_true",
                     help="回灌 data/case/ 立案公告并单刷 score_daily（fetch_case 采集后跑——"
                          "立案旗与 ST 高危补旗都发生在 score 行重建里，只灌 case_event 不刷分行看不到）")
+    ap.add_argument("--only-etf", action="store_true",
+                    help="只回灌 data/etf/ ETF 综合评估（fetch_etf 采集后跑）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1300,12 +1409,15 @@ def main():
         args.no_clean = True
     if args.only_case:
         args.no_clean = True
+    if args.only_etf:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
     stats = _Stats()
     t0 = time.time()
     mode = ("only-case" if args.only_case else "only-scores" if args.only_scores
+            else "only-etf" if args.only_etf
             else ("only-fresh" if args.only_fresh else "full"))
     try:
         if not args.no_clean:
@@ -1315,6 +1427,8 @@ def main():
             import_sentiment(db, stats)
         elif args.only_zygc:
             import_zygc(db, stats)
+        elif args.only_etf:
+            import_etf(db, stats)
         elif args.only_case:
             # 先灌公告面，再刷分：立案旗与 ST 高危补旗都发生在 score 行重建（build_score_rows）里
             import_case(db, stats)
@@ -1334,6 +1448,7 @@ def main():
             import_actions(db, stats)
             import_zygc(db, stats)
             import_sentiment(db, stats)
+            import_etf(db, stats)
         else:
             import_case(db, stats)
             import_companies(db, stats, quiet=args.quiet)
@@ -1344,6 +1459,7 @@ def main():
             import_actions(db, stats)
             import_zygc(db, stats)
             import_sentiment(db, stats)
+            import_etf(db, stats)
         held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),

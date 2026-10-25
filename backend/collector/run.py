@@ -7,6 +7,7 @@
     python -m collector.run agro      # fetch_prices → 回灌（生意社/中农立华价格，不碰 Wind）
     python -m collector.run edb       # 行业 EDB 量价（免费源:新浪期货主力/东财宏观,周日 20:00 自动,云端可跑）
     python -m collector.run events    # Wind 事件(一次性/手动,不进每日调度) → 回灌
+    python -m collector.run etf       # ETF 综合评估(成份/指数估值序列/净值) → 回灌
     python -m collector.run import    # 跳过抓取,仅手动触发一次回灌
 尾部参数透传给该 job 首个采集脚本(传了就整体替代该 job 的默认参数),
 如 `python -m collector.run stock --codes 600519`。
@@ -96,6 +97,10 @@ JOBS = {
     # 周更：立案是低频事件，且回答「正在立案」只看近 2 年的公告面；回灌走 --only-case
     # （case_event + 单刷 score_daily——立案抬 ST 高危旗发生在 score 行重建里）
     "case": [(SCRIPTS, "fetch_case.py")],
+    # etf：ETF 综合评估（f10 基础/持仓 + 国证官方成份/指数日线 + 腾讯行情/净值 +
+    # 估值自算序列累积，每只 ≈15 秒）。回灌走 --only-etf；17:35 独立时段排在
+    # stock(16:05/22:05) 与 sentiment(16:30) 之后，保证成份股联动用的是当日新评分。
+    "etf": [(SCRIPTS, "fetch_etf.py")],
     "import": [],
 }
 
@@ -124,6 +129,8 @@ IMPORT_DEFAULTS = {
     "sentiment": ["--only-sentiment"],
     # 立案公告：先灌 case_event 再单刷 score_daily（旗在 score 行重建里贴）
     "case": ["--only-case"],
+    # ETF 综合评估六表（序列档全量重放幂等，不追删）
+    "etf": ["--only-etf"],
 }
 
 
@@ -146,6 +153,7 @@ SCRIPT_TIMEOUT = {
     "sentiment": 1800,
     "agro": 2 * 3600,
     "case": 1800,   # 全量回填 28 页 ≈1 分钟，增量更少；放宽到与 sentiment 同档
+    "etf": 900,     # 每只 ≈15 秒（国证月度快照+3 年持仓+序列），多只线性涨,留足余量
 }
 
 

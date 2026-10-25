@@ -9,6 +9,7 @@
       <router-link to="/pick">掘金台</router-link>
       <router-link to="/agro">农价·量价</router-link>
       <router-link to="/sentiment">情绪日报</router-link>
+      <router-link to="/etf">ETF评估</router-link>
       <router-link to="/research">投研库</router-link>
     </nav>
   </header>

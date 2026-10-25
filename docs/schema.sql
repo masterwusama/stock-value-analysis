@@ -159,25 +159,23 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
+CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
+
+CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
+
+CREATE INDEX idx_list_value ON score_daily (trade_date, value);
+
+CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
+
 CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 
 CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
-
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
 
 CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
 
 CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
-
-CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
-
-CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
-
-CREATE INDEX idx_list_value ON score_daily (trade_date, value);
-
-
-CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -307,9 +305,9 @@ CREATE TABLE share_action (
 	PRIMARY KEY (sid, kind, src_id)
 );
 
-CREATE INDEX idx_action_date ON share_action (kind, issue_date);
-
 CREATE INDEX idx_action_sid_kind ON share_action (sid, kind, notice_date);
+
+CREATE INDEX idx_action_date ON share_action (kind, issue_date);
 
 CREATE TABLE agro_product (
 	product_id VARCHAR(64) NOT NULL, 
@@ -407,4 +405,86 @@ CREATE TABLE main_business (
 );
 
 CREATE INDEX idx_zygc_sid_date ON main_business (sid, report_date);
+
+CREATE TABLE etf_info (
+	code VARCHAR(16) NOT NULL, 
+	name VARCHAR(64) NOT NULL, 
+	full_name VARCHAR(128), 
+	market VARCHAR(8), 
+	index_key VARCHAR(32) NOT NULL, 
+	index_name VARCHAR(64), 
+	index_family VARCHAR(8), 
+	mgmt_fee VARCHAR(32), 
+	custody_fee VARCHAR(32), 
+	inception DATE, 
+	list_date DATE, 
+	scale_text VARCHAR(64), 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (code)
+);
+
+CREATE TABLE etf_spot (
+	code VARCHAR(16) NOT NULL, 
+	trade_date DATE NOT NULL, 
+	price NUMERIC(12, 4), 
+	change_pct DOUBLE, 
+	turnover_wan NUMERIC(18, 2), 
+	scale_yi NUMERIC(14, 3), 
+	nav NUMERIC(12, 4), 
+	nav_date DATE, 
+	premium_pct DOUBLE, 
+	week52_high NUMERIC(12, 4), 
+	week52_low NUMERIC(12, 4), 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (code, trade_date)
+);
+
+CREATE INDEX idx_etf_spot_date ON etf_spot (trade_date);
+
+CREATE TABLE etf_holding (
+	code VARCHAR(16) NOT NULL, 
+	report_period VARCHAR(16) NOT NULL, 
+	stock_code VARCHAR(16) NOT NULL, 
+	stock_name VARCHAR(64), 
+	stock_market VARCHAR(4) NOT NULL, 
+	source VARCHAR(8) NOT NULL, 
+	weight DOUBLE, 
+	industry VARCHAR(64), 
+	mcap_yi NUMERIC(14, 2), 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (code, report_period, stock_code)
+);
+
+CREATE INDEX idx_etf_holding_period ON etf_holding (code, report_period);
+
+CREATE TABLE etf_index_val (
+	index_key VARCHAR(32) NOT NULL, 
+	trade_date DATE NOT NULL, 
+	pe DOUBLE, 
+	pb DOUBLE, 
+	dv DOUBLE, 
+	src VARCHAR(16), 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (index_key, trade_date)
+);
+
+CREATE INDEX idx_etf_val_date ON etf_index_val (trade_date);
+
+CREATE TABLE etf_index_close (
+	index_key VARCHAR(32) NOT NULL, 
+	trade_date DATE NOT NULL, 
+	close DOUBLE NOT NULL, 
+	PRIMARY KEY (index_key, trade_date)
+);
+
+CREATE TABLE etf_ann (
+	code VARCHAR(16) NOT NULL, 
+	art_code VARCHAR(64) NOT NULL, 
+	ann_date DATE NOT NULL, 
+	title VARCHAR(256) NOT NULL, 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (code, art_code)
+);
+
+CREATE INDEX idx_etf_ann_date ON etf_ann (code, ann_date);
 
