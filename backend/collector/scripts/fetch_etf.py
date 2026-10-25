@@ -702,10 +702,11 @@ def main():
     args = ap.parse_args()
 
     DATA.mkdir(parents=True, exist_ok=True)
-    seed = {"codes": ["159263", "520550", "563300"], "meta": {
+    seed = {"codes": ["159263", "520550", "563300", "512800"], "meta": {
         "159263": {"index_code": "980081"},       # 国证价值100(定制指数,名录查不到)
         "520550": {"pcf": "cmfchina"},            # 招商管理→官网申赎清单给全量篮子
         "563300": {"index_code": "932000", "family": "csi"},  # 中证2000(官网权重快照)
+        "512800": {"index_code": "399986", "family": "csi"},  # 中证银行(官网权重快照)
     }}
     if LIST_JSON.exists():
         try:
