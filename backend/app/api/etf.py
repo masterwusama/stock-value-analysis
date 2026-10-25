@@ -178,6 +178,21 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
     cov = round(w_scored / w_all, 4) if w_all else 0.0
     r_avg = round(w_r / w_scored, 1) if w_scored else None
 
+    # ---- 行业分布(权重聚合;行业缺失归「未分类」;超 11 类折叠「其他」) ----
+    ind_map: dict = {}
+    for h in holdings_out:
+        key = h.get("industry") or "未分类"
+        box = ind_map.setdefault(key, {"weight": 0.0, "count": 0})
+        box["weight"] += h["weight"] or 0
+        box["count"] += 1
+    ind_dist = sorted(({"name": k, "weight": round(v["weight"], 4), "count": v["count"]}
+                       for k, v in ind_map.items()), key=lambda x: -x["weight"])
+    if len(ind_dist) > 11:
+        top, rest = ind_dist[:10], ind_dist[10:]
+        ind_dist = top + [{"name": "其他",
+                           "weight": round(sum(x["weight"] for x in rest), 4),
+                           "count": sum(x["count"] for x in rest)}]
+
     # ---- 调仓:官方/PCF 月度相邻期 diff(不足两期回退 f10 季度 diff) ----
     changes = None
     ch_source = basis_source if basis_source in ("official", "pcf") else None
@@ -310,6 +325,7 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
             "source": basis_source, "period": latest, "count": len(rows),
             "weight_covered": round(w_all, 4), "score_coverage": cov,
             "r_weighted": r_avg, "tier_weight": {k: round(v, 4) for k, v in tier_w.items()},
+            "industry_dist": ind_dist,
             "rows": holdings_out,
         },
         "changes": changes,

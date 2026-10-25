@@ -274,6 +274,19 @@ function renderChart() {
           </div>
         </section>
 
+        <!-- ②.5 行业分布 -->
+        <section class="card" v-if="(holdings.industry_dist || []).length">
+          <h3>行业分布<span class="sub">持仓权重聚合{{ holdings.source === 'f10' ? '(仅前十口径)' : '' }} · 行业口径:{{ holdings.source === 'official' ? '国证官方' : '证券库' }}</span></h3>
+          <div class="ind-rows">
+            <div v-for="x in holdings.industry_dist" :key="x.name" class="ind-row">
+              <em>{{ x.name }}</em>
+              <div class="indbar"><i :style="{ width: (x.weight / holdings.industry_dist[0].weight * 100) + '%' }"></i></div>
+              <b>{{ (x.weight * 100).toFixed(1) }}%</b>
+              <span class="cnt">{{ x.count }} 只</span>
+            </div>
+          </div>
+        </section>
+
         <!-- ③ 跟踪指数估值序列 -->
         <section class="card">
           <h3>跟踪指数估值<span class="sub">{{ valuation.basis === 'official' ? '国证官方权重自算(PE/PB 官方口径优先)' : valuation.basis === 'pcf' ? '申赎清单全量权重自算' : '季报前十权重自算' }} · 样本逐日累积 · 下方浅灰=指数点位</span></h3>
@@ -418,6 +431,14 @@ function renderChart() {
 .ok-list li { color: #374151; }
 .risk-list li { color: #92400e; }
 
+.ind-rows { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 28px; }
+.ind-row { display: grid; grid-template-columns: 6.5em 1fr 3.6em 3em; align-items: center; gap: 8px; font-size: 12px; }
+.ind-row em { font-style: normal; color: var(--txt, #374151); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.indbar { height: 9px; background: var(--bg-soft, #f3f4f6); border-radius: 5px; overflow: hidden; }
+.indbar i { display: block; height: 100%; border-radius: 5px; background: var(--accent, #2d6cdf); opacity: 0.85; }
+.ind-row b { font-variant-numeric: tabular-nums; text-align: right; }
+.ind-row .cnt { color: var(--sub, #9ca3af); text-align: right; }
+
 .chart { width: 100%; height: 360px; }
 
 .tierbar { display: flex; height: 18px; border-radius: 6px; overflow: hidden; margin-bottom: 10px; font-size: 11px; color: #fff; }
@@ -459,6 +480,7 @@ details > summary { cursor: pointer; font-size: 13px; font-weight: 600; margin: 
   .score-badge em { font-size: 24px; }
   .score-parts { grid-template-columns: 1fr; }
   .rr { grid-template-columns: 1fr; }
+  .ind-rows { grid-template-columns: 1fr; }
   .chart { height: 300px; }
   .tbl { font-size: 12px; }
   .card { padding: 12px 11px; }

@@ -95,6 +95,11 @@ def test_live():
         check(f"{tag} 样本天数一致", v["sample_days"] == n)
         check(f"{tag} 成份行有分层", len(h["rows"]) == h["count"]
               and all(r["tier"] in tiers for r in h["rows"]))
+        dist = h.get("industry_dist") or []
+        check(f"{tag} 行业分布守恒", dist and
+              abs(sum(x["weight"] for x in dist) - (h["weight_covered"] or 0)) < 0.02
+              and sum(x["count"] for x in dist) == h["count"],
+              f"{sum(x['weight'] for x in dist)} vs {h['weight_covered']}")
         ch = d.get("changes")
         if ch:
             # month 一定来自官方月度;官方不足两期时回退 f10 季 diff(kind=quarter)是合法态
