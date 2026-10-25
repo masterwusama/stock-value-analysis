@@ -104,6 +104,33 @@ const scoreBar = computed(() => {
   ]
 })
 
+// ---- 成份股表:表头点击排序(数值列;null 恒垫底,与掘金台同口径) ----
+const SORT_GET = {
+  weight: (h) => h.weight, recommend: (h) => h.recommend,
+  value: (h) => h.value, growth: (h) => h.growth,
+  trap: (h) => h.trap, fraud: (h) => h.fraud,
+  div_yield: (h) => h.div_yield,
+}
+const sortKey = ref('weight')
+const sortDir = ref('desc')
+function toggleSort(k) {
+  if (!SORT_GET[k]) return
+  if (sortKey.value === k) sortDir.value = sortDir.value === 'desc' ? 'asc' : 'desc'
+  else { sortKey.value = k; sortDir.value = 'desc' }
+}
+const sortedRows = computed(() => {
+  const rows = holdings.value.rows || []
+  const get = SORT_GET[sortKey.value]
+  if (!get) return rows
+  const dir = sortDir.value === 'desc' ? -1 : 1
+  return [...rows].sort((a, b) => {
+    const va = get(a), vb = get(b)
+    if (va == null) return vb == null ? 0 : 1     // null 垫底,与方向无关
+    if (vb == null) return -1
+    return va === vb ? 0 : (va > vb ? 1 : -1) * dir
+  })
+})
+
 // ---- 估值图:上格 PE+股息率,下格 PB+指数点位(点位为底衬,浅灰) ----
 function renderChart() {
   if (!chartEl.value) return
@@ -264,13 +291,18 @@ function renderChart() {
           <div class="tbl-wrap">
             <table class="tbl">
               <thead><tr>
-                <th class="num">权重</th><th>代码/名称</th><th>行业</th>
-                <th class="num">推荐分</th><th class="num">V</th><th class="num">G</th>
-                <th class="num">陷阱</th><th class="num">造假</th><th class="num">股息率</th>
+                <th class="num sortable" @click="toggleSort('weight')">权重<i v-if="sortKey==='weight'" class="arr">{{ sortDir==='desc' ? '▼' : '▲' }}</i></th>
+                <th>代码/名称</th><th>行业</th>
+                <th class="num sortable" @click="toggleSort('recommend')">推荐分<i v-if="sortKey==='recommend'" class="arr">{{ sortDir==='desc' ? '▼' : '▲' }}</i></th>
+                <th class="num sortable" @click="toggleSort('value')">V<i v-if="sortKey==='value'" class="arr">{{ sortDir==='desc' ? '▼' : '▲' }}</i></th>
+                <th class="num sortable" @click="toggleSort('growth')">G<i v-if="sortKey==='growth'" class="arr">{{ sortDir==='desc' ? '▼' : '▲' }}</i></th>
+                <th class="num sortable" @click="toggleSort('trap')">陷阱<i v-if="sortKey==='trap'" class="arr">{{ sortDir==='desc' ? '▼' : '▲' }}</i></th>
+                <th class="num sortable" @click="toggleSort('fraud')">造假<i v-if="sortKey==='fraud'" class="arr">{{ sortDir==='desc' ? '▼' : '▲' }}</i></th>
+                <th class="num sortable" @click="toggleSort('div_yield')">股息率<i v-if="sortKey==='div_yield'" class="arr">{{ sortDir==='desc' ? '▼' : '▲' }}</i></th>
                 <th>分层</th><th>旗</th>
               </tr></thead>
               <tbody>
-                <tr v-for="h in holdings.rows" :key="h.code">
+                <tr v-for="h in sortedRows" :key="h.code">
                   <td class="num">{{ (h.weight * 100).toFixed(2) }}%</td>
                   <td><router-link :to="'/stock/' + h.code" class="code-link">{{ h.name }}<span class="mkt">{{ h.market }}</span></router-link></td>
                   <td class="l">{{ h.industry || '-' }}</td>
@@ -393,6 +425,9 @@ function renderChart() {
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl th, .tbl td { padding: 6px 10px; border-bottom: 1px solid #f1f5f9; text-align: left; white-space: nowrap; }
 .tbl th { color: var(--sub, #6b7280); font-weight: 500; position: sticky; top: 0; background: var(--card, #fff); }
+.tbl th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.tbl th.sortable:hover { color: var(--accent, #2d6cdf); }
+.tbl th .arr { font-style: normal; font-size: 10px; margin-left: 2px; color: var(--accent, #2d6cdf); }
 .tbl .num { text-align: right; font-variant-numeric: tabular-nums; }
 .tbl .l { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
 .tbl-wrap { max-height: 480px; overflow: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
