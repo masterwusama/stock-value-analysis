@@ -607,12 +607,12 @@ def fetch_one(code, meta, catalog, force=False, today=None):
     time.sleep(SLEEP)
 
     cni = None
+    ohlc = None
     if idx["family"] == "csi" and idx.get("csi_code"):
         try:
             cni = fetch_csi_closeweight(idx["csi_code"])   # 同形状复用 official 槽位
         except Exception as e:  # noqa: BLE001
             print(f"  [{code}] 中证权重下载失败: {e!r}", flush=True)
-        ohlc = None
         try:
             ohlc = fetch_csi_close(idx["csi_code"])
         except Exception as e:  # noqa: BLE001
