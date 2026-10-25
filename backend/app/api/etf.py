@@ -214,22 +214,30 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
                      and (cur[c].weight or 0) != (prev[c].weight or 0)],
         }
 
-    # ---- 估值序列与分位 ----
+    # ---- 估值序列与分位(pe/pb=指数权重整体法;pe_mcap/pb_mcap=市值权重,对表 Wind) ----
     val_out = {"basis": basis_source, "sample_days": len(val_series), "pe": None,
-               "pb": None, "dv": None, "pctile": {}, "dates": [], "pe_series": [],
-               "pb_series": [], "dv_series": [], "close_series": []}
+               "pb": None, "pe_mcap": None, "pb_mcap": None, "dv": None,
+               "pctile": {}, "dates": [], "pe_series": [], "pb_series": [],
+               "pe_mcap_series": [], "pb_mcap_series": [], "dv_series": [],
+               "close_series": []}
     if val_series:
         pes = [r.pe for r in val_series]
         pbs = [r.pb for r in val_series]
+        m_pes = [r.pe_mcap for r in val_series]
+        m_pbs = [r.pb_mcap for r in val_series]
         dvs = [r.dv for r in val_series]
         last = val_series[-1]
         val_out.update({
-            "pe": last.pe, "pb": last.pb, "dv": last.dv,
+            "pe": last.pe, "pb": last.pb, "pe_mcap": last.pe_mcap,
+            "pb_mcap": last.pb_mcap, "dv": last.dv,
             "dates": [r.trade_date.isoformat() for r in val_series],
-            "pe_series": pes, "pb_series": pbs, "dv_series": dvs,
+            "pe_series": pes, "pb_series": pbs, "pe_mcap_series": m_pes,
+            "pb_mcap_series": m_pbs, "dv_series": dvs,
         })
         if len(val_series) >= PCTILE_MIN_DAYS:
             for name, arr, v in (("pe", pes, last.pe), ("pb", pbs, last.pb),
+                                 ("pe_mcap", m_pes, last.pe_mcap),
+                                 ("pb_mcap", m_pbs, last.pb_mcap),
                                  ("dv", dvs, last.dv)):
                 got = _pct(arr, v)
                 if got:
@@ -348,6 +356,7 @@ class EtfSummary(BaseModel):
     premium_pct: float | None = None
     dv: float | None = None
     pe: float | None = None
+    pe_mcap: float | None = None
     pe_pctile: float | None = None
     pb_pctile: float | None = None
     sample_days: int | None = None
@@ -365,7 +374,7 @@ def etf_list(db: Session = Depends(get_session)):
             code=code, name=d["name"], market=d["market"], index_name=d["index_name"],
             price=d["spot"]["price"], change_pct=d["spot"]["change_pct"],
             scale_yi=d["spot"]["scale_yi"], premium_pct=d["spot"]["premium_pct"],
-            dv=v.get("dv"), pe=v.get("pe"),
+            dv=v.get("dv"), pe=v.get("pe"), pe_mcap=v.get("pe_mcap"),
             pe_pctile=(v.get("pctile") or {}).get("pe", {}).get("pct"),
             pb_pctile=(v.get("pctile") or {}).get("pb", {}).get("pct"),
             sample_days=v.get("sample_days"),

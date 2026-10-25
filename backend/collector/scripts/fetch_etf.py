@@ -19,8 +19,10 @@
   data/etf/<code>.json              单只 ETF 全量(info/spot/holdings/changes/anns)
   data/etf/index_val/<index>.json   指数估值序列(dates/pe/pb/dv/close)
 
-口径注:指数 PE/PB 均为权重调和平均(w/Σ(w/pe)),与官方「总市值/总盈余(净资产)」口径
-一致的前提是权重≈市值权重;自算源标 method='calc',前十口径另标 basis='top10'。
+口径注:指数估值双口径整体法,权重=官方/PCF 权重的 pe/pb 为「ETF 实际持仓」
+口径,市值权重的 pe_mcap/pb_mcap 为「Wind/恒指官方对表」口径(2026-10-26 实测
+159263 市值口径 9.02/0.85 vs Wind 9.01/0.85 分毫不差);国证名录官方快照已停用
+(其 PB 口径离群,见 fetch_one 注释)。
 """
 import os
 
@@ -332,15 +334,6 @@ def fetch_cni_ohlc(cni_code):
     return out
 
 
-def cni_official_valuation(catalog, cni_code):
-    """名录快照若覆盖该指数 → 当日官方 PE(静/动)/PB。"""
-    for row in catalog or []:
-        if str(row.get("indexcode")) == str(cni_code):
-            return {"pe_static": _num(row.get("peStatic")), "pe_ttm": _num(row.get("peDynamic")),
-                    "pb": _num(row.get("pb")), "date": dt.date.today().isoformat()}
-    return None
-
-
 # ---------------------------------------------------------------------------
 # 5.5) 招商基金官网 ETF 申赎清单(PCF):全量篮子
 # ---------------------------------------------------------------------------
@@ -431,7 +424,14 @@ def load_index_scores():
 
 
 def calc_index_valuation(holdings):
-    """官方/前十权重 → {pe, pb, dv, pe_cov, dv_cov, n}。调和 PE/PB,加权股息率。"""
+    """官方/PCF 权重 → 双口径整体法估值。
+
+    指数权重口径(pe/pb/dv):Σw/Σ(w/PE_i) 调和整体法——权重=官方成份/PCF 篮子,
+    即「按 ETF 实际持仓买」的组合估值体验;
+    市值权重口径(pe_mcap/pb_mcap):Σ市值/Σ(市值/PE_i)——与 Wind/恒指官方读数
+    对表的口径(2026-10-26 双 ETF 实测:159263 市值口径 9.02/0.85 vs Wind 9.01/0.85
+    分毫不差)。两口径都用腾讯个股 PE(TTM)/PB,正值样本;单市场指数无汇率混算问题。
+    """
     from universe import tencent_spot, tencent_spot_hk
 
     a_codes = [h["code"] for h in holdings if len(h["code"]) == 6]
@@ -445,19 +445,24 @@ def calc_index_valuation(holdings):
 
     w_pe = w_pb = s_w_pe = s_w_pb = 0.0
     w_dv = s_w_dv = w_all = 0.0
+    mc_pe = mc_pb = s_mc_pe = s_mc_pb = 0.0
     n_hit = 0
     for h in holdings:
         w = h.get("weight") or 0
         w_all += w
         q = quotes.get(h["code"]) or {}
-        pe, pb = q.get("pe_ttm"), q.get("pb")
+        pe, pb, mcap = q.get("pe_ttm"), q.get("pb"), q.get("market_cap") or 0
         if pe and pe > 0:
             w_pe += w
             s_w_pe += w / pe
+            mc_pe += mcap
+            s_mc_pe += mcap / pe
             n_hit += 1
         if pb and pb > 0:
             w_pb += w
             s_w_pb += w / pb
+            mc_pb += mcap
+            s_mc_pb += mcap / pb
         dv = dv_map.get(h["code"], (None, None))[1]
         if dv is not None and dv >= 0:
             s_w_dv += w
@@ -465,6 +470,8 @@ def calc_index_valuation(holdings):
     return {
         "pe": round(w_pe / s_w_pe, 3) if s_w_pe > 0 else None,
         "pb": round(w_pb / s_w_pb, 3) if s_w_pb > 0 else None,
+        "pe_mcap": round(mc_pe / s_mc_pe, 3) if s_mc_pe > 0 else None,
+        "pb_mcap": round(mc_pb / s_mc_pb, 3) if s_mc_pb > 0 else None,
         "dv": round(w_dv / s_w_dv * 100, 3) if s_w_dv > 0 else None,   # 百分数
         "pe_cov": round(w_pe / w_all, 4) if w_all else None,
         "dv_cov": round(s_w_dv / w_all, 4) if w_all else None,
@@ -483,11 +490,13 @@ def append_index_val(meta, day_row, ohlc=None):
         except Exception:  # noqa: BLE001
             doc = {}
     dates = doc.get("dates") or []
-    cols = {k: doc.get(k) or [] for k in ("pe", "pb", "dv")}
+    cols = {k: doc.get(k) or [] for k in ("pe", "pb", "dv", "pe_mcap", "pb_mcap")}
     d = day_row["d"]
-    if d in dates:  # 同日覆盖
+    if d in dates:  # 同日覆盖(旧档新列可能缺数组,先垫长)
         i = dates.index(d)
         for k in cols:
+            while len(cols[k]) <= i:
+                cols[k].append(None)
             if day_row.get(k) is not None:
                 cols[k][i] = day_row[k]
     else:
@@ -505,7 +514,8 @@ def append_index_val(meta, day_row, ohlc=None):
            "method": "calc", "basis": meta["basis"], "updated_at":
                datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
            "dates": dates[i0:], "pe": cols["pe"][i0:], "pb": cols["pb"][i0:],
-           "dv": cols["dv"][i0:]}
+           "dv": cols["dv"][i0:], "pe_mcap": cols["pe_mcap"][i0:],
+           "pb_mcap": cols["pb_mcap"][i0:]}
     if ohlc is not None:
         doc["close"] = ohlc
     atomic_write(path, doc)
@@ -574,15 +584,12 @@ def fetch_one(code, meta, catalog, force=False, today=None):
     calc = calc_index_valuation(base_h) if base_h else None
     series_days = None
     if calc:
-        official = cni_official_valuation(catalog, idx["cni_code"]) if idx["cni_code"] else None
-        row = {"d": today.isoformat(), "pe": calc["pe"], "pb": calc["pb"], "dv": calc["dv"]}
-        if official:
-            # 官方 PE/PB 优先(名录快照,自算兜底);股息率名录没有,恒用自算
-            if official.get("pe_ttm"):
-                row["pe"] = official["pe_ttm"]
-            if official.get("pb"):
-                row["pb"] = official["pb"]
-            row["src"] = "cni_official"
+        # 双口径整体法:指数权重(pe/pb)=ETF 实际持仓体验;市值权重(pe_mcap/pb_mcap)
+        # =Wind/恒指官方对表口径。不再采用国证名录官方快照覆盖——其 PB 口径离群
+        # (2026-10-26 实测 0.65,自算 0.83/Wind 0.85,疑似加权平均净资产),
+        # 换算成统一自算口径后两 ETF 序列才同源可比对表
+        row = {"d": today.isoformat(), "pe": calc["pe"], "pb": calc["pb"],
+               "dv": calc["dv"], "pe_mcap": calc["pe_mcap"], "pb_mcap": calc["pb_mcap"]}
         series_days = append_index_val({**idx, "basis": val_basis}, row, ohlc=ohlc)
 
     anns = fetch_anns(code)

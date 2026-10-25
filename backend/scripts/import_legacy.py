@@ -1355,12 +1355,29 @@ def import_etf(db, stats):
             continue
         key = src.get("index_key") or path.stem
         upd = parse_dt(src.get("updated_at")) or now
-        for d, pe, pb, dv in zip(src.get("dates") or [], src.get("pe") or [],
-                                 src.get("pb") or [], src.get("dv") or []):
+        s_dates = src.get("dates") or []
+        s_m_pe = src.get("pe_mcap") or []
+        s_m_pb = src.get("pb_mcap") or []
+        for i, (d, pe, pb, dv) in enumerate(zip(s_dates, src.get("pe") or [],
+                                                src.get("pb") or [], src.get("dv") or [])):
             if pe is None and pb is None and dv is None:
                 continue
             w_val.add({"index_key": key, "trade_date": _as_date(d), "pe": pe,
-                       "pb": pb, "dv": dv, "src": "calc", "updated_at": upd})
+                       "pb": pb, "dv": dv,
+                       "pe_mcap": s_m_pe[i] if i < len(s_m_pe) else None,
+                       "pb_mcap": s_m_pb[i] if i < len(s_m_pb) else None,
+                       "src": "calc", "updated_at": upd})
+        # 序列档是权威全量:文件里已不存在的日期行追删(口径切换清过旧行时,
+        # upsert-only 会让 DB 残留旧基准样本污染分位窗口)
+        live = {d for d in s_dates if d}
+        stale = [r[0] for r in db.execute(
+            select(EtfIndexVal.trade_date).where(EtfIndexVal.index_key == key)
+        ).all() if r[0].isoformat() not in live]
+        if stale:
+            db.execute(text("DELETE FROM etf_index_val"
+                            " WHERE index_key = :k AND trade_date = :d"),
+                       [{"k": key, "d": x} for x in stale])
+            stats["etf.val_stale_deleted"] += len(stale)
         for row in src.get("close") or []:
             if row and len(row) == 2:
                 w_close.add({"index_key": key, "trade_date": _as_date(row[0]),

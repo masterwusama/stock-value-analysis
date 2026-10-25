@@ -462,6 +462,8 @@ CREATE TABLE etf_index_val (
 	trade_date DATE NOT NULL, 
 	pe DOUBLE, 
 	pb DOUBLE, 
+	pe_mcap DOUBLE, 
+	pb_mcap DOUBLE, 
 	dv DOUBLE, 
 	src VARCHAR(16), 
 	updated_at DATETIME NOT NULL, 

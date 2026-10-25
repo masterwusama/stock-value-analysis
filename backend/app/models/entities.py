@@ -697,11 +697,14 @@ class EtfHolding(Base):
 
 
 class EtfIndexVal(Base):
-    """跟踪指数估值日序列：PE/PB（调和口径自算或国证官方快照）+ 股息率（自算）。
+    """跟踪指数估值日序列：双口径整体法 PE/PB（自算）+ 股息率（指数权重加权）。
 
-    src='cni_official'（名录快照优先）或 'calc'（权重×腾讯个股估值兜底；
-    恒生系指数只有 calc）。分位在 API 层按本表现算（窗口=全部样本，
-    冷启动样本少时前端披露样本天数），不落分位列。
+    pe/pb：Σw/Σ(w/PE) 调和整体法，权重=国证官方月度或 PCF 篮子权重——
+    「按 ETF 实际持仓买」的组合估值口径；pe_mcap/pb_mcap：Σ市值/Σ(市值/PE)——
+    与 Wind/恒指官方读数对表的口径（2026-10-26 实测 159263 市值口径 9.02/0.85
+    vs Wind 9.01/0.85）。两口径同为腾讯个股 PE(TTM)/PB、正值样本；国证名录
+    官方快照已停用（其 PB 口径离群：0.65 vs 自算 0.83/Wind 0.85）。分位在
+    API 层按本表现算（窗口=全部样本），不落分位列。
     """
 
     __tablename__ = "etf_index_val"
@@ -710,6 +713,8 @@ class EtfIndexVal(Base):
     trade_date: Mapped[date] = mapped_column(primary_key=True)
     pe: Mapped[float | None] = mapped_column(Double)
     pb: Mapped[float | None] = mapped_column(Double)
+    pe_mcap: Mapped[float | None] = mapped_column(Double)
+    pb_mcap: Mapped[float | None] = mapped_column(Double)
     dv: Mapped[float | None] = mapped_column(Double)
     src: Mapped[str | None] = mapped_column(String(16))
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

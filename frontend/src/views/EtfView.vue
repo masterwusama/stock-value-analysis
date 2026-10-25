@@ -84,6 +84,8 @@ const changes = computed(() => d.value.changes || null)
 const pctile = computed(() => valuation.value.pctile || {})
 const pePct = computed(() => pctile.value.pe?.pct)
 const pbPct = computed(() => pctile.value.pb?.pct)
+// 双口径:指数权重(ETF 实际持仓) vs 市值权重(对表 Wind/恒指官方)
+const fmtVal = (main, mcap) => (main == null ? '-' : num2(main) + (mcap == null ? '' : ' / ' + num2(mcap)))
 
 // 分层权重条:strong/buy/watch/na/avoid 五段
 const TIER_ORDER = ['strong', 'buy', 'watch', 'na', 'avoid']
@@ -151,6 +153,8 @@ function renderChart() {
     : v.dates
   const pe = v.dates.map((x, i) => [x, v.pe_series[i]])
   const pb = v.dates.map((x, i) => [x, v.pb_series[i]])
+  const peM = v.dates.map((x, i) => [x, (v.pe_mcap_series || [])[i]])
+  const pbM = v.dates.map((x, i) => [x, (v.pb_mcap_series || [])[i]])
   const dv = v.dates.map((x, i) => [x, v.dv_series[i]])
   const close = dates.map((x) => closeMap.has(x) ? [x, closeMap.get(x)] : [x, null])
   // 默认聚焦估值序列近 250 日(点位史更长,滚动条看全程)
@@ -193,12 +197,16 @@ function renderChart() {
         borderColor: '#e5e7eb', fillerColor: 'rgba(37,99,235,0.08)' },
     ],
     series: [
-      { name: 'PE', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: pe,
+      { name: 'PE(持仓)', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: pe,
         symbol: 'circle', symbolSize: 3, connectNulls: true, lineStyle: { color: '#dc2626', width: 1.5 } },
+      { name: 'PE(Wind口径)', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: peM,
+        symbol: 'none', connectNulls: true, lineStyle: { color: '#fCA5A5', width: 1.2, type: 'dashed' } },
       { name: '股息率%', type: 'line', xAxisIndex: 0, yAxisIndex: 1, data: dv,
         symbol: 'none', connectNulls: true, lineStyle: { color: '#ea580c', width: 1.5, type: 'dashed' } },
-      { name: 'PB', type: 'line', xAxisIndex: 1, yAxisIndex: 2, data: pb,
+      { name: 'PB(持仓)', type: 'line', xAxisIndex: 1, yAxisIndex: 2, data: pb,
         symbol: 'none', connectNulls: true, lineStyle: { color: '#2563eb', width: 1.5 } },
+      { name: 'PB(Wind口径)', type: 'line', xAxisIndex: 1, yAxisIndex: 2, data: pbM,
+        symbol: 'none', connectNulls: true, lineStyle: { color: '#93c5fd', width: 1.2, type: 'dashed' } },
       { name: '指数点位', type: 'line', xAxisIndex: 1, yAxisIndex: 3, data: close,
         symbol: 'none', connectNulls: true,
         lineStyle: { color: '#cbd5e1', width: 1 }, itemStyle: { color: '#cbd5e1' } },
@@ -242,9 +250,11 @@ function renderChart() {
               <span class="chip" v-if="d.list_date">上市 {{ d.list_date }}</span>
             </div>
             <div class="chips val-chips">
-              <span class="chip v">PE {{ num2(valuation.pe) }}<em v-if="pePct != null">分位 {{ num1(pePct) }}</em></span>
-              <span class="chip v">PB {{ num2(valuation.pb) }}<em v-if="pbPct != null">分位 {{ num1(pbPct) }}</em></span>
-              <span class="chip v">股息率 {{ pct(valuation.dv) }}</span>
+              <span class="chip v" title="PE = Σ权重/Σ(权重/个股PE):整体法,按 ETF 实际持仓权重">PE <em>{{ num2(valuation.pe) }}</em><i class="sub">持仓口径</i><em v-if="pePct != null">分位 {{ num1(pePct) }}</em></span>
+              <span class="chip v" title="PE = Σ市值/Σ(市值/个股PE):市值权重整体法,与 Wind/恒指官方读数同口径">PE <em>{{ num2(valuation.pe_mcap) }}</em><i class="sub">Wind口径</i></span>
+              <span class="chip v" title="PB = Σ权重/Σ(权重/个股PB),持仓口径">PB <em>{{ num2(valuation.pb) }}</em><i class="sub">持仓口径</i><em v-if="pbPct != null">分位 {{ num1(pbPct) }}</em></span>
+              <span class="chip v" title="PB = Σ市值/Σ(市值/个股PB),与 Wind 同口径">PB <em>{{ num2(valuation.pb_mcap) }}</em><i class="sub">Wind口径</i></span>
+              <span class="chip v" title="股息率 = Σ(权重×个股近1年股息率/价格)">股息率 {{ pct(valuation.dv) }}</span>
               <span class="chip v warn" v-if="valuation.sample_days < 30">
                 估值序列累积中 {{ valuation.sample_days }}/30 日,分位暂缺
               </span>
@@ -289,9 +299,15 @@ function renderChart() {
 
         <!-- ③ 跟踪指数估值序列 -->
         <section class="card">
-          <h3>跟踪指数估值<span class="sub">{{ valuation.basis === 'official' ? '国证官方权重自算(PE/PB 官方口径优先)' : valuation.basis === 'pcf' ? '申赎清单全量权重自算' : '季报前十权重自算' }} · 样本逐日累积 · 下方浅灰=指数点位</span></h3>
+          <h3>跟踪指数估值<span class="sub">{{ valuation.basis === 'official' ? '国证官方权重' : valuation.basis === 'pcf' ? '申赎清单全量权重' : '季报前十权重' }} · 双口径整体法 · 样本逐日累积</span></h3>
           <div v-if="valuation.dates?.length" ref="chartEl" class="chart"></div>
           <p v-else class="empty">估值序列尚未生成(跑一次 python -m collector.run etf)</p>
+          <p class="legend">
+            <i class="lg-pe"></i>PE 持仓口径 <i class="lg-pem"></i>PE Wind口径
+            <i class="lg-dv"></i>股息率 <i class="lg-pb"></i>PB 持仓口径 <i class="lg-pbm"></i>PB Wind口径
+            <i class="lg-close"></i>指数点位
+            <span class="lg-note">持仓口径=Σ权重/Σ(权重/个股PE),你实际买到组合的估值;Wind口径=Σ市值/Σ(市值/个股PE),与 Wind/恒指官方读数对表</span>
+          </p>
         </section>
 
         <!-- ④ 成份股联动推荐分 -->
@@ -375,8 +391,11 @@ function renderChart() {
           <p class="empty">公告源接入中:东财/交易所公开接口暂不覆盖 ETF 公告面;规模、净值、分红变化已由日更的规模/折溢价序列与调仓跟踪覆盖。后续接入巨潮/交易所披露后本卡自动点亮。</p>
         </section>
 
-        <p class="note">口径:成份分=持仓权重加权的推荐分 R(score_daily 当日);估值序列=官方权重×腾讯个股 PE/PB 调和平均+股息率加权(国证系指数 PE/PB 优先取名录官方快照),自 {{ valuation.dates?.[0] || '-' }} 起累积;
-          折溢价=现价/最新披露单位净值-1(静态);分层阈值与掘金台一致(≥78 强推/≥65 买入/≥45 观察)。持仓来源:国证官方月度快照或招商官网申赎清单(均全量)或 EM 季报前十(仅无全量源时,评分覆盖不足 80% 时成份分按覆盖率折算)。数据更新:每日 17:35 etf job。</p>
+        <p class="note">口径:成份分=持仓权重加权的推荐分 R(score_daily 当日)。指数估值为双口径整体法(个股 PE 为腾讯 PE-TTM、PB 同源,均只计正值样本):
+          ①<b>持仓口径 pe/pb</b>=Σw/Σ(w/PE),权重取{{ holdings.source === 'official' ? '国证官方月度成份' : holdings.source === 'pcf' ? '招商申赎清单篮子' : '季报前十' }}——即「按 ETF 实际持仓买」的组合估值,评分估值分用此口径,分位样本满 30 日后给出;
+          ②<b>Wind口径 pe_mcap/pb_mcap</b>=Σ市值/Σ(市值/PE)——与 Wind/恒指官方读数同口径(2026-10-26 实测 159263 该口径 9.02/0.85 vs Wind 9.01/0.85),用于对表验证,权重上限类指数(红利低波)两口径差异大属正常;
+          ③<b>股息率 dv</b>=Σ(权重×个股近一年股息率)。国证名录官方 PB 快照因口径离群(0.65 vs 自算 0.83/Wind 0.85)已停用,序列统一自算。
+          折溢价=现价/最新披露单位净值-1(静态);分层阈值与掘金台一致(≥78 强推/≥65 买入/≥45 观察)。数据更新:每日 17:35 etf job。</p>
       </template>
     </template>
     <p v-else-if="!error" class="empty">加载中…</p>
@@ -440,6 +459,12 @@ function renderChart() {
 .ind-row .cnt { color: var(--sub, #9ca3af); text-align: right; }
 
 .chart { width: 100%; height: 360px; }
+.legend { font-size: 12px; color: var(--sub, #6b7280); margin: 8px 0 0; line-height: 1.8; }
+.legend i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: middle; }
+.legend .lg-note { display: block; margin-left: 0; color: var(--sub, #9ca3af); font-size: 11px; }
+.lg-pe { background: #dc2626; } .lg-pem { background: #fca5a5; }
+.lg-dv { background: #ea580c; } .lg-pb { background: #2563eb; }
+.lg-pbm { background: #93c5fd; } .lg-close { background: #cbd5e1; }
 
 .tierbar { display: flex; height: 18px; border-radius: 6px; overflow: hidden; margin-bottom: 10px; font-size: 11px; color: #fff; }
 .tierbar .seg { display: flex; align-items: center; justify-content: center; white-space: nowrap; overflow: hidden; }
