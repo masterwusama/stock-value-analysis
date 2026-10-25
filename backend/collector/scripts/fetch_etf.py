@@ -64,6 +64,11 @@ CNI_SAMPLE_HIST = "https://www.cnindex.com.cn/sample-detail/download-history"
 QTR_MAP = {"1季度": "03-31", "2季度": "06-30", "中期": "06-30", "3季度": "09-30",
            "4季度": "12-31", "年度": "12-31"}
 
+# 中证指数官网(公开文件直链,官方月度权重快照+指数收盘/滚动PE 历史)
+CSI_CLOSEWEIGHT = ("https://oss-ch.csindex.com.cn/static/html/csindex/"
+                   "public/uploads/file/autofile/closeweight/{}closeweight.xls")
+CSI_INDEX_PERF = "https://www.csindex.com.cn/csindex-home/perf/index-perf"
+
 # 招商基金官网接口的签名密钥(前端 JS 静态串,公开披露页;算法见 fetch_cmf_pcf)
 CMF_SECRET = "d274d06273f96656442b0728316026a1"
 CMF_RID = "01ab90a0d4ce45f3bb35b919099d9da1"
@@ -153,23 +158,30 @@ def cni_catalog():
 
 
 def resolve_index(code, basic, meta, catalog):
-    """解析跟踪指数 → {key, name, family, cni_code, basis}。
-    family: cni=国证(官方全量成份可下) / hsi=恒生系(仅前十重仓) / other。"""
+    """解析跟踪指数 → {key, name, family, cni_code, csi_code, basis}。
+    family: cni=国证(官网月度快照) / csi=中证(官网 closeweight 月度快照+收盘历史) /
+    hsi=恒生系(招商 PCF) / other。980xxx 国证与中证指数代码靠 etf_list.meta 兜底,
+    名录/名字匹配只是辅助。"""
     idx_name = (meta or {}).get("index_name") or (basic or {}).get("tracked_index") or ""
     idx_name = re.sub(r"(指数)?$", "", idx_name.strip())
-    fam = "hsi" if "恒生" in idx_name or "港股通" in idx_name else (
-        "cni" if "国证" in idx_name or "深证" in idx_name else "other")
-    cni_code = (meta or {}).get("index_code")
+    m = meta or {}
+    fam = m.get("family")
+    if not fam:
+        fam = ("hsi" if ("恒生" in idx_name or "港股通" in idx_name)
+               else "cni" if "国证" in idx_name
+               else "csi" if "中证" in idx_name else "other")
+    cni_code = m.get("index_code") if fam == "cni" else None
+    csi_code = m.get("index_code") if fam == "csi" else None
     if not cni_code and fam == "cni" and catalog:
-        # 名录只覆盖上市指数;980xxx 定制指数不在其中,靠 etf_list.meta 兜底
         for row in catalog:
             if idx_name and idx_name.replace("国证", "") in str(row.get("indexname", "")):
                 cni_code = str(row.get("indexcode"))
                 break
-    key = (meta or {}).get("index_key") or (
-        cni_code if cni_code else "IDX_" + re.sub(r"\W", "", idx_name)[:12])
+    key = m.get("index_key") or (
+        cni_code or csi_code or "IDX_" + re.sub(r"\W", "", idx_name)[:12])
     return {"key": key, "name": idx_name, "family": fam, "cni_code": cni_code,
-            "basis": "official" if cni_code else "top10"}
+            "csi_code": csi_code,
+            "basis": "official" if (cni_code or csi_code) else "top10"}
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +400,52 @@ def fetch_cmf_pcf(code):
 
 
 # ---------------------------------------------------------------------------
+# 5.6) 中证官网:官方月度权重快照(全量成份)+指数收盘历史
+# ---------------------------------------------------------------------------
+
+def fetch_csi_closeweight(csi_code):
+    """中证官网 {code}closeweight.xls → 官方全量成份+权重(月度快照,老式 BIFF xls
+    需 pandas/xlrd)。输出与国证官方同一形状({month, rows}),回灌同走 official 槽位。"""
+    import pandas as pd
+
+    r = _get(CSI_CLOSEWEIGHT.format(csi_code),
+             headers={**UA, "Referer": "https://www.csindex.com.cn/"}, timeout=30)
+    df = pd.read_excel(io.BytesIO(r.content))
+    col_code = next(c for c in df.columns if "成份券代码" in str(c))
+    col_name = next(c for c in df.columns if "成份券名称" in str(c))
+    col_w = next(c for c in df.columns if "权重" in str(c))
+    col_date = next(c for c in df.columns if "日期" in str(c))
+    holds = []
+    for _, row in df.iterrows():
+        w = _num(row[col_w])
+        holds.append({"code": str(row[col_code]).split(".")[0].zfill(6),
+                      "name": str(row[col_name]).strip(),
+                      "industry": None, "mcap_yi": None,
+                      "weight": None if w is None else round(w / 100, 6)})
+    if not holds:
+        return None
+    ds = str(df.iloc[0][col_date]).replace("-", "").replace("/", "")
+    return {"month": f"{ds[:4]}-{ds[4:6]}", "rows": holds}
+
+
+def fetch_csi_close(csi_code):
+    """中证官网 index-perf → 指数收盘全史([[date, close],...],估值图底衬;
+    接口另带官方滚动 PE 历史暂未启用——序列统一自算双口径,官方值留作对表参考)。"""
+    r = _get(CSI_INDEX_PERF, params={"indexCode": csi_code, "startDate": "20150101",
+                                     "endDate": dt.date.today().isoformat()},
+             headers={**UA, "Referer": "https://www.csindex.com.cn/"}, timeout=25)
+    data = r.json().get("data") or []
+    out = []
+    for row in sorted(data, key=lambda x: str(x.get("tradeDate") or "")):
+        try:
+            d = str(row["tradeDate"])
+            out.append([f"{d[:4]}-{d[4:6]}-{d[6:]}", round(float(row["close"]), 4)])
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 6) ETF 公告(EM 移动端,失败降级)
 # ---------------------------------------------------------------------------
 
@@ -549,13 +607,24 @@ def fetch_one(code, meta, catalog, force=False, today=None):
     time.sleep(SLEEP)
 
     cni = None
-    if idx["cni_code"]:
+    if idx["family"] == "csi" and idx.get("csi_code"):
+        try:
+            cni = fetch_csi_closeweight(idx["csi_code"])   # 同形状复用 official 槽位
+        except Exception as e:  # noqa: BLE001
+            print(f"  [{code}] 中证权重下载失败: {e!r}", flush=True)
+        ohlc = None
+        try:
+            ohlc = fetch_csi_close(idx["csi_code"])
+        except Exception as e:  # noqa: BLE001
+            print(f"  [{code}] 中证收盘历史失败: {e!r}", flush=True)
+        time.sleep(SLEEP)
+    elif idx["cni_code"]:
         try:
             cni = fetch_cni_constituents(idx["cni_code"])
         except Exception as e:  # noqa: BLE001
             print(f"  [{code}] 国证成份下载失败: {e!r}", flush=True)
+        ohlc = fetch_cni_ohlc(idx["cni_code"])
         time.sleep(SLEEP)
-    ohlc = fetch_cni_ohlc(idx["cni_code"]) if idx["cni_code"] else None
 
     # PCF 全量篮子(仅 meta.pcf='cmfchina' 的标的,即招商基金管理的 ETF)
     pcf = None
@@ -633,9 +702,10 @@ def main():
     args = ap.parse_args()
 
     DATA.mkdir(parents=True, exist_ok=True)
-    seed = {"codes": ["159263", "520550"], "meta": {
+    seed = {"codes": ["159263", "520550", "563300"], "meta": {
         "159263": {"index_code": "980081"},       # 国证价值100(定制指数,名录查不到)
         "520550": {"pcf": "cmfchina"},            # 招商管理→官网申赎清单给全量篮子
+        "563300": {"index_code": "932000", "family": "csi"},  # 中证2000(官网权重快照)
     }}
     if LIST_JSON.exists():
         try:
@@ -667,11 +737,17 @@ def main():
         try:
             payload = fetch_one(code, (seed.get("meta") or {}).get(code), catalog,
                                 force=args.force, today=today)
-            # 写回 etf_list 富化元数据(指数解析结果固化,避免每次名录匹配)
+            # 写回 etf_list 富化元数据(指数解析结果固化,避免每次名录匹配)。
+            # index_code 区分家族:国证存 cni_code、中证存 csi_code,勿把对方冲成 None
+            ix = payload["index"]
             meta = seed.setdefault("meta", {}).setdefault(code, {})
-            meta.update({"index_code": payload["index"]["cni_code"],
-                         "index_name": payload["index"]["name"],
-                         "index_key": payload["index"]["key"]})
+            if ix.get("cni_code"):
+                meta["index_code"] = ix["cni_code"]
+            elif ix.get("csi_code"):
+                meta["index_code"] = ix["csi_code"]
+                meta["family"] = "csi"
+            meta["index_name"] = ix["name"]
+            meta["index_key"] = ix["key"]
             seed["updated_at"] = payload["updated_at"]
             atomic_write(LIST_JSON, seed)
         except Exception as e:  # noqa: BLE001

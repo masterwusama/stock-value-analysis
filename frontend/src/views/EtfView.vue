@@ -288,7 +288,7 @@ function renderChart() {
         <section class="card" v-if="(holdings.industry_dist || []).length">
           <h3>行业分布<span class="sub">持仓权重聚合{{ holdings.source === 'f10' ? '(仅前十口径)' : '' }} · 行业口径:{{ holdings.source === 'official' ? '国证官方' : '证券库' }}</span></h3>
           <div class="ind-rows">
-            <div v-for="x in holdings.industry_dist" :key="x.name" class="ind-row">
+            <div v-for="x in holdings.industry_dist" :key="x.name" class="ind-row" :title="x.name + ' ' + (x.weight * 100).toFixed(1) + '% · ' + x.count + ' 只'">
               <em>{{ x.name }}</em>
               <div class="indbar"><i :style="{ width: (x.weight / holdings.industry_dist[0].weight * 100) + '%' }"></i></div>
               <b>{{ (x.weight * 100).toFixed(1) }}%</b>
@@ -299,7 +299,7 @@ function renderChart() {
 
         <!-- ③ 跟踪指数估值序列 -->
         <section class="card">
-          <h3>跟踪指数估值<span class="sub">{{ valuation.basis === 'official' ? '国证官方权重' : valuation.basis === 'pcf' ? '申赎清单全量权重' : '季报前十权重' }} · 双口径整体法 · 样本逐日累积</span></h3>
+          <h3>跟踪指数估值<span class="sub">{{ valuation.basis === 'official' ? (d.index_family === 'csi' ? '中证官方权重' : '国证官方权重') : valuation.basis === 'pcf' ? '申赎清单全量权重' : '季报前十权重' }} · 双口径整体法 · 样本逐日累积</span></h3>
           <div v-if="valuation.dates?.length" ref="chartEl" class="chart"></div>
           <p v-else class="empty">估值序列尚未生成(跑一次 python -m collector.run etf)</p>
           <p class="legend">
@@ -392,7 +392,7 @@ function renderChart() {
         </section>
 
         <p class="note">口径说明(个股原料均为腾讯行情的 PE-TTM 与 PB,剔除亏损/负净资产样本后取正值):
-          <br>① <b>持仓口径 pe/pb</b>:算法=Σ权重 ÷ Σ(权重÷个股PE)。直观读法——把 100 元按 ETF 的实际权重拆着买满成份股,每只投入"权重元"、对应盈利为"权重÷PE 元",加总即整篮子买到的合计盈利,100÷合计盈利就是整篮子的合并市盈率(等价于「篮子总市值÷篮子总盈利」的整体法,只是"投入比例"用指数权重)。权重来源:{{ holdings.source === 'pcf' ? '招商申赎清单各券金额占比' : holdings.source === 'official' ? '国证官方月度成份权重' : '季报前十权重' }}。这是「你实际买到的组合」的估值,综合评分的估值分与分位均用此口径。
+          <br>① <b>持仓口径 pe/pb</b>:算法=Σ权重 ÷ Σ(权重÷个股PE)。直观读法——把 100 元按 ETF 的实际权重拆着买满成份股,每只投入"权重元"、对应盈利为"权重÷PE 元",加总即整篮子买到的合计盈利,100÷合计盈利就是整篮子的合并市盈率(等价于「篮子总市值÷篮子总盈利」的整体法,只是"投入比例"用指数权重)。权重来源:{{ holdings.source === 'pcf' ? '招商申赎清单各券金额占比' : d.index_family === 'csi' ? '中证官网月度成份权重' : holdings.source === 'official' ? '国证官方月度成份权重' : '季报前十权重' }}。这是「你实际买到的组合」的估值,综合评分的估值分与分位均用此口径。
           <br>② <b>Wind口径 pe_mcap/pb_mcap</b>:算法=Σ总市值 ÷ Σ(总市值÷个股PE)。与①是同一个整体法公式,唯一差别是把每只股票的"投入"从指数权重换成它的总市值——相当于无视指数的权重设计(上限/低波调整),只按公司体量大小合并。此口径与 Wind/恒指官方读数一致(2026-10-26 实测:159263 该口径 9.02/0.85,Wind 显示 9.01/0.85),用于对表验证。设了权重上限的指数(如红利低波)两口径会差 20% 上下:低 PE 央企被指数规则压权重、但市值巨大,是差异主因,属正常现象。
           <br>③ <b>股息率 dv</b>=Σ(权重×个股近一年股息率),指数权重加权。
           <br>另:折溢价=现价÷最新披露单位净值−1(静态);分层阈值与掘金台一致(≥78 强推/≥65 买入/≥45 观察);国证名录官方 PB 快照因口径离群已停用,序列统一自算。数据更新:每日 17:35 etf job。</p>
