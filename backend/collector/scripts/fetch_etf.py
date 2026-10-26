@@ -73,6 +73,7 @@ CSI_INDEX_PERF = "https://www.csindex.com.cn/csindex-home/perf/index-perf"
 CMF_SECRET = "d274d06273f96656442b0728316026a1"
 CMF_RID = "01ab90a0d4ce45f3bb35b919099d9da1"
 CMF_API = "https://www.cmfchina.com/ws-business-server/fund/getEtfStockList"
+EFUNDS_FUND_PAGE = "https://www.efunds.com.cn/fund/{code}_org.shtml"
 
 
 def _get(url, params=None, headers=None, gbk=False, retries=3, timeout=15):
@@ -446,6 +447,49 @@ def fetch_csi_close(csi_code):
 
 
 # ---------------------------------------------------------------------------
+# 5.55) 易方达官网 ETF 申赎清单(PCF):服务端渲染 HTML 直读
+# ---------------------------------------------------------------------------
+
+def fetch_efunds_pcf(code):
+    """易方达官网基金页 etfStocksContainer 表(服务端渲染,无加密)。
+    表给数量无金额,权重=数量×腾讯现价占篮子比——与招商 PCF 的官方金额权重
+    实测两位小数一致(2026-10-26 同指数双基金交叉验证)。剔除申赎现金行。"""
+    from universe import tencent_spot_hk
+
+    r = _get(EFUNDS_FUND_PAGE.format(code=code), timeout=25)
+    i = r.text.find("etfStocksContainer")
+    if i < 0:
+        return None
+    seg = r.text[i:i + 300000]
+    rows = []
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", seg, re.S):
+        cells = [re.sub(r"<[^>]+>", "", c).replace("&nbsp;", "").strip()
+                 for c in re.findall(r"<t[dh][^>]*>(.*?)</t[dh]>", tr, re.S)]
+        cells = [c for c in cells if c]
+        if (len(cells) >= 3 and cells[0] != "159900"
+                and re.fullmatch(r"\d{5,6}", cells[0] or "")):
+            rows.append(cells)
+    if not rows:
+        return None
+    hk_codes = [c[0] for c in rows if len(c[0]) == 5]
+    q = tencent_spot_hk(hk_codes, quiet=True) if hk_codes else {}
+    out, total = [], 0.0
+    for c in rows:
+        shares = _num(c[2])
+        px = (q.get(c[0]) or {}).get("price") if len(c[0]) == 5 else None
+        if not shares or not px:
+            continue
+        amt = shares * px
+        total += amt
+        out.append({"code": c[0], "name": c[1], "shares": shares, "amount": amt})
+    if not out:
+        return None
+    for h in out:
+        h["weight"] = round(h["amount"] / total, 6)
+    return {"date": dt.date.today().isoformat(), "rows": out}
+
+
+# ---------------------------------------------------------------------------
 # 6) ETF 公告(EM 移动端,失败降级)
 # ---------------------------------------------------------------------------
 
@@ -626,15 +670,18 @@ def fetch_one(code, meta, catalog, force=False, today=None):
         ohlc = fetch_cni_ohlc(idx["cni_code"])
         time.sleep(SLEEP)
 
-    # PCF 全量篮子(仅 meta.pcf='cmfchina' 的标的,即招商基金管理的 ETF)
+    # PCF 全量篮子(meta.pcf='cmfchina' 招商加密接口 / 'efunds' 易方达 HTML 直读)
     pcf = None
-    if (meta or {}).get("pcf") == "cmfchina":
-        try:
+    pcf_src = (meta or {}).get("pcf")
+    try:
+        if pcf_src == "cmfchina":
             pcf = fetch_cmf_pcf(code)
-        except Exception as e:  # noqa: BLE001
-            print(f"  [{code}] PCF 拉取失败: {e!r}", flush=True)
-        if pcf:
-            time.sleep(SLEEP)
+        elif pcf_src == "efunds":
+            pcf = fetch_efunds_pcf(code)
+    except Exception as e:  # noqa: BLE001
+        print(f"  [{code}] PCF 拉取失败: {e!r}", flush=True)
+    if pcf:
+        time.sleep(SLEEP)
 
     # 估值自算:官方全量 > PCF 全量 > 前十重仓
     if cni and cni.get("rows"):
@@ -702,9 +749,9 @@ def main():
     args = ap.parse_args()
 
     DATA.mkdir(parents=True, exist_ok=True)
-    seed = {"codes": ["159263", "520550", "563300", "512800"], "meta": {
+    seed = {"codes": ["159263", "159545", "563300", "512800"], "meta": {
         "159263": {"index_code": "980081"},       # 国证价值100(定制指数,名录查不到)
-        "520550": {"pcf": "cmfchina"},            # 招商管理→官网申赎清单给全量篮子
+        "159545": {"pcf": "efunds"},              # 易方达→官网申赎清单 HTML 直读(全量)
         "563300": {"index_code": "932000", "family": "csi"},  # 中证2000(官网权重快照)
         "512800": {"index_code": "399986", "family": "csi"},  # 中证银行(官网权重快照)
     }}
