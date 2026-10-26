@@ -89,6 +89,8 @@ const changes = computed(() => d.value.changes || null)
 const pctile = computed(() => valuation.value.pctile || {})
 const pePct = computed(() => pctile.value.pe?.pct)
 const pbPct = computed(() => pctile.value.pb?.pct)
+const peMcapPct = computed(() => pctile.value.pe_mcap?.pct)
+const pbMcapPct = computed(() => pctile.value.pb_mcap?.pct)
 // 双口径:指数权重(ETF 实际持仓) vs 市值权重(对表 Wind/恒指官方)
 const fmtVal = (main, mcap) => (main == null ? '-' : num2(main) + (mcap == null ? '' : ' / ' + num2(mcap)))
 
@@ -312,9 +314,9 @@ function renderChart() {
             </div>
             <div class="chips val-chips">
               <span class="chip v" title="PE = Σ权重/Σ(权重/个股PE):整体法,按 ETF 实际持仓权重">PE <em>{{ num2(valuation.pe) }}</em><i class="sub">持仓口径</i><em v-if="pePct != null">分位 {{ num1(pePct) }}</em></span>
-              <span class="chip v" title="PE = Σ市值/Σ(市值/个股PE):市值权重整体法,与 Wind/恒指官方读数同口径">PE <em>{{ num2(valuation.pe_mcap) }}</em><i class="sub">Wind口径</i></span>
+              <span class="chip v" title="PE = Σ市值/Σ(市值/个股PE):市值权重整体法,与 Wind/恒指官方读数同口径;中证系取官方滚动PE并回填全史">PE <em>{{ num2(valuation.pe_mcap) }}</em><i class="sub">Wind口径</i><em v-if="peMcapPct != null">分位 {{ num1(peMcapPct) }}</em></span>
               <span class="chip v" title="PB = Σ权重/Σ(权重/个股PB),持仓口径">PB <em>{{ num2(valuation.pb) }}</em><i class="sub">持仓口径</i><em v-if="pbPct != null">分位 {{ num1(pbPct) }}</em></span>
-              <span class="chip v" title="PB = Σ市值/Σ(市值/个股PB),与 Wind 同口径">PB <em>{{ num2(valuation.pb_mcap) }}</em><i class="sub">Wind口径</i></span>
+              <span class="chip v" title="PB = Σ市值/Σ(市值/个股PB),与 Wind 同口径">PB <em>{{ num2(valuation.pb_mcap) }}</em><i class="sub">Wind口径</i><em v-if="pbMcapPct != null">分位 {{ num1(pbMcapPct) }}</em></span>
               <span class="chip v" title="股息率 = Σ(权重×个股近1年股息率/价格)">股息率 {{ pct(valuation.dv) }}</span>
               <span class="chip v warn" v-if="valuation.sample_days < 30">
                 估值序列累积中 {{ valuation.sample_days }}/30 日,分位暂缺
