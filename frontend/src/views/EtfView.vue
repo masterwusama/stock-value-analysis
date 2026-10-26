@@ -231,6 +231,12 @@ function renderChart() {
       <div v-if="loading && !detail" class="empty">加载中…</div>
 
       <template v-if="detail">
+        <!-- 数据新鲜度自检:快照距今 >4 天(跨周末还多)挂红条 -->
+        <p v-if="spot.stale_days != null && spot.stale_days > 4" class="stale-warn">
+          ⚠ 行情快照已 {{ spot.stale_days }} 天未更新(最后 {{ spot.date }})——ETF 采集链疑似中断,
+          估值序列样本也已停滞。检查:云端 `systemctl status va-scheduler` / 本机 ops/status.ps1,
+          或手动补跑 `python -m collector.run etf`。
+        </p>
         <section class="card head" :class="TIER_CLS[score.tier] || 't-na'">
           <div class="score-badge">
             <em>{{ score.total ?? '-' }}</em>
@@ -409,6 +415,7 @@ function renderChart() {
 .card h3 { margin: 0 0 10px; font-size: 15px; }
 .card .sub { font-weight: normal; color: var(--sub, #6b7280); font-size: 12px; margin-left: 8px; }
 .err { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 8px; }
+.stale-warn { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 8px; font-size: 13px; line-height: 1.7; margin-bottom: 12px; }
 .empty { color: var(--sub, #9ca3af); font-size: 13px; }
 .dim { color: var(--sub, #9ca3af); }
 .up { color: var(--up, #dc2626); } .down { color: var(--down, #16a34a); }

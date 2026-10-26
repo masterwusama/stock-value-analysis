@@ -101,6 +101,9 @@ JOBS = {
     # 估值自算序列累积，每只 ≈15 秒）。回灌走 --only-etf；17:35 独立时段排在
     # stock(16:05/22:05) 与 sentiment(16:30) 之后，保证成份股联动用的是当日新评分。
     "etf": [(SCRIPTS, "fetch_etf.py")],
+    # etf-heal:晚间自愈补跑(18 点后查当日无 etf success 则重跑;周末/当日已成功=空转)。
+    # 独立 job 而不是塞进 fetch_etf,是为了 etl_job_log 里 heal 动作自己留痕
+    "etf-heal": [(SCRIPTS, "_etf_catchup.py")],
     "import": [],
 }
 
@@ -129,9 +132,13 @@ IMPORT_DEFAULTS = {
     "sentiment": ["--only-sentiment"],
     # 立案公告：先灌 case_event 再单刷 score_daily（旗在 score 行重建里贴）
     "case": ["--only-case"],
-    # ETF 综合评估六表（序列档全量重放幂等，不追删）
+    # ETF 六表（序列档全量重放幂等，不追删）
     "etf": ["--only-etf"],
 }
+
+# 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
+# 空转时若照常 _import_db 会退化成一次全量导入(重且无意义)
+NO_IMPORT = {"etf-heal"}
 
 
 # 全量抓取持锁时跳过调度（fetch_data 的 index.json 为全量重写,两进并行会互盖条目）
@@ -153,7 +160,8 @@ SCRIPT_TIMEOUT = {
     "sentiment": 1800,
     "agro": 2 * 3600,
     "case": 1800,   # 全量回填 28 页 ≈1 分钟，增量更少；放宽到与 sentiment 同档
-    "etf": 900,     # 每只 ≈15 秒（国证月度快照+3 年持仓+序列），多只线性涨,留足余量
+    "etf": 900,     # 每只 ≈15 秒(中证2000 2000 只行情批拉最重),多只线性涨,留足余量
+    "etf-heal": 1200,   # 含补跑一轮完整 etf(900s)+检查,给足上限
 }
 
 
@@ -296,7 +304,8 @@ def main():
             break
     # always() 语义:部分失败也回灌已落盘 JSON(避免又一次整天为空)
     try:
-        _import_db(args.job)
+        if args.job not in NO_IMPORT:
+            _import_db(args.job)
     except Exception as e:
         status = "failed"
         messages.append(f"import_db failed: {e}")

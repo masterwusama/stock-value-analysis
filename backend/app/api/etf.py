@@ -217,6 +217,7 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
     # ---- 估值序列与分位(pe/pb=指数权重整体法;pe_mcap/pb_mcap=市值权重,对表 Wind) ----
     val_out = {"basis": basis_source, "sample_days": len(val_series), "pe": None,
                "pb": None, "pe_mcap": None, "pb_mcap": None, "dv": None,
+               "last_date": val_series[-1].trade_date.isoformat() if val_series else None,
                "pctile": {}, "dates": [], "pe_series": [], "pb_series": [],
                "pe_mcap_series": [], "pb_mcap_series": [], "dv_series": [],
                "close_series": []}
@@ -317,6 +318,8 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
         "updated_at": info.updated_at.isoformat() if info.updated_at else None,
         "spot": {
             "date": spot_td.isoformat() if spot_td else None,
+            # 新鲜度自检:距最新快照的自然日数(>4 天≈跨了周末还多,采集大概率中断)
+            "stale_days": (date.today() - spot_td).days if spot_td else None,
             "price": float(spot.price) if spot and spot.price else None,
             "change_pct": spot.change_pct if spot else None,
             "scale_yi": float(spot.scale_yi) if spot and spot.scale_yi else None,
