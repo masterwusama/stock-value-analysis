@@ -164,7 +164,7 @@ def resolve_index(code, basic, meta, catalog):
     hsi=恒生系(招商 PCF) / other。980xxx 国证与中证指数代码靠 etf_list.meta 兜底,
     名录/名字匹配只是辅助。"""
     idx_name = (meta or {}).get("index_name") or (basic or {}).get("tracked_index") or ""
-    idx_name = re.sub(r"(指数)?$", "", idx_name.strip())
+    idx_name = re.sub(r"(指数)?([（(]价格[）)])?$", "", idx_name.strip())
     m = meta or {}
     fam = m.get("family")
     if not fam:
@@ -749,9 +749,10 @@ def main():
     args = ap.parse_args()
 
     DATA.mkdir(parents=True, exist_ok=True)
-    seed = {"codes": ["159263", "159545", "563300", "512800"], "meta": {
+    seed = {"codes": ["159263", "159545", "159915", "563300", "512800"], "meta": {
         "159263": {"index_code": "980081"},       # 国证价值100(定制指数,名录查不到)
         "159545": {"pcf": "efunds"},              # 易方达→官网申赎清单 HTML 直读(全量)
+        "159915": {"index_code": "399006", "family": "cni"},   # 创业板指(国证官方快照)
         "563300": {"index_code": "932000", "family": "csi"},  # 中证2000(官网权重快照)
         "512800": {"index_code": "399986", "family": "csi"},  # 中证银行(官网权重快照)
     }}
