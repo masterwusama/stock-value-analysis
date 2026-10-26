@@ -419,6 +419,7 @@ CREATE TABLE etf_info (
 	inception DATE, 
 	list_date DATE, 
 	scale_text VARCHAR(64), 
+	degraded BOOL, 
 	updated_at DATETIME NOT NULL, 
 	PRIMARY KEY (code)
 );

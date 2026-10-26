@@ -68,6 +68,8 @@ QTR_MAP = {"1季度": "03-31", "2季度": "06-30", "中期": "06-30", "3季度":
 CSI_CLOSEWEIGHT = ("https://oss-ch.csindex.com.cn/static/html/csindex/"
                    "public/uploads/file/autofile/closeweight/{}closeweight.xls")
 CSI_INDEX_PERF = "https://www.csindex.com.cn/csindex-home/perf/index-perf"
+# 新浪 ETF 场内日线(轻量直连,避开 akshare 导入的 ~10s 启动成本)
+SINA_KLINE = ("https://quotes.sina.cn/cn/api/json_v2.php/CN_MarketDataService.getKLineData")
 
 # 招商基金官网接口的签名密钥(前端 JS 静态串,公开披露页;算法见 fetch_cmf_pcf)
 CMF_SECRET = "d274d06273f96656442b0728316026a1"
@@ -429,21 +431,29 @@ def fetch_csi_closeweight(csi_code):
     return {"month": f"{ds[:4]}-{ds[4:6]}", "rows": holds}
 
 
-def fetch_csi_close(csi_code):
-    """中证官网 index-perf → 指数收盘全史([[date, close],...],估值图底衬;
-    接口另带官方滚动 PE 历史暂未启用——序列统一自算双口径,官方值留作对表参考)。"""
+def fetch_csi_perf(csi_code):
+    """中证官网 index-perf → 指数收盘全史 + 官方滚动 PE 全史。
+
+    close 作估值图底衬;官方 PE 与自算市值口径(Σ市值/Σ盈利)同口径、贴合度
+    实测 ~98.5%(932000 36.89 vs 37.50;399986 7.40 vs 7.51),用于 pe_mcap 列
+    的历史回填与当日优先值——中证系 ETF 的 Wind口径分位即刻可用,免 30 日冷启动。
+    官方 PB 无公开文件,PB 两列恒自算。"""
     r = _get(CSI_INDEX_PERF, params={"indexCode": csi_code, "startDate": "20150101",
                                      "endDate": dt.date.today().isoformat()},
              headers={**UA, "Referer": "https://www.csindex.com.cn/"}, timeout=25)
     data = r.json().get("data") or []
-    out = []
+    close, pe = [], []
     for row in sorted(data, key=lambda x: str(x.get("tradeDate") or "")):
         try:
             d = str(row["tradeDate"])
-            out.append([f"{d[:4]}-{d[4:6]}-{d[6:]}", round(float(row["close"]), 4)])
+            iso = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+            close.append([iso, round(float(row["close"]), 4)])
+            peg = _num(row.get("peg"))
+            if peg and peg > 0:
+                pe.append([iso, peg])
         except (TypeError, ValueError, KeyError):
             continue
-    return out
+    return {"close": close, "pe": pe}
 
 
 # ---------------------------------------------------------------------------
@@ -624,6 +634,58 @@ def append_index_val(meta, day_row, ohlc=None):
     return len(dates[i0:])
 
 
+def backfill_official_pe(meta, pe_hist):
+    """中证官方滚动 PE 历史 → pe_mcap 列回填(仅补缺失日期,不覆盖已有自算行;
+    当日官方值在 append 的 day_row 里已优先采用)。同列=同口径(市值整体法),
+    缝合差实测 ~1.5%,分位按秩计算对此不敏感。"""
+    if not pe_hist:
+        return 0
+    VAL_DIR.mkdir(parents=True, exist_ok=True)
+    path = VAL_DIR / f"{meta['key']}.json"
+    doc = {}
+    if path.exists():
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            doc = {}
+    dates = doc.get("dates") or []
+    cols = {k: doc.get(k) or [] for k in ("pe", "pb", "dv", "pe_mcap", "pb_mcap")}
+    have = set(dates)
+    added = 0
+    for d, v in pe_hist:
+        if d in have:
+            continue
+        dates.append(d)
+        cols["pe_mcap"].append(v)
+        for k in ("pe", "pb", "dv", "pb_mcap"):
+            cols[k].append(None)
+        added += 1
+    if not added:
+        return 0
+    order = sorted(range(len(dates)), key=lambda i: dates[i])
+    doc = {**{k: doc.get(k) for k in ("index_key", "index_name", "family", "method",
+                                      "basis", "updated_at", "close")},
+           "dates": [dates[i] for i in order],
+           **{k: [cols[k][i] for i in order] for k in cols}}
+    atomic_write(path, doc)
+    return added
+
+
+def fetch_etf_hist(code, nav_series):
+    """ETF 场内价格史(新浪日线直连)+ 净值史(pingzhongdata,fetch_spot 已带)。
+    近 250 个交易日,回灌进 etf_spot 缺失日期,API 层拼价格/净值/指数归一曲线。"""
+    symbol = ("sh" if code.startswith(("5", "6")) else "sz") + code
+    try:
+        r = _get(SINA_KLINE, params={"symbol": symbol, "scale": 240, "ma": "no",
+                                     "datalen": 250},
+                 headers={**UA, "Referer": "https://finance.sina.com.cn"}, timeout=20)
+        kl = json.loads(r.text)
+        price = [[x["day"], _num(x["close"])] for x in kl if x.get("day") and _num(x.get("close"))]
+    except Exception:  # noqa: BLE001
+        price = []
+    return {"price": price, "nav": nav_series or []}
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -652,15 +714,18 @@ def fetch_one(code, meta, catalog, force=False, today=None):
 
     cni = None
     ohlc = None
+    official_pe = []
     if idx["family"] == "csi" and idx.get("csi_code"):
         try:
             cni = fetch_csi_closeweight(idx["csi_code"])   # 同形状复用 official 槽位
         except Exception as e:  # noqa: BLE001
             print(f"  [{code}] 中证权重下载失败: {e!r}", flush=True)
         try:
-            ohlc = fetch_csi_close(idx["csi_code"])
+            perf = fetch_csi_perf(idx["csi_code"])
+            ohlc = perf["close"]
+            official_pe = perf["pe"]
         except Exception as e:  # noqa: BLE001
-            print(f"  [{code}] 中证收盘历史失败: {e!r}", flush=True)
+            print(f"  [{code}] 中证收盘/官方PE历史失败: {e!r}", flush=True)
         time.sleep(SLEEP)
     elif idx["cni_code"]:
         try:
@@ -699,14 +764,21 @@ def fetch_one(code, meta, catalog, force=False, today=None):
 
     calc = calc_index_valuation(base_h) if base_h else None
     series_days = None
+    official_pe_map = dict(official_pe) if official_pe else {}
     if calc:
         # 双口径整体法:指数权重(pe/pb)=ETF 实际持仓体验;市值权重(pe_mcap/pb_mcap)
-        # =Wind/恒指官方对表口径。不再采用国证名录官方快照覆盖——其 PB 口径离群
-        # (2026-10-26 实测 0.65,自算 0.83/Wind 0.85,疑似加权平均净资产),
-        # 换算成统一自算口径后两 ETF 序列才同源可比对表
+        # =Wind/恒指官方对表口径。中证系当日 pe_mcap 优先取官方滚动 PE(同口径),
+        # 官方历史由 backfill_official_pe 补,分位即刻可用
         row = {"d": today.isoformat(), "pe": calc["pe"], "pb": calc["pb"],
-               "dv": calc["dv"], "pe_mcap": calc["pe_mcap"], "pb_mcap": calc["pb_mcap"]}
+               "dv": calc["dv"],
+               "pe_mcap": official_pe_map.get(today.isoformat()) or calc["pe_mcap"],
+               "pb_mcap": calc["pb_mcap"]}
         series_days = append_index_val({**idx, "basis": val_basis}, row, ohlc=ohlc)
+        if official_pe:
+            n_back = backfill_official_pe({**idx, "basis": val_basis}, official_pe)
+            if n_back:
+                series_days += n_back
+                print(f"  [{code}] 官方PE历史回填 {n_back} 日", flush=True)
 
     anns = fetch_anns(code)
 
@@ -717,12 +789,20 @@ def fetch_one(code, meta, catalog, force=False, today=None):
         changes = {"kind": "quarter", "from": b, "to": a,
                    **diff_holdings(f10_h["rows"][b], f10_h["rows"][a])}
 
+    # 降级旗:期望全量源(pcf/官方快照)没拿到而落回 f10 前十时标记,页面挂黄条
+    expected = ("pcf" if pcf_src else
+                "official" if (idx.get("cni_code") or idx.get("csi_code")) else None)
+    degraded = bool(expected and val_basis != expected)
+
+    hist = fetch_etf_hist(code, (spot or {}).get("nav_series"))
+
     payload = {
         "updated_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
-        "info": basic, "index": idx, "spot": spot,
+        "info": basic, "index": idx, "spot": spot, "degraded": degraded,
         "valuation": {"method": "calc", "basis": val_basis, "basis_date": val_basis_date,
                       "calc": calc, "series_days": series_days},
         "holdings": {"official": cni, "pcf": pcf, "f10": f10_h},
+        "hist": hist,
         "changes": changes, "anns": anns,
     }
     atomic_write(out_path, payload)

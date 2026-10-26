@@ -642,6 +642,9 @@ class EtfInfo(Base):
     inception: Mapped[date | None] = mapped_column(Date)
     list_date: Mapped[date | None] = mapped_column(Date)
     scale_text: Mapped[str | None] = mapped_column(String(64))
+    # 持仓源降级旗(True=期望的全量源[PCF/官方快照]没拿到,落回了 f10 前十),
+    # API 透传,页面挂黄条——源悄悄失效时不再无声降级
+    degraded: Mapped[bool | None] = mapped_column(Boolean)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

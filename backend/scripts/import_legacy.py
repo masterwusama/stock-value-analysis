@@ -1304,8 +1304,23 @@ def import_etf(db, stats):
             "mgmt_fee": info.get("mgmt_fee"), "custody_fee": info.get("custody_fee"),
             "inception": _as_date(info.get("inception")),
             "list_date": _as_date(info.get("list_date")),
-            "scale_text": info.get("scale_text"), "updated_at": upd,
+            "scale_text": info.get("scale_text"),
+            "degraded": bool(src.get("degraded")),
+            "updated_at": upd,
         })
+        # 历史日线回填(新浪价格史+净值史 → etf_spot 缺失日期;当日 spot 行在后面
+        # 覆盖同日键,字段更全者胜)。只有价格/净值的行 premium 等列留空
+        hist = src.get("hist") or {}
+        for d, px in hist.get("price") or []:
+            w_spot.add({"code": code, "trade_date": _as_date(d), "price": px,
+                        "change_pct": None, "turnover_wan": None, "scale_yi": None,
+                        "nav": None, "nav_date": None, "premium_pct": None,
+                        "week52_high": None, "week52_low": None, "updated_at": upd})
+        for d, nv in hist.get("nav") or []:
+            w_spot.add({"code": code, "trade_date": _as_date(d), "price": None,
+                        "change_pct": None, "turnover_wan": None, "scale_yi": None,
+                        "nav": nv, "nav_date": None, "premium_pct": None,
+                        "week52_high": None, "week52_low": None, "updated_at": upd})
         if spot.get("price") or spot.get("nav"):
             w_spot.add({
                 "code": code, "trade_date": upd.date(), "price": spot.get("price"),
@@ -1360,11 +1375,12 @@ def import_etf(db, stats):
         s_m_pb = src.get("pb_mcap") or []
         for i, (d, pe, pb, dv) in enumerate(zip(s_dates, src.get("pe") or [],
                                                 src.get("pb") or [], src.get("dv") or [])):
-            if pe is None and pb is None and dv is None:
+            pe_m = s_m_pe[i] if i < len(s_m_pe) else None
+            if pe is None and pb is None and dv is None and pe_m is None:
                 continue
             w_val.add({"index_key": key, "trade_date": _as_date(d), "pe": pe,
                        "pb": pb, "dv": dv,
-                       "pe_mcap": s_m_pe[i] if i < len(s_m_pe) else None,
+                       "pe_mcap": pe_m,
                        "pb_mcap": s_m_pb[i] if i < len(s_m_pb) else None,
                        "src": "calc", "updated_at": upd})
         # 序列档是权威全量:文件里已不存在的日期行追删(口径切换清过旧行时,

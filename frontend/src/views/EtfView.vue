@@ -14,7 +14,9 @@ const error = ref('')
 const loading = ref(false)
 const curCode = ref('')
 const chartEl = ref(null)
+const chartEl2 = ref(null)
 let chart = null
+let chart2 = null
 let echarts = null
 
 function parseHash() {
@@ -39,6 +41,7 @@ async function loadDetail(code) {
     syncHash()
     await nextTick()
     renderChart()
+    renderHist()
   } catch (e) {
     if (my === seq) error.value = String(e.message || e)
   } finally {
@@ -61,9 +64,11 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (chart) chart.dispose()
+  if (chart2) chart2.dispose()
   chart = null
+  chart2 = null
 })
-function onResize() { if (chart) chart.resize() }
+function onResize() { if (chart) chart.resize(); if (chart2) chart2.resize() }
 
 watch(curCode, () => { /* hash 已在 loadDetail 里同步 */ })
 
@@ -132,6 +137,51 @@ const sortedRows = computed(() => {
     return va === vb ? 0 : (va > vb ? 1 : -1) * dir
   })
 })
+
+// ---- 历史图:上格 价格/净值/指数 归一;下格 场内溢价 与 净值对指数的跟踪偏离 ----
+function renderHist() {
+  const h = d.value.hist
+  if (!chartEl2.value || !h || !h.dates?.length) return
+  if (!echarts) return   // 主图 ensureEcharts 成功后才会走到这里
+  if (chart2) chart2.dispose()
+  chart2 = echarts.init(chartEl2.value)
+  chart2.setOption({
+    animation: false,
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross', label: { backgroundColor: '#334155' } } },
+    axisPointer: { link: [{ xAxisIndex: 'all' }] },
+    grid: [
+      { left: 46, right: 20, top: 26, height: '38%' },
+      { left: 46, right: 20, top: '62%', height: '26%' },
+    ],
+    xAxis: [
+      { type: 'category', data: h.dates, gridIndex: 0, axisTick: { show: false }, axisLine: { lineStyle: { color: '#e5e7eb' } } },
+      { type: 'category', data: h.dates, gridIndex: 1, axisTick: { show: false }, axisLine: { lineStyle: { color: '#e5e7eb' } },
+        axisLabel: { color: '#6b7280', fontSize: 10, formatter: (v) => v.slice(2).replace('-', '/') } },
+    ],
+    yAxis: [
+      { type: 'value', gridIndex: 0, name: '归一', scale: true,
+        nameTextStyle: { color: '#9ca3af', fontSize: 10 },
+        axisLabel: { color: '#6b7280', fontSize: 10 }, splitLine: { lineStyle: { color: '#f1f5f9' } } },
+      { type: 'value', gridIndex: 1, name: '%', scale: true,
+        nameTextStyle: { color: '#9ca3af', fontSize: 10 },
+        axisLabel: { color: '#6b7280', fontSize: 10 }, splitLine: { lineStyle: { color: '#f1f5f9' } } },
+    ],
+    series: [
+      { name: '场内价格', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: h.price_norm,
+        symbol: 'none', connectNulls: true, lineStyle: { color: '#dc2626', width: 1.5 } },
+      { name: '单位净值', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: h.nav_norm,
+        symbol: 'none', connectNulls: true, lineStyle: { color: '#059669', width: 1.5 } },
+      { name: '跟踪指数', type: 'line', xAxisIndex: 0, yAxisIndex: 0, data: h.index_norm,
+        symbol: 'none', connectNulls: true, lineStyle: { color: '#94a3b8', width: 1.2, type: 'dashed' } },
+      { name: '场内溢价%', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: h.premium_pct,
+        symbol: 'none', connectNulls: true, lineStyle: { color: '#ea580c', width: 1.2 },
+        markLine: { silent: true, symbol: 'none', label: { show: false },
+          lineStyle: { color: '#cbd5e1', type: 'dashed', width: 1 }, data: [{ yAxis: 0 }] } },
+      { name: '跟踪偏离%', type: 'line', xAxisIndex: 1, yAxisIndex: 1, data: h.tracking_pct,
+        symbol: 'none', connectNulls: true, lineStyle: { color: '#2563eb', width: 1.2 } },
+    ],
+  })
+}
 
 // ---- 估值图:上格 PE+股息率,下格 PB+指数点位(点位为底衬,浅灰) ----
 function renderChart() {
@@ -237,6 +287,11 @@ function renderChart() {
           估值序列样本也已停滞。检查:云端 `systemctl status va-scheduler` / 本机 ops/status.ps1,
           或手动补跑 `python -m collector.run etf`。
         </p>
+        <p v-if="d.degraded" class="degraded-warn">
+          ⚠ 持仓源已降级:期望的{{ d.index_family === 'hsi' ? '申赎清单' : '官方月度快照' }}未取到,
+          当前回落到季报前十口径(覆盖率大降、估值分打 8 折)。多为官网接口变动所致,
+          检查 `fetch_etf.py` 对应源后 `python -m collector.run etf --force`。
+        </p>
         <section class="card head" :class="TIER_CLS[score.tier] || 't-na'">
           <div class="score-badge">
             <em>{{ score.total ?? '-' }}</em>
@@ -312,7 +367,17 @@ function renderChart() {
             <i class="lg-pe"></i>PE 持仓口径 <i class="lg-pem"></i>PE Wind口径
             <i class="lg-dv"></i>股息率 <i class="lg-pb"></i>PB 持仓口径 <i class="lg-pbm"></i>PB Wind口径
             <i class="lg-close"></i>指数点位
-            <span class="lg-note">持仓口径=Σ权重/Σ(权重/个股PE),你实际买到组合的估值;Wind口径=Σ市值/Σ(市值/个股PE),与 Wind/恒指官方读数对表</span>
+            <span class="lg-note">持仓口径=Σ权重/Σ(权重/个股PE),你实际买到组合的估值;Wind口径=Σ市值/Σ(市值/个股PE),与 Wind/恒指官方读数对表{{ d.index_family === 'csi' ? ';中证系该列取官方滚动PE(同口径)并回填全史,分位即时可用' : '' }}</span>
+          </p>
+        </section>
+
+        <!-- ③.5 价格/净值/指数 历史 -->
+        <section class="card" v-if="d.hist?.dates?.length">
+          <h3>价格 / 净值 / 指数<span class="sub">近 {{ d.hist.dates.length }} 个交易日归一 · 下格:场内溢价 vs 净值对指数的跟踪偏离{{ d.index_family === 'hsi' ? '(恒生系无免费指数点位史,无跟踪线)' : '' }}</span></h3>
+          <div ref="chartEl2" class="chart"></div>
+          <p class="legend">
+            <i class="lg-pe"></i>场内价格 <i class="lg-dv"></i>单位净值 <i class="lg-close"></i>跟踪指数(归一)
+            <i class="lg-pem"></i>场内溢价% <i class="lg-pb"></i>跟踪偏离%(净值-指数,持续为负=跑输指数)
           </p>
         </section>
 
@@ -416,6 +481,7 @@ function renderChart() {
 .card .sub { font-weight: normal; color: var(--sub, #6b7280); font-size: 12px; margin-left: 8px; }
 .err { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 8px; }
 .stale-warn { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px; border-radius: 8px; font-size: 13px; line-height: 1.7; margin-bottom: 12px; }
+.degraded-warn { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; padding: 10px 14px; border-radius: 8px; font-size: 13px; line-height: 1.7; margin-bottom: 12px; }
 .empty { color: var(--sub, #9ca3af); font-size: 13px; }
 .dim { color: var(--sub, #9ca3af); }
 .up { color: var(--up, #dc2626); } .down { color: var(--down, #16a34a); }

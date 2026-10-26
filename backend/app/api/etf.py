@@ -75,7 +75,10 @@ def _load(db: Session, fresh: bool = False):
         return _cache["payload"]
 
     infos = db.execute(select(EtfInfo).order_by(EtfInfo.code)).scalars().all()
-    spots = {s.code: s for s in db.execute(select(EtfSpot)).scalars()}
+    spot_rows = db.execute(select(EtfSpot).order_by(EtfSpot.trade_date)).scalars().all()
+    spots: dict[str, list] = {}
+    for s in spot_rows:
+        spots.setdefault(s.code, []).append(s)
     val_rows = db.execute(select(EtfIndexVal).order_by(EtfIndexVal.trade_date)).scalars().all()
     close_rows = db.execute(
         select(EtfIndexClose).order_by(EtfIndexClose.trade_date)).scalars().all()
@@ -102,10 +105,11 @@ def _load(db: Session, fresh: bool = False):
 
     out = {}
     for info in infos:
-        out[info.code] = _synth_one(info, spots.get(info.code),
+        out[info.code] = _synth_one(info, (spots.get(info.code) or [None])[-1],
                                     by_idx_val.get(info.index_key) or [],
                                     by_idx_close.get(info.index_key) or [],
-                                    holds_by_etf.get(info.code) or [], smap, td, key[0])
+                                    holds_by_etf.get(info.code) or [], smap, td, key[0],
+                                    spot_hist=spots.get(info.code) or [])
     payload = {"etfs": out, "score_date": td.isoformat() if td else None,
                "spot_date": key[0].isoformat() if key[0] else None}
     _cache.update(key=key, at=time.time(), payload=payload)
@@ -126,7 +130,9 @@ def _tier_of_stock(s) -> str:
         "watch" if s.recommend >= WATCH_MIN else "na")
 
 
-def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot_td):
+def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot_td,
+               spot_hist=None):
+    spot_hist = spot_hist or []
     # ---- 持仓:official(国证官方月度) > pcf(申赎清单全量月度) > f10(季报前十) ----
     periods = sorted({h.report_period for h in holds}, reverse=True)
     official_periods = sorted({h.report_period for h in holds if h.source == "official"},
@@ -241,7 +247,9 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
                                  ("pb_mcap", m_pbs, last.pb_mcap),
                                  ("dv", dvs, last.dv)):
                 got = _pct(arr, v)
-                if got:
+                # 门槛作用于「该列自己的有效样本数」而非序列行数:官方 PE 回填后
+                # 行数虚高,但 pe(持仓口径)可能仍只有 1 个样本,单样本分位是假分位
+                if got and got[1] >= PCTILE_MIN_DAYS:
                     val_out["pctile"][name] = {"pct": got[0], "days": got[1]}
     val_out["close_series"] = [[r.trade_date.isoformat(), r.close] for r in close_series]
 
@@ -270,7 +278,9 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
                        + ("(前十口径已打 8 折)" if factor < 1 else ""))
     elif val_series:
         w_eff -= W_VAL
-        risks.append(f"估值分位样本不足({len(val_series)} 日<{PCTILE_MIN_DAYS}),"
+        # 评分用 pe/pb(持仓口径)分位;官方 PE 回填只抬 pe_mcap 行数,pe 列可能仍薄
+        n_pe = sum(1 for x in pes if x is not None and x > 0)
+        risks.append(f"估值分位样本不足(持仓口径 PE 仅 {n_pe} 日<{PCTILE_MIN_DAYS}),"
                      "该项权重暂缺,总分按剩余权重归一")
     else:
         w_eff -= W_VAL
@@ -308,10 +318,39 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
             "buy" if total is not None and total >= BUY_MIN else
             "watch" if total is not None and total >= WATCH_MIN else "na")
 
+    # ---- 历史:价格/净值/指数 归一曲线 + 溢价序列 + 跟踪偏离(近 250 交易日) ----
+    px_map = {s.trade_date.isoformat(): float(s.price) for s in spot_hist
+              if s.price is not None}
+    nv_map = {s.trade_date.isoformat(): float(s.nav) for s in spot_hist
+              if s.nav is not None}
+    hist = {"dates": [], "price": [], "nav": [], "premium_pct": [],
+            "price_norm": [], "nav_norm": [], "index_norm": [], "tracking_pct": []}
+    days = sorted(set(px_map) | set(nv_map))[-250:]
+    base_px = next((px_map[d] for d in days if d in px_map), None)
+    base_nv = next((nv_map[d] for d in days if d in nv_map), None)
+    close_map = {r.trade_date.isoformat(): r.close for r in close_series}
+    base_ix = next((close_map[d] for d in days if d in close_map), None)
+    if days:
+        hist["dates"] = days
+        for d in days:
+            px, nv = px_map.get(d), nv_map.get(d)
+            hist["price"].append(px)
+            hist["nav"].append(nv)
+            hist["premium_pct"].append(
+                round((px / nv - 1) * 100, 3) if px and nv else None)
+            hist["price_norm"].append(round(px / base_px, 4) if px and base_px else None)
+            hist["nav_norm"].append(round(nv / base_nv, 4) if nv and base_nv else None)
+            ix = close_map.get(d)
+            hist["index_norm"].append(round(ix / base_ix, 4) if ix and base_ix else None)
+        hist["tracking_pct"] = [
+            round((n - i) * 100, 3) if n is not None and i is not None else None
+            for n, i in zip(hist["nav_norm"], hist["index_norm"])]
+
     return {
         "code": info.code, "name": info.name, "full_name": info.full_name,
         "market": info.market, "index_key": info.index_key, "index_name": info.index_name,
         "index_family": info.index_family,
+        "degraded": bool(info.degraded),
         "fees": {"mgmt": info.mgmt_fee, "custody": info.custody_fee},
         "inception": info.inception.isoformat() if info.inception else None,
         "list_date": info.list_date.isoformat() if info.list_date else None,
@@ -341,6 +380,7 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
         },
         "changes": changes,
         "valuation": val_out,
+        "hist": hist,
     }
 
 
