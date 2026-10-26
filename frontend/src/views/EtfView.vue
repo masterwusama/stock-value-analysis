@@ -78,6 +78,8 @@ const TIER_CLS = { strong: 't-strong', buy: 't-buy', watch: 't-watch', na: 't-na
 const pct = (v, d = 2) => (v == null ? '-' : v.toFixed(d) + '%')
 const num1 = (v) => (v == null ? '-' : (+v).toFixed(1))
 const num2 = (v) => (v == null ? '-' : (+v).toFixed(2))
+const num3 = (v) => (v == null ? '-' : (+v).toFixed(3))   // 场内价:基金 0.001 元报价单位
+const num4 = (v) => (v == null ? '-' : (+v).toFixed(4))   // 单位净值:惯例四位小数
 
 const d = computed(() => detail.value || {})
 const score = computed(() => d.value.score || {})
@@ -305,10 +307,10 @@ function renderChart() {
               <span class="idx">跟踪 {{ d.index_name || '-' }}</span>
             </div>
             <div class="chips">
-              <span class="chip">现价 {{ num2(spot.price) }}<em :class="spot.change_pct >= 0 ? 'up' : 'down'">{{ spot.change_pct >= 0 ? '+' : '' }}{{ pct(spot.change_pct) }}</em></span>
+              <span class="chip">现价 {{ num3(spot.price) }}<em :class="spot.change_pct >= 0 ? 'up' : 'down'">{{ spot.change_pct >= 0 ? '+' : '' }}{{ pct(spot.change_pct) }}</em></span>
               <span class="chip">规模 {{ num1(spot.scale_yi) }} 亿</span>
-              <span class="chip" v-if="spot.premium_pct != null">折溢价 <em :class="spot.premium_pct >= 0 ? 'up' : 'down'">{{ pct(spot.premium_pct) }}</em><i class="sub">(对 {{ spot.nav_date }} 净值 {{ num2(spot.nav) }})</i></span>
-              <span class="chip">52周 {{ num2(spot.week52_high) }} / {{ num2(spot.week52_low) }}</span>
+              <span class="chip" v-if="spot.premium_pct != null">折溢价 <em :class="spot.premium_pct >= 0 ? 'up' : 'down'">{{ pct(spot.premium_pct) }}</em><i class="sub">(对 {{ spot.nav_date }} 净值 {{ num4(spot.nav) }})</i></span>
+              <span class="chip">52周 {{ num3(spot.week52_high) }} / {{ num3(spot.week52_low) }}</span>
               <span class="chip" v-if="d.fees?.mgmt">管理费 {{ d.fees.mgmt }}</span>
               <span class="chip" v-if="d.list_date">上市 {{ d.list_date }}</span>
             </div>
