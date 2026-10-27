@@ -126,11 +126,17 @@ def _load_series_for_link(db, lk, cmd_cache, agro_cache):
     return []
 
 
-def _spread_series(a_pts, b_pts):
-    """两序列按日对齐内连接做差(a-b);a/b 可为不同频率(周对日按日精确对齐,
-    未对齐日丢弃——广信价差链以日报为主,损失有限且口径干净)。"""
+def _spread_series(a_pts, b_pts, b_mult=1.0):
+    """两序列按日对齐内连接做差(a-b×b_mult);b_mult 支持单耗系数(如铝耗氧化铝1.93)。"""
     mb = dict(b_pts)
-    return [[d, round(v - mb[d], 2)] for d, v in a_pts if d in mb]
+    return [[d, round(v - mb[d] * b_mult, 2)] for d, v in a_pts if d in mb]
+
+
+def _bucket_avg(points, year, quarter):
+    vals = [v for d, v in points
+            if v is not None and d.startswith(str(year))
+            and (int(d[5:7]) - 1) // 3 + 1 == quarter]
+    return sum(vals) / len(vals) if vals else None
 
 
 def _dyn_price(stats, days_gone, days_total, scenario_pct=0.0):
@@ -163,15 +169,20 @@ def _model_projection(t, cmd_cache):
     days_gone, days_total = _q4_window()
     out = {"method": m.get("method"), "conduit": conduit,
            "conduit_note": m.get("conduit_note"),
+           "period_label": m.get("period_label"),
+           "baseline_label": None,
            "q4_window": {"days_gone": days_gone, "days_total": days_total},
            "q4": None, "fy26": None, "fy27": None, "assumptions": []}
     q4m = m.get("q4_2026") or {}
     base = q4m.get("baseline") or {}
+    out["baseline_label"] = base.get("label")
     price_scn = q4m.get("price_scenario_pct") or [-0.05, 0.0, 0.03]
 
     # —— 紫金式:增量桥(分部 Δ毛利 = (Δ价−Δ成本)×情景量) ——
     if any(s.get("price_code") for s in q4m.get("segments", [])):
+        semi = m.get("period_mode") == "h2"  # 港股半年报:基准=H1实际,预估=H2
         rows, deltas = [], [0.0, 0.0, 0.0]
+        year = dt.date.today().year
         for s in q4m.get("segments", []):
             if not s.get("price_code"):
                 static = s.get("static_margin_change_yi") or [0, 0, 0]
@@ -179,35 +190,79 @@ def _model_projection(t, cmd_cache):
                 continue
             pts = cmd_cache.get(s["price_code"]) or []
             stats = _qtd_stats(pts) if pts else {}
-            p3 = stats.get("prev_q")
+            if semi:
+                # prev=H1均价(Q1+Q2桶),预估=Q3桶与Q4动态各半
+                q1, q2 = _bucket_avg(pts, year, 1), _bucket_avg(pts, year, 2)
+                q3 = _bucket_avg(pts, year, 3)
+                p3 = (q1 + q2) / 2 if q1 is not None and q2 is not None else None
+                dyn4 = _dyn_price(stats, days_gone, days_total, 0.0)
+                p4_pair = (q3, dyn4)
+            else:
+                p3 = stats.get("prev_q")
+                p4_pair = None
             vols = s.get("vol_scenarios") or {}
             c3, cq = s.get("q3_cost"), 1 + (s.get("cost_qoq") or 0)
+            cost_links = s.get("cost_links") or []
             mult = s.get("mult", 1)
-            row = {"product": s["product"], "p_q3": p3, "p_q4_dyn": None,
+            row = {"product": s["product"], "p_prev": p3, "p_dyn": None,
                    "vols": vols, "vol_note": s.get("vol_note")}
             seg_d = [0.0, 0.0, 0.0]
             for i, scn in enumerate(SCN):
-                v = vols.get(scn if scn != "high" else "high") or vols.get("base")
-                p4 = _dyn_price(stats, days_gone, days_total, price_scn[i])
+                v = vols.get("base")
                 if vols.get("guide") and scn == "high":
                     v = vols["guide"]
-                if p3 is None or p4 is None or v is None or c3 is None:
+                elif scn == "low" and vols.get("low"):
+                    v = vols["low"]
+                elif scn == "high" and vols.get("high"):
+                    v = vols["high"]
+                if semi:
+                    p4 = None
+                    if p4_pair[0] is not None:
+                        d4 = _dyn_price(stats, days_gone, days_total, price_scn[i])
+                        p4 = (p4_pair[0] + d4) / 2 if d4 is not None else None
+                else:
+                    p4 = _dyn_price(stats, days_gone, days_total, price_scn[i])
+                if p3 is None or p4 is None or v is None:
                     continue
-                d = (p4 - p3 - c3 * (cq - 1)) * v * mult * conduit / 1e8
+                # 成本变动:cost_links(价格联动的单耗成本)优先,否则披露成本×环比
+                cost_delta = 0.0
+                for cl in cost_links:
+                    cpts = cmd_cache.get(cl["code"]) or []
+                    cm = cl.get("mult", 1.0)
+                    if not cpts:
+                        continue
+                    if semi:
+                        cq1, cq2 = _bucket_avg(cpts, year, 1), _bucket_avg(cpts, year, 2)
+                        cq3, cdyn = _bucket_avg(cpts, year, 3), None
+                        st4 = _qtd_stats(cpts)
+                        if st4.get("qtd") is not None:
+                            cdyn = _dyn_price(st4, days_gone, days_total, 0.0)
+                        if None not in (cq1, cq2, cq3, cdyn):
+                            cost_delta += (((cq3 + cdyn) / 2) - (cq1 + cq2) / 2) * cm
+                    else:
+                        cst = _qtd_stats(cpts)
+                        if cst.get("qtd") is not None and cst.get("prev_q") is not None:
+                            cost_delta += (_dyn_price(cst, days_gone, days_total, 0.0)
+                                           - cst["prev_q"]) * cm
+                if not cost_links and c3 is not None:
+                    cost_delta = c3 * (cq - 1)
+                d = (p4 - p3 - cost_delta) * v * mult * conduit / 1e8
                 seg_d[i] += d
                 if scn == "base":
-                    row["p_q4_dyn"] = round(p4, 1)
+                    row["p_dyn"] = round(p4, 1)
+                    row["cost_delta"] = round(cost_delta, 1)
             deltas = [d + x for d, x in zip(deltas, seg_d)]
             row["delta_yi"] = [round(x, 1) for x in seg_d]
             rows.append(row)
         imp = (q4m.get("other_lines") or {}).get("impairment_yi") or [0, 0, 0]
-        nonrec_q = base.get("attributable_yi", 0) - base.get("non_gaap_yi", 0)
+        nonrec_q = ((base.get("attributable_yi") or 0) - base["non_gaap_yi"]
+                    if base.get("non_gaap_yi") is not None else None)
         proj = []
         for i, scn in enumerate(SCN):
             att = base["attributable_yi"] + deltas[i] + imp[i]
             proj.append({"scenario": scn,
                          "attributable_yi": round(att, 1),
-                         "non_gaap_yi": round(att - nonrec_q, 1)})
+                         "non_gaap_yi": round(att - nonrec_q, 1) if nonrec_q is not None else None})
         out["q4"] = {"mode": "增量桥", "segments": rows,
                      "impairment_yi": imp,
                      "note": (q4m.get("other_lines") or {}).get("impairment_note"),
@@ -215,7 +270,9 @@ def _model_projection(t, cmd_cache):
         if base.get("ytd_attributable_yi"):
             out["fy26"] = {"scenario": SCN,
                            "attributable_yi": [round(base["ytd_attributable_yi"] + p["attributable_yi"], 0) for p in proj],
-                           "non_gaap_yi": [round(base.get("ytd_non_gaap_yi", 0) + p["non_gaap_yi"], 0) for p in proj]}
+                           "non_gaap_yi": [round(base.get("ytd_non_gaap_yi", 0) + p["non_gaap_yi"], 0)
+                                           if p["non_gaap_yi"] is not None and base.get("ytd_non_gaap_yi") is not None
+                                           else None for p in proj]}
         # FY27: 量增×当前单位毛利×传导 ± 价格情景
         f27 = m.get("fy_2027") or {}
         segs27, growth = f27.get("segments", []), [0.0, 0.0, 0.0]
@@ -318,7 +375,7 @@ def _target_detail(db, t, cmd_cache, agro_cache):
             b = _load_series_for_link(db, sp["b"], cmd_cache, agro_cache)
             if not a or not b:
                 continue
-            spts = _spread_series(a, b)
+            spts = _spread_series(a, b, sp.get("b_mult", 1.0))
             if spts:
                 spreads.append({"name": sp["name"], "code": "SPREAD:%s:%s" % (
                     sp["a"].get("code") or sp["a"]["id"], sp["b"].get("code") or sp["b"]["id"]),

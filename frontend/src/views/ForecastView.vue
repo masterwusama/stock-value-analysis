@@ -62,10 +62,10 @@ const scnCN = { low: '悲观', base: '基准', high: '乐观' }
 const projKeys = ['revenue_yi', 'gross_margin_pct', 'non_gaap_yi', 'attributable_yi']
 const projHead = { revenue_yi: '营收(亿)', gross_margin_pct: '毛利率%', non_gaap_yi: '扣非(亿)', attributable_yi: '归母(亿)' }
 const q4Baseline = computed(() => {
-  const q4 = target.value?.model?.q4
-  if (!q4) return ''
-  const b = JSON.stringify(q4.proj || []).includes('revenue_yi')
-  return q4.mode === '增量桥' ? 'Q3归母/扣非' : 'Q3营收8.59亿/GM37.29%'
+  const m = target.value?.model
+  if (!m || !m.q4) return ''
+  if (m.baseline_label) return m.baseline_label
+  return m.q4.mode === '增量桥' ? 'Q3归母/扣非' : 'Q3营收8.59亿/GM37.29%'
 })
 
 function pickPrice(p) { curCode.value = p.code }
@@ -213,7 +213,7 @@ watch(() => allPrices.value.length, (n) => {
         <p class="dim">{{ target.model.method }}</p>
         <p class="dim">传导系数 {{ target.model.conduit }}({{ target.model.conduit_note }});Q4 已过 {{ target.model.q4_window.days_gone }}/{{ target.model.q4_window.days_total }} 天——预估价=QTD已实现×已过权重+现价×剩余权重</p>
         <div v-if="target.model.q4" class="proj-block">
-          <div class="proj-title">2026Q4E(基线 {{ q4Baseline }})</div>
+          <div class="proj-title">{{ target.model.period_label || '2026Q4E' }}(基线 {{ q4Baseline }})</div>
           <table class="grid">
             <thead><tr><th class="stick">情景</th><th v-for="k in projKeys" :key="k">{{ projHead[k] }}</th></tr></thead>
             <tbody>
