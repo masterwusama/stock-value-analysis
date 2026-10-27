@@ -6,6 +6,7 @@ const routes = [
   { path: '/stock/:code', name: 'detail', component: () => import('../views/StockDetailView.vue') },
   { path: '/agro', name: 'agro', component: () => import('../views/AgroView.vue') },
   { path: '/commodity', name: 'commodity', component: () => import('../views/CommodityView.vue') },
+  { path: '/forecast', name: 'forecast', component: () => import('../views/ForecastView.vue') },
   { path: '/sentiment', name: 'sentiment', component: () => import('../views/SentimentView.vue') },
   { path: '/etf', name: 'etf', component: () => import('../views/EtfView.vue') },
   { path: '/research', name: 'research', component: () => import('../views/ResearchView.vue') },

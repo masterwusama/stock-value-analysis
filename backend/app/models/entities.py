@@ -558,6 +558,21 @@ class CmdValue(Base):
     val: Mapped[float | None] = mapped_column(Numeric(24, 6))
 
 
+class FcTarget(Base):
+    """业绩预测模块·标的专属数据(采集:collector/forecast/data/targets.json,人工结构化)。
+
+    payload=分部量价成本/指引/观察哨全量 JSON(每季随公告人工更新);价格序列不存这里,
+    按 segments[].price_link(code/product_id) 引用 cmd_*/agro_* 两表,读时合成。
+    """
+
+    __tablename__ = "fc_target"
+
+    sid: Mapped[str] = mapped_column(String(12), primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class SentimentDaily(Base):
     """情绪日报:盘后市场情绪状态/转移预案/板块效应与三名单(采集:fetch_sentiment.py)。
 

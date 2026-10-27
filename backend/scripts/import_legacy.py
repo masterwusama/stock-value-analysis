@@ -50,6 +50,7 @@ from app.models import (
     AgroProduct,
     CmdIndicator,
     CmdValue,
+    FcTarget,
     Dividend,
     EdbIndicator,
     EdbValue,
@@ -83,6 +84,7 @@ DATA_DIR = LEGACY_DATA_DIR / "data"
 ETF_DIR = LEGACY_DATA_DIR / "data" / "etf"
 AGRO_DIR = LEGACY_DATA_DIR / "agro-price" / "data"
 GOLD_DIR = LEGACY_DATA_DIR / "commodity-gold" / "data"
+FORECAST_DIR = LEGACY_DATA_DIR / "forecast" / "data"
 SILVER_DIR = LEGACY_DATA_DIR / "commodity-silver" / "data"
 COPPER_DIR = LEGACY_DATA_DIR / "commodity-copper" / "data"
 ALUMINUM_DIR = LEGACY_DATA_DIR / "commodity-aluminum" / "data"
@@ -1036,6 +1038,46 @@ def import_sentiment(db, stats):
             stats["sentiment_daily"] += 1
 
 
+def import_forecast(db, stats):
+    """forecast/data/forecast.json(补充价格序列) + targets.json(标的专属数据)。
+
+    价格→cmd_*(commodity='forecast',与各商品组共表;不做清单删,同 import_gold 防线);
+    标的→fc_target(payload 全量 JSON 整体覆盖,源文件是唯一权威)。
+    """
+    fpath = FORECAST_DIR / "forecast.json"
+    if fpath.exists():
+        src = json.loads(fpath.read_text(encoding="utf-8"))
+        for ind in src.get("series", []):
+            freq = EDB_FREQ_MAP.get(str(ind.get("freq", "")).strip(), "day")
+            extra = {"source": ind.get("source"), "name": ind.get("name"),
+                     "idx": ind.get("idx"), "cat_name": ind.get("cat")}
+            ival = dict(
+                cmd_code=ind["code"], commodity="forecast",
+                name=ind.get("label") or ind.get("name", ""), category=ind.get("cat", ""),
+                freq=freq, unit=ind.get("unit"), display_group=ind.get("group"), extra=extra,
+            )
+            iupd = {k: v for k, v in ival.items() if k != "cmd_code"}
+            db.execute(mysql_insert(CmdIndicator)
+                       .values(**ival).on_duplicate_key_update(**iupd))
+            stats["fc_indicator"] += 1
+            for pt in ind.get("points", []):
+                if len(pt) != 2 or not pt[0]:
+                    continue
+                db.execute(mysql_insert(CmdValue).values(
+                    cmd_code=ind["code"], data_date=parse_date(pt[0]), val=pt[1],
+                ).on_duplicate_key_update(val=pt[1]))
+                stats["fc_value"] += 1
+    tpath = FORECAST_DIR / "targets.json"
+    if tpath.exists():
+        tj = json.loads(tpath.read_text(encoding="utf-8"))
+        for t in tj.get("targets", []):
+            db.execute(mysql_insert(FcTarget).values(
+                sid=t["sid"], name=t["name"], payload=t,
+                updated_at=datetime.now(),
+            ).on_duplicate_key_update(name=t["name"], payload=t, updated_at=datetime.now()))
+            stats["fc_target"] += 1
+
+
 def _as_date(v):
     """源侧日期是文本（'2026-05-20' / '2026-05-20 00:00:00'），认不出的当缺失而不是抛错。"""
     return parse_date(v) if isinstance(v, str) and DATE_RE.match(v) else None
@@ -1510,6 +1552,8 @@ def main():
     ap.add_argument("--only-gold", action="store_true",
                     help="只回灌 commodity-gold/data/gold.json 黄金供需序列"
                          "（fetch_gold 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-forecast", action="store_true",
+                    help="只回灌 forecast 模块(补充价格序列→cmd_*;标的数据→fc_target)")
     ap.add_argument("--only-silver", action="store_true",
                     help="只回灌 commodity-silver/data/silver.json 白银供需序列"
                          "（fetch_silver 采集后跑；cmd_indicator/cmd_value 两表）")
@@ -1550,7 +1594,7 @@ def main():
         args.no_clean = True
     if args.only_etf:
         args.no_clean = True
-    if args.only_gold:
+    if args.only_gold or args.only_forecast:
         args.no_clean = True
     if args.only_silver:
         args.no_clean = True
@@ -1576,6 +1620,7 @@ def main():
             else "only-silver" if args.only_silver
             else "only-copper" if args.only_copper
             else "only-aluminum" if args.only_aluminum
+            else "only-forecast" if args.only_forecast
             else "only-lithium" if args.only_lithium
             else "only-crudeoil" if args.only_crudeoil
             else "only-ferrous" if args.only_ferrous
@@ -1593,6 +1638,8 @@ def main():
             import_etf(db, stats)
         elif args.only_gold:
             import_gold(db, stats)
+        elif args.only_forecast:
+            import_forecast(db, stats)
         elif args.only_silver:
             import_silver(db, stats)
         elif args.only_copper:

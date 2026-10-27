@@ -100,6 +100,8 @@ def main():
     # 黄金供需每天一次(06:05:valuation(03:35~约05:25)之后、agro(09:05)之前,
     # 互不挤时段;外盘数据是前一夜收盘,晨间即最新)
     s.add_job(run_job, "cron", args=["gold"], hour=6, minute=5, id="gold")
+    # 业绩预测补充序列每天一次(07:05:gold 之后、agro 09:05 之前,错峰)
+    s.add_job(run_job, "cron", args=["forecast"], hour=7, minute=5, id="forecast")
     # 白银供需每天一次(06:15:gold(06:05)后 10 分钟错峰——LBMA/FRED 等同源接口
     # 不与黄金任务并发抢;agro(09:05)之前)
     s.add_job(run_job, "cron", args=["silver"], hour=6, minute=15, id="silver")

@@ -8,6 +8,7 @@
     python -m collector.run events    # Wind 事件(一次性/手动,不进每日调度) → 回灌
     python -m collector.run etf       # ETF 综合评估(成份/指数估值序列/净值) → 回灌
     python -m collector.run gold      # 黄金供需 P0(价格/持仓/储备/宏观因子,免费源) → 回灌
+    python -m collector.run forecast  # 业绩预测补充序列(动力煤基准价/TC) → 回灌
     python -m collector.run silver    # 白银供需 P0(价格/持仓/工业需求代理,免费源) → 回灌
     python -m collector.run copper    # 铜供需 P0(价格/比价/PMI/CFTC,免费源) → 回灌
     python -m collector.run aluminum  # 铝供需 P0(价格/成本/PMI/库存,免费源) → 回灌
@@ -111,6 +112,9 @@ JOBS = {
     # 不碰 Wind 云端可跑;单序列失败降级留旧数据,失败过半才红。回灌走 --only-gold
     # (cmd_indicator/cmd_value 两表,与 agro EDB 分表,见 import_gold 头注)
     "gold": [(COLLECTOR / "commodity-gold" / "scripts", "fetch_gold.py")],
+    # forecast：业绩预测模块补充序列(动力煤/TC;锌锂铜金银由各商品组供给,
+    # 标的量价成本为 targets.json 人工维护)。回灌 --only-forecast
+    "forecast": [(COLLECTOR / "forecast" / "scripts", "fetch_forecast.py")],
     # silver：大宗商品供需模块第二期(白银)。免费源同 gold,白银特有组:SLV ETF(金十
     # macro_cons_silver)/LBMA 金库白银列/多晶硅+光伏ETF+沪锌铅(工业需求与伴生矿代理)。
     # 回灌走 --only-silver;金银比白银版 code=AG_GSR,与黄金版 GOLD_SILVER 隔开防互灌
@@ -175,6 +179,7 @@ IMPORT_DEFAULTS = {
     "etf": ["--only-etf"],
     # 黄金两表（cmd_*；指标定义不做差集删除，见 import_gold 头注）
     "gold": ["--only-gold"],
+    "forecast": ["--only-forecast"],
     # 白银两表（同 cmd_*，commodity='silver' 分行；金银比白银版 AG_GSR）
     "silver": ["--only-silver"],
     "silver-wss": ["--only-silver"],
@@ -213,7 +218,8 @@ SCRIPT_TIMEOUT = {
     "case": 1800,   # 全量回填 28 页 ≈1 分钟，增量更少；放宽到与 sentiment 同档
     "etf": 900,     # 每只 ≈15 秒(中证2000 2000 只行情批拉最重),多只线性涨,留足余量
     "etf-heal": 1200,   # 含补跑一轮完整 etf(900s)+检查,给足上限
-    "gold": 1800,   # 实测 ≈3 分钟(2026-10-27 满序列 185s);含组重试(8s 退避)放宽 10 倍
+    "gold": 1800,   # 实测 ≈3 分钟
+    "forecast": 900,  # 基准价 8 页+manual,实测 <1 分钟(2026-10-27 满序列 185s);含组重试(8s 退避)放宽 10 倍
     "silver": 1800,  # 实测首跑 348s(含 CFTC 41 个年 zip 全量回填);稳态增量合并更快
     "silver-wss": 900,  # PDF 下载 240s 超时+解析 10s;有本地缓存时更快
     "copper": 1800,   # 同 silver 量级(CFTC zip 增量合并)
