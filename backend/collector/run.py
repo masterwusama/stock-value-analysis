@@ -115,6 +115,10 @@ JOBS = {
     # macro_cons_silver)/LBMA 金库白银列/多晶硅+光伏ETF+沪锌铅(工业需求与伴生矿代理)。
     # 回灌走 --only-silver;金银比白银版 code=AG_GSR,与黄金版 GOLD_SILVER 隔开防互灌
     "silver": [(COLLECTOR / "commodity-silver" / "scripts", "fetch_silver.py")],
+    # silver-wss：Silver Institute 年报平衡表解析(月频:新版每年 4 月发布,
+    # 次月自动捡起;当年 URL 未发布回落上年文件)。产 silver_wss.json 与
+    # fetch_silver 分文件(fetch_silver 每轮全量重写主 json,并入会被覆盖)
+    "silver-wss": [(COLLECTOR / "commodity-silver" / "scripts", "fetch_silver_wss.py")],
     # copper：大宗商品供需模块第三期(铜,流量主导工业金属)。LME/COMEX铜(新浪外盘
     # CAD/HG)+沪铜(2005→)+铜金比/沪伦比(自算)+PMI+CFTC非商业(官网zip COPPER- #1)。
     # 已知弱项:LME/COMEX 铜库存无免费结构化源,只有沪铜滚动3月(页面注明)。
@@ -173,6 +177,7 @@ IMPORT_DEFAULTS = {
     "gold": ["--only-gold"],
     # 白银两表（同 cmd_*，commodity='silver' 分行；金银比白银版 AG_GSR）
     "silver": ["--only-silver"],
+    "silver-wss": ["--only-silver"],
     # 铜两表(同 cmd_*,commodity='copper';共码序列 CU_ 前缀)
     "copper": ["--only-copper"],
     # 铝两表(同 cmd_*,commodity='aluminum';共码序列 AL_ 前缀)
@@ -210,6 +215,7 @@ SCRIPT_TIMEOUT = {
     "etf-heal": 1200,   # 含补跑一轮完整 etf(900s)+检查,给足上限
     "gold": 1800,   # 实测 ≈3 分钟(2026-10-27 满序列 185s);含组重试(8s 退避)放宽 10 倍
     "silver": 1800,  # 实测首跑 348s(含 CFTC 41 个年 zip 全量回填);稳态增量合并更快
+    "silver-wss": 900,  # PDF 下载 240s 超时+解析 10s;有本地缓存时更快
     "copper": 1800,   # 同 silver 量级(CFTC zip 增量合并)
     "aluminum": 900,  # 实测 13.5s(无 CFTC zip);留足重试余量
     "lithium": 900,   # 实测 9.9s(仅 7 序列)

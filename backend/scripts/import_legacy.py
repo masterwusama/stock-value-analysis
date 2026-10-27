@@ -102,7 +102,7 @@ EVENT_TYPE_MAP = {
 }
 
 # EDB 频率中文 → 枚举
-EDB_FREQ_MAP = {"日": "day", "周": "week", "月": "month"}
+EDB_FREQ_MAP = {"日": "day", "周": "week", "月": "month", "年": "year"}
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
@@ -1105,13 +1105,18 @@ def import_gold(db, stats):
 
 
 def import_silver(db, stats):
-    """commodity-silver/data/silver.json → cmd_indicator / cmd_value(白银供需模块)。
+    """commodity-silver/data/{silver,silver_wss}.json → cmd_indicator / cmd_value。
 
     与 import_gold 同表分 commodity 行。cmd_value 主键是 (cmd_code, data_date),
     金银比这类两边都想展示的序列必须各用各的 code(白银版 AG_GSR,黄金版
     GOLD_SILVER),否则两商品互灌会互相覆盖/commodity 字段翻转——采集端已防。
+    silver_wss.json 是 P1 平衡表(11 条年度序列,fetch_silver_wss 月频任务产),
+    与日频 silver.json 分文件写(fetch_silver 每轮全量重写主 json,并入会被
+    覆盖丢失);缺失时静默跳过(留旧数据)。
     """
     _import_cmd_series(db, stats, SILVER_DIR / "silver.json", "silver")
+    if (SILVER_DIR / "silver_wss.json").exists():
+        _import_cmd_series(db, stats, SILVER_DIR / "silver_wss.json", "silver")
 
 
 def import_copper(db, stats):
