@@ -42,12 +42,14 @@ function onResize() { if (chart) chart.resize() }
 
 const target = computed(() =>
   (data.value?.targets || []).find(t => t.sid === curSid.value) || null)
-// 全部可选价格序列(分部内拍平),供主图切换
+// 全部可选价格序列(价格+成本+价差拍平),供主图切换
 const allPrices = computed(() => {
   const out = []
-  for (const seg of target.value?.segments || [])
-    for (const p of seg.prices || [])
-      out.push({ ...p, seg: seg.product })
+  for (const seg of target.value?.segments || []) {
+    for (const p of seg.prices || []) out.push({ ...p, seg: seg.product })
+    for (const p of seg.costs || []) out.push({ ...p, seg: seg.product, isCost: true })
+    for (const p of seg.spreads || []) out.push({ ...p, seg: seg.product, isSpread: true })
+  }
   return out
 })
 const byCode = computed(() =>
@@ -138,7 +140,41 @@ watch(() => allPrices.value.length, (n) => {
             </tr>
           </tbody>
         </table>
+        <table class="grid cost" v-if="seg.costs && seg.costs.length">
+          <thead>
+            <tr><th class="stick">成本序列(原料/能源)</th><th>单位</th><th>最新</th><th>QTD均</th><th>上季均</th><th>环比</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in seg.costs" :key="'c-' + p.code" :class="{ on: curCode === p.code }" @click="pickPrice(p)">
+              <td class="stick">{{ p.name }}</td>
+              <td>{{ p.unit }}</td>
+              <td>{{ num(p.stats.latest, 0) }} <i class="dim">({{ p.stats.latest_date }})</i></td>
+              <td>{{ num(p.stats.qtd, 0) }}</td>
+              <td>{{ num(p.stats.prev_q, 0) }}</td>
+              <td :class="cls(p.stats.qoq)">{{ pct(p.stats.qoq) }}</td>
+              <td class="dim">看图→</td>
+            </tr>
+          </tbody>
+        </table>
+        <table class="grid spread" v-if="seg.spreads && seg.spreads.length">
+          <thead>
+            <tr><th class="stick">价差(产品-原料,简单差)</th><th>最新</th><th>QTD均</th><th>上季均</th><th>环比</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="p in seg.spreads" :key="'s-' + p.code" :class="{ on: curCode === p.code }" @click="pickPrice(p)">
+              <td class="stick">{{ p.name }}</td>
+              <td>{{ num(p.stats.latest, 0) }}</td>
+              <td>{{ num(p.stats.qtd, 0) }} <i class="dim">{{ p.stats.quarter }}</i></td>
+              <td>{{ num(p.stats.prev_q, 0) }}</td>
+              <td :class="cls(p.stats.qoq)">{{ pct(p.stats.qoq) }}</td>
+              <td class="dim">看图→</td>
+            </tr>
+          </tbody>
+        </table>
         <div class="meta">
+          <span v-if="seg.unit_margin != null" class="chip v" title="QTD均价 − 最新披露单位成本(单位一致才可减;成本披露滞后一个报告期)">
+            单位毛利 {{ seg.unit_margin }} {{ (seg.unit_cost.latest.unit || '').replace('元/','') }}<i class="dim">({{ seg.unit_cost.latest.period }}成本)</i>
+          </span>
           <span v-if="seg.volume.latest.qty != null" class="chip">
             量:{{ seg.volume.latest.qty }} {{ seg.volume.latest.unit || '' }}
             <i class="dim">{{ seg.volume.latest.period }}{{ seg.volume.latest.yoy ? ' · ' + seg.volume.latest.yoy : '' }}</i>
@@ -210,6 +246,8 @@ table.grid { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 
 table.grid th, table.grid td { padding: 6px 8px; border-bottom: 1px solid var(--line-soft, #eef1f7); text-align: right; white-space: nowrap; }
 table.grid th { color: var(--sub); font-weight: 500; background: var(--card); }
 table.grid td.stick, table.grid th.stick { text-align: left; position: sticky; left: 0; background: var(--card); }
+table.grid.cost tbody tr td.stick { color: #92400e; }
+table.grid.spread tbody tr td.stick { color: #1e40af; font-weight: 600; }
 tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--bg-soft, #f8fafd); }
 tbody tr.on { background: var(--accent-soft, #eaf1fe); }

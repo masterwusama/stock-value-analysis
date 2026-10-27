@@ -99,21 +99,37 @@
             {"type": "agro", "id": "indoxacarb", "name": "茚虫威(折百)"},
             {"type": "agro", "id": "oxadiazon", "name": "噁草酮"}
           ],
+          "cost_links": [
+            {"type": "agro", "id": "o-phenylenediamine", "name": "邻苯二胺(多菌灵/甲硫直接原料)"},
+            {"type": "agro", "id": "o-nitrochlorobenzene", "name": "邻硝基氯化苯(邻苯二胺上游)"},
+            {"type": "cmd", "code": "COAL_BENCH", "name": "动力煤(自备热电能源)", "unit": "元/吨"}
+          ],
+          "spreads": [
+            {"name": "多菌灵-邻苯二胺 价差", "a": {"type": "agro", "id": "carbendazim"}, "b": {"type": "agro", "id": "o-phenylenediamine"}},
+            {"name": "邻苯二胺-邻硝基氯化苯 价差(中间体环节)", "a": {"type": "agro", "id": "o-phenylenediamine"}, "b": {"type": "agro", "id": "o-nitrochlorobenzene"}}
+          ],
           "volume": [
             {"period": "2026Q3", "qty": 6604, "unit": "吨", "avg_price": 37446, "yoy": "+12.75%", "source": "Q3分产品经营数据公告(10-28)"}
           ],
           "cost_drivers": [
-            {"name": "3,4-二氯苯胺", "change": "+59.04%", "note": "对硝涨价的镜像:广信外采它产敌草隆,双向都有份"},
+            {"name": "3,4-二氯苯胺", "change": "+59.04%", "note": "对硝涨价的镜像:广信外采它产敌草隆,双向都有份(无公开报价序列,只跟踪涨幅公告)"},
             {"name": "硫磺", "change": "+43%"},
             {"name": "石蜡油", "change": "+48%"}
           ],
-          "note": "茚虫威/噁草酮新线 2026H1 转固但爬坡量未披露(公司侧10月无报价;本库中农立华周报有市场价:茚虫威36-38万/噁草酮14.6万——差异化数据源)"
+          "note": "茚虫威/噁草酮新线 2026H1 转固但爬坡量未披露(公司侧10月无报价;本库中农立华周报有市场价:茚虫威36-38万/噁草酮14.6万——差异化数据源);价差为简单差(单耗未披露,看趋势不看绝对)"
         },
         {
           "product": "中间体(对/邻硝基氯化苯)",
           "price_links": [
             {"type": "agro", "id": "p-nitrochlorobenzene", "name": "对硝基氯化苯"},
             {"type": "agro", "id": "o-nitrochlorobenzene", "name": "邻硝基氯化苯"}
+          ],
+          "cost_links": [
+            {"type": "agro", "id": "benzene", "name": "纯苯(硝化链源头原料)"},
+            {"type": "agro", "id": "caustic-soda", "name": "烧碱(氯碱配套,氯气之源)"}
+          ],
+          "spreads": [
+            {"name": "对硝基氯化苯-纯苯 价差(硝化加价)", "a": {"type": "agro", "id": "p-nitrochlorobenzene"}, "b": {"type": "agro", "id": "benzene"}}
           ],
           "volume": [
             {"period": "2026Q3", "qty": 183600, "unit": "吨", "avg_price": 2621, "yoy": "+63.3%", "source": "Q3公告"}
@@ -122,10 +138,16 @@
         },
         {
           "product": "草甘膦(技改复产期权)",
-          "price_links": [{"type": "agro", "id": "glyphosate", "name": "草甘膦95%"},
-                          {"type": "agro", "id": "glycine", "name": "甘氨酸(成本)"},
-                          {"type": "agro", "id": "yellow-phosphorus", "name": "黄磷(成本)"}],
-          "note": "3万吨技改 2025 停产、外购原药维持供货;若 2027 在 2.9万+ 复产=恢复性 5-8亿收入弹性;11-6 业绩说明会是时间表窗口"
+          "price_links": [{"type": "agro", "id": "glyphosate", "name": "草甘膦95%"}],
+          "cost_links": [
+            {"type": "agro", "id": "glycine", "name": "甘氨酸(核心外购原料)"},
+            {"type": "agro", "id": "yellow-phosphorus", "name": "黄磷(磷源)"}
+          ],
+          "spreads": [
+            {"name": "草甘膦-甘氨酸 价差", "a": {"type": "agro", "id": "glyphosate"}, "b": {"type": "agro", "id": "glycine"}},
+            {"name": "草甘膦-黄磷 价差", "a": {"type": "agro", "id": "glyphosate"}, "b": {"type": "agro", "id": "yellow-phosphorus"}}
+          ],
+          "note": "3万吨技改 2025 停产、外购原药维持供货;若 2027 在 2.9万+ 复产=恢复性 5-8亿收入弹性;11-6 业绩说明会是时间表窗口;价差是复产盈利性的实时温度计"
         },
         {
           "product": "现金池(利润第一大项)",
