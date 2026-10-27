@@ -52,15 +52,8 @@ onBeforeUnmount(() => {
 
       <div id="agro-main" style="display:none">
 
-        <!-- 公司营收结构卡 -->
-        <div class="agro-revenue">
-          <div class="agro-revenue-head">
-            <span class="agro-company">广信股份（603599）</span>
-            <span class="agro-revenue-title">2025 年营收结构 · 主营产品价格跟踪</span>
-          </div>
-          <div class="agro-revenue-bar" id="agro-revenue-bar"></div>
-          <div class="agro-revenue-note">产品价格 → 出厂价/毛利率 → 业绩（年报口径：杀菌剂毛利率波动主要系多菌灵价格变动所致）。茚虫威/噁草酮为 2026H1 新投产线，周报自 2025 年初起有连续报价</div>
-        </div>
+        <!-- 公司营收结构卡(2026-10-27 按需求移除:广信营收结构不再展示,
+             成本链口径说明并进页脚 foot,见 agroLegacy.js) -->
 
         <!-- 分类筛选 -->
         <div class="agro-tabs" id="agro-tabs">
@@ -69,6 +62,7 @@ onBeforeUnmount(() => {
           <button class="agro-tab" data-cat="除草剂">除草剂</button>
           <button class="agro-tab" data-cat="杀虫剂">杀虫剂</button>
           <button class="agro-tab" data-cat="中间体">中间体</button>
+          <button class="agro-tab" data-cat="原材料">原材料</button>
         </div>
 
         <!-- 产品卡片 -->

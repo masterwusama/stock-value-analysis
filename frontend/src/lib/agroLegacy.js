@@ -78,37 +78,8 @@
     show('agro-error');
   }
 
-  /* ---------------- 营收结构 ---------------- */
-
-  // 2025 年报营收结构（农药 54.5% / 中间体 44.58%，余下为其他）
-  var REVENUE = [
-    { cat: '杀菌剂', pct: 32.7, note: '多菌灵 / 甲基硫菌灵 / 噁唑菌酮等' },
-    { cat: '除草剂', pct: 21.8, note: '敌草隆 / 草甘膦 / 环嗪酮等' },
-    { cat: '中间体', pct: 44.58, note: '邻苯二胺 / 对硝基氯化苯等' },
-    { cat: '其他', pct: 0.92, note: '制剂及其他' }
-  ];
-
-  function renderRevenue() {
-    var bar = $('agro-revenue-bar');
-    var html = '';
-    REVENUE.forEach(function (r) {
-      html += '<div class="agro-rev-item" data-cat="' + r.cat + '">' +
-        '<span class="agro-rev-name">' + r.cat + '</span>' +
-        '<span class="agro-rev-track"><span class="agro-rev-fill" style="width:' + r.pct + '%"></span></span>' +
-        '<span class="agro-rev-pct">' + r.pct + '%</span>' +
-        '<span class="agro-rev-note">' + r.note + '</span>' +
-        '</div>';
-    });
-    bar.innerHTML = html;
-    // 点击营收条目跳转对应分类
-    bar.querySelectorAll('.agro-rev-item').forEach(function (item) {
-      item.addEventListener('click', function () {
-        var cat = item.getAttribute('data-cat');
-        if (cat === '其他') return;
-        setCat(cat);
-      });
-    });
-  }
+  /* ---------------- 营收结构(2026-10-27 移除) ----------------
+   * 广信股份营收结构卡按需求下线;成本链口径说明并进页脚 foot。 */
 
   /* ---------------- 分类筛选 ---------------- */
 
@@ -314,7 +285,6 @@
         });
 
         show('agro-main');
-        renderRevenue();
         renderCards();
         state.chart = echarts.init($('agro-chart'));
         renderChart();
@@ -326,6 +296,7 @@
           (staleList.length ? ' · 已断档：' + staleList.map(function (p) {
             return p.name + '（停在 ' + (p.latest || '无数据') + '）';
           }).join('、') : '') +
+          ' · 原材料=广信成本链(甘氨酸/黄磷→草甘膦,烧碱/液氯→光气,纯苯/邻硝→硝化链)' +
           ' · 价格为市场报价，仅供个人学习研究';
       })
       .catch(function (e) {

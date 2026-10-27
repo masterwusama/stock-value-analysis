@@ -12,95 +12,7 @@
   color: #999;
 }
 
-/* ---------- 营收结构卡 ---------- */
-
-.agro-revenue {
-  border: 1px solid #e5e9f2;
-  border-radius: 12px;
-  padding: 16px 18px;
-  margin-bottom: 16px;
-  background: #fafbfd;
-  box-shadow: 0 1px 2px rgba(20, 30, 55, 0.05);
-}
-
-.agro-revenue-head {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-}
-
-.agro-company {
-  font-size: 16px;
-  font-weight: 700;
-  color: #222;
-}
-
-.agro-revenue-title {
-  font-size: 13px;
-  color: #666;
-}
-
-.agro-rev-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 5px 0;
-  cursor: pointer;
-  border-radius: 4px;
-  transition: background .15s;
-}
-
-.agro-rev-item:hover {
-  background: #f0f6ff;
-}
-
-.agro-rev-name {
-  width: 52px;
-  font-weight: 600;
-  color: #333;
-}
-
-.agro-rev-track {
-  flex: 1;
-  max-width: 380px;
-  height: 16px;
-  background: #eee;
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.agro-rev-fill {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, #4c8d4c, #2f7d32);
-  border-radius: 8px;
-}
-
-.agro-rev-item:nth-child(2) .agro-rev-fill { background: linear-gradient(90deg, #5b9bd5, #2e75b6); }
-.agro-rev-item:nth-child(3) .agro-rev-fill { background: linear-gradient(90deg, #c99a5b, #b07a2e); }
-.agro-rev-item:nth-child(4) .agro-rev-fill { background: #bbb; }
-
-.agro-rev-pct {
-  width: 58px;
-  text-align: right;
-  font-weight: 700;
-  color: #222;
-}
-
-.agro-rev-note {
-  font-size: 12px;
-  color: #888;
-}
-
-.agro-revenue-note {
-  margin-top: 10px;
-  font-size: 12px;
-  color: #999;
-  border-top: 1px dashed #e0e0e0;
-  padding-top: 8px;
-}
+/* ---------- 营收结构卡(2026-10-27 按需求移除) ---------- */
 
 /* ---------- 分类筛选 ---------- */
 
@@ -524,20 +436,11 @@
   /* 桌面靠 margin-left:auto 顶到最右，折行后会跑到半空；让它独占一行当页脚说明 */
   .edb-switch-note { margin-left: 0; flex: 1 0 100%; font-size: 11px; }
 
-  /* 营收结构条：名称+占比一行、进度条整行、备注整行。
-     order 必须显式给全四个子元素，只给 track 加 order 会被排到最后去。 */
-  .agro-revenue { padding: 12px; }
-  .agro-company { font-size: 15px; }
-  .agro-rev-item { flex-wrap: wrap; gap: 6px 10px; }
-  .agro-rev-name { order: 1; }
-  .agro-rev-pct { order: 2; margin-left: auto; }
-  /* max-width:380px 在窄屏上会把进度条压成一小截，这里放开让它吃满整行 */
-  .agro-rev-track { order: 3; flex: 1 0 100%; max-width: none; }
-  .agro-rev-note { order: 4; flex: 1 0 100%; }
-
-  /* 分类筛选：四个 tab 均分一行，够 32px 触控高度 */
-  .agro-tabs { gap: 6px; }
-  .agro-tab { flex: 1 1 0; min-width: 0; min-height: 32px; padding: 6px 8px; text-align: center; }
+  /* 分类筛选：六个分类均分一行太挤,改单行横滑(滚动条藏掉) */
+  .agro-tabs { gap: 6px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
+    -ms-overflow-style: none; -webkit-overflow-scrolling: touch; }
+  .agro-tabs::-webkit-scrollbar { display: none; }
+  .agro-tab { flex: 0 0 auto; min-height: 32px; padding: 6px 14px; white-space: nowrap; }
 
   /* 产品卡：auto-fill minmax(280px,1fr) 在 390px 下算出一列但会被内边距顶到溢出，钉死单列 */
   .agro-cards { grid-template-columns: 1fr; gap: 10px; }
@@ -552,17 +455,4 @@
   .agro-check { min-height: 32px; }
 
   .agro-foot { margin: 12px 0 24px; font-size: 11px; }
-
-  /* EDB 视图 */
-  .edb-cat-head { gap: 8px; }
-  .edb-cat-name { font-size: 18px; }
-  .edb-kpis { grid-template-columns: 1fr; gap: 10px; }
-  .edb-kpi { padding: 10px 12px; }
-  .edb-kpi-val { font-size: 20px; }
-  /* 10px 在手机上偏小，这三处脚注统一提到 11px */
-  .edb-kpi-freq { font-size: 11px; }
-  .edb-kpi-foot { font-size: 11px; }
-  .edb-rng-label { font-size: 11px; }
-  .edb-panel { padding: 12px 10px; }
-  .edb-panel-sub { font-size: 11px; }
 }
