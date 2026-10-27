@@ -57,6 +57,18 @@ const META = {
              leftName: '伦敦银(左轴·美元/盎司)', rightName: '金银比(右轴·倍)',
              tip: '📖 正常态是两线镜像(银涨→金银比压缩=银跑赢金)。金银比走阔=银跑输金,常出现在恐慌期(白银先被抛售)。' },
   },
+  aluminum: {
+    title: '铝 · 四个关键数',
+    core: [
+      { code: 'AHD_MAIN', tag: '价格', note: '国际铝价基准·LME三月' },
+      { code: 'AO0_CLOSE', tag: '成本', note: '氧化铝·冶炼原料锚' },
+      { code: 'AL_PMI', tag: '需求', note: '制造业PMI·50是荣枯线' },
+      { code: 'AL_SHFE_LME', tag: '比价', note: '沪伦比·内盘溢价' },
+    ],
+    chart: { left: 'AL0_CLOSE', right: 'AO0_CLOSE', title: '核心图:沪铝 vs 氧化铝(成本传导)',
+             leftName: '沪铝(左轴·元/吨)', rightName: '氧化铝(右轴·元/吨)',
+             tip: '📖 氧化铝是电解铝的直接原料(1.93 吨产 1 吨)。氧化铝相对涨得快=冶炼利润被压缩;沪铝独立走强=需求或供给约束驱动。' },
+  },
   copper: {
     title: '铜 · 四个关键数',
     core: [
@@ -244,6 +256,7 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
               <button type="button" class="seg-btn" :class="{ on: cur === 'gold' }" @click="switchCmd('gold')">黄金</button>
               <button type="button" class="seg-btn" :class="{ on: cur === 'silver' }" @click="switchCmd('silver')">白银</button>
               <button type="button" class="seg-btn" :class="{ on: cur === 'copper' }" @click="switchCmd('copper')">铜</button>
+              <button type="button" class="seg-btn" :class="{ on: cur === 'aluminum' }" @click="switchCmd('aluminum')">铝</button>
             </span>
             <select v-model="range">
               <option value="1y">近 1 年</option>
@@ -321,6 +334,8 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
             白银工业需求代理:多晶硅(广期所 PS)/光伏ETF/沪锌铅(伴生矿)。
             铜:LME/COMEX 库存无免费结构化源,仅有沪铜滚动近 3 月(诚实弱项);
             铜金比=LME铜(美元/吨)÷伦敦金(美元/盎司),沪伦比>1=内盘溢价。
+            铝:LME 库存同无免费源、CFTC 铝流动性极低不采(定价权在 LME/SHFE);
+            氧化铝=电解铝直接原料(1.93 吨产 1 吨,广期所 2023-06 上市)。
             供需平衡表(WGC/Silver Institute/USGS)与因子记分卡属 P2,先看数再谈模型
             (设计文档:docs/设计-大宗商品供需模块-黄金.md / -白银.md)。
           </p>
