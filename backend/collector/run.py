@@ -4,11 +4,11 @@
 用法(在 backend/ 目录):
     python -m collector.run stock     # 日更：腾讯批量刷全市场估值 + 定增/回购明细 → 回灌（分钟级）
     python -m collector.run deep      # 深抓：全市场财务/报告重抓（--resume 增量，数小时）
-    python -m collector.run agro      # fetch_prices → 回灌（生意社/中农立华价格，不碰 Wind）
-    python -m collector.run edb       # 行业 EDB 量价（免费源:新浪期货主力/东财宏观,周日 20:00 自动,云端可跑）
+    python -m collector.run agro      # 农化制品价格(生意社/中农立华周报双入口,不碰 Wind)
     python -m collector.run events    # Wind 事件(一次性/手动,不进每日调度) → 回灌
     python -m collector.run etf       # ETF 综合评估(成份/指数估值序列/净值) → 回灌
     python -m collector.run gold      # 黄金供需 P0(价格/持仓/储备/宏观因子,免费源) → 回灌
+    python -m collector.run silver    # 白银供需 P0(价格/持仓/工业需求代理,免费源) → 回灌
     python -m collector.run import    # 跳过抓取,仅手动触发一次回灌
 尾部参数透传给该 job 首个采集脚本(传了就整体替代该 job 的默认参数),
 如 `python -m collector.run stock --codes 600519`。
@@ -77,13 +77,9 @@ JOBS = {
     # 末尾同样补一次重算：fetch_data 只给本轮真爬过的公司算分，带 --resume/--max-age 时
     # 大部分公司是跳过的，改了评分公式就得靠这一步铺满全市场。
     "deep": [(SCRIPTS, "fetch_data.py"), (SCRIPTS, "_refresh_scores.py")],
-    # agro 只跑生意社价格。行业 EDB 历史上是本机 Wind 客户端 CLI(要登录、耗积分),属于
-    # 自动链管不到的外部依赖,2026-09-03 09:05 那轮 agro 曾被 fetch_edb 带成 failed(价格
-    # 落盘/回灌照常,但日更状态被 Wind 侧带红)。2026-10-02 起 edb 全量换免费 HTTP 源
-    # (新浪期货主力连续/东财宏观,收缩为 8 指标,见 fetch_edb.py 头注),独立成周日 job
-    # 自动跑、云端也能跑;仍不并进 agro 链——周/月聚合的低频序列,日更无意义。
+    # agro 只跑农化制品价格(生意社/中农立华周报双入口)。行业 EDB 五板块
+    # 2026-10-27 整体移除(视图/接口/采集链;edb_* 两表留档),fetch_edb.py 已删。
     "agro": [(AGRO_SCRIPTS, "fetch_prices.py")],
-    "edb": [(AGRO_SCRIPTS, "fetch_edb.py")],
     "events": [(SCRIPTS, "fetch_events.py")],
     # valuation：PE/PB/PS 十年分位。2026-10-04 起默认免费源(东财 datacenter,
     # fetch_valuation_em,全 A 一轮约 110 分钟,调度 03:35);Wind 路径保留为可选
@@ -109,6 +105,10 @@ JOBS = {
     # 不碰 Wind 云端可跑;单序列失败降级留旧数据,失败过半才红。回灌走 --only-gold
     # (cmd_indicator/cmd_value 两表,与 agro EDB 分表,见 import_gold 头注)
     "gold": [(COLLECTOR / "commodity-gold" / "scripts", "fetch_gold.py")],
+    # silver：大宗商品供需模块第二期(白银)。免费源同 gold,白银特有组:SLV ETF(金十
+    # macro_cons_silver)/LBMA 金库白银列/多晶硅+光伏ETF+沪锌铅(工业需求与伴生矿代理)。
+    # 回灌走 --only-silver;金银比白银版 code=AG_GSR,与黄金版 GOLD_SILVER 隔开防互灌
+    "silver": [(COLLECTOR / "commodity-silver" / "scripts", "fetch_silver.py")],
     "import": [],
 }
 
@@ -141,6 +141,8 @@ IMPORT_DEFAULTS = {
     "etf": ["--only-etf"],
     # 黄金两表（cmd_*；指标定义不做差集删除，见 import_gold 头注）
     "gold": ["--only-gold"],
+    # 白银两表（同 cmd_*，commodity='silver' 分行；金银比白银版 AG_GSR）
+    "silver": ["--only-silver"],
 }
 
 # 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
@@ -163,13 +165,13 @@ SCRIPT_TIMEOUT = {
     "events": 8 * 3600,
     "valuation": 3 * 3600,
     "import": 2 * 3600,
-    "edb": 3600,
     "sentiment": 1800,
     "agro": 2 * 3600,
     "case": 1800,   # 全量回填 28 页 ≈1 分钟，增量更少；放宽到与 sentiment 同档
     "etf": 900,     # 每只 ≈15 秒(中证2000 2000 只行情批拉最重),多只线性涨,留足余量
     "etf-heal": 1200,   # 含补跑一轮完整 etf(900s)+检查,给足上限
     "gold": 1800,   # 实测 ≈3 分钟(2026-10-27 满序列 185s);含组重试(8s 退避)放宽 10 倍
+    "silver": 1800,  # 实测首跑 348s(含 CFTC 41 个年 zip 全量回填);稳态增量合并更快
 }
 
 

@@ -10,8 +10,9 @@
     data/valuation/latest.json → valuation_pctile(Wind 口径 PE/PB/PS 十年分位截面)
     data/actions/latest.json   → share_action(定增 / 回购全市场明细)
     agro-price/data/products.json → agro_product / agro_price
-    agro-price/data/edb.json   → edb_indicator / edb_value
     commodity-gold/data/gold.json → cmd_indicator / cmd_value(黄金供需模块 P0)
+    (2026-10-27 行业 EDB 五板块移除:edb.json/fetch_edb.py 已删,edb_* 两表保留为
+     历史存档,import_edb 随之退役)
 
 幂等策略:默认先清空业务表再导入(源 JSON 为唯一权威数据)。
 用法(在 backend 目录下):
@@ -82,6 +83,7 @@ DATA_DIR = LEGACY_DATA_DIR / "data"
 ETF_DIR = LEGACY_DATA_DIR / "data" / "etf"
 AGRO_DIR = LEGACY_DATA_DIR / "agro-price" / "data"
 GOLD_DIR = LEGACY_DATA_DIR / "commodity-gold" / "data"
+SILVER_DIR = LEGACY_DATA_DIR / "commodity-silver" / "data"
 SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
 
 # Wind 事件类型 → etype
@@ -1028,88 +1030,21 @@ def import_sentiment(db, stats):
             stats["sentiment_daily"] += 1
 
 
-def import_edb(db, stats):
-    """edb.json → edb_indicator / edb_value。
-
-    2026-10-02 起 edb.json 是本模块的唯一指标清单(Wind 源退役、换免费源收缩):
-    源里不存在的指标连同其观测整行删除——老 Wind S 码序列与被删指标的旧历史
-    都靠这里出清,不需要一次性手工 SQL。
-    """
-    src = json.loads((AGRO_DIR / "edb.json").read_text(encoding="utf-8"))
-    src_codes = {ind["code"] for cat in src.get("categories", [])
-                 for ind in cat.get("indicators", [])}
-    have = {r[0] for r in db.execute(select(EdbIndicator.edb_code)).fetchall()}
-    for gone in sorted(have - src_codes):
-        db.execute(text("DELETE FROM edb_value WHERE edb_code = :c"), {"c": gone})
-        db.execute(text("DELETE FROM edb_indicator WHERE edb_code = :c"), {"c": gone})
-        stats["edb_indicator_stale_deleted"] += 1
-    for ci, cat in enumerate(src.get("categories", [])):
-        for ii, ind in enumerate(cat.get("indicators", [])):
-            freq = EDB_FREQ_MAP.get(str(ind.get("freq", "")).strip(), "month")
-            extra = {
-                "source": ind.get("source"), "name": ind.get("name"),
-                "cat_name": cat.get("name"), "cat_idx": ci, "ind_idx": ii,
-            }
-            ival = dict(
-                edb_code=ind["code"], name=ind.get("label") or ind.get("name", ""),
-                category=cat["id"], freq=freq, unit=ind.get("unit"),
-                display_group=ind.get("group"), extra=extra,
-            )
-            iupd = {k: v for k, v in ival.items() if k != "edb_code"}
-            db.execute(mysql_insert(EdbIndicator)
-                       .values(**ival).on_duplicate_key_update(**iupd))
-            stats["edb_indicator"] += 1
-            keep = set()
-            for pt in ind.get("points", []):
-                if len(pt) != 2 or not pt[0]:
-                    continue
-                d = parse_date(pt[0])
-                stmt = mysql_insert(EdbValue).values(
-                    edb_code=ind["code"], data_date=d, val=pt[1],
-                ).on_duplicate_key_update(val=pt[1])
-                db.execute(stmt)
-                stats["edb_value"] += 1
-                keep.add(d)
-            # 与 import_agro 同理：--no-clean 下只 upsert 不删，指标撤点会永久残留。
-            # 但删除要限定在源自身覆盖的区间内——一旦源被整份覆盖成较窄窗口的数据,
-            # 无条件差集会把库里更早的历史一起抹掉。2026-10-02 换免费源后每轮都是
-            # 全量历史,该防线降级为兜底;窗口外的历史点仍保留
-            # (真要清库用不带 --no-clean 的全量重灌)。
-            src_dates = sorted(x for x in keep if x is not None)
-            if not src_dates:
-                stats["edb_value_delete_skipped"] += 1
-                continue  # 源里该指标一个可用点都没有：一个都不删
-            lo, hi = src_dates[0], src_dates[-1]
-            for row in db.execute(text(
-                    "SELECT data_date FROM edb_value WHERE edb_code = :c"),
-                    {"c": ind["code"]}).fetchall():
-                if row[0] in keep:
-                    continue
-                if lo <= row[0] <= hi:
-                    db.execute(text("DELETE FROM edb_value WHERE edb_code = :c"
-                                    " AND data_date = :d"), {"c": ind["code"], "d": row[0]})
-                    stats["edb_value_stale_deleted"] += 1
-                else:
-                    # 窗口外的历史点：源里没给，但不能当成“被撤点”删掉
-                    stats["edb_value_delete_skipped"] += 1
-
-
 def _as_date(v):
     """源侧日期是文本（'2026-05-20' / '2026-05-20 00:00:00'），认不出的当缺失而不是抛错。"""
     return parse_date(v) if isinstance(v, str) and DATE_RE.match(v) else None
 
 
-def import_gold(db, stats):
-    """commodity-gold/data/gold.json → cmd_indicator / cmd_value(黄金供需模块)。
+def _import_cmd_series(db, stats, path, default_commodity):
+    """commodity-*/data/*.json → cmd_indicator / cmd_value(大宗商品供需模块共享体)。
 
-    与 import_edb 的关键差异:不做「清单差集删指标」。fetch_gold 单序列抓取失败
-    时该序列本轮缺席 gold.json(见采集器降级策略),若照搬 import_edb 的
+    与 import_edb 的关键差异:不做「清单差集删指标」。fetch 单序列抓取失败
+    时该序列本轮缺席 json(见采集器降级策略),若照搬 import_edb 的
     have - src_codes 删除,一次瞬断就毁掉指标定义与全量历史。指标行只 upsert;
     撤点删除沿用窗口内差集防线(窗口外历史保留)。
     """
-    path = GOLD_DIR / "gold.json"
     if not path.exists():
-        stats["gold_missing"] += 1
+        stats["%s_missing" % default_commodity] += 1
         return
     src = json.loads(path.read_text(encoding="utf-8"))
     for ind in src.get("series", []):
@@ -1119,7 +1054,7 @@ def import_gold(db, stats):
             "idx": ind.get("idx"), "warnings": None,
         }
         ival = dict(
-            cmd_code=ind["code"], commodity=src.get("commodity", "gold"),
+            cmd_code=ind["code"], commodity=src.get("commodity", default_commodity),
             name=ind.get("label") or ind.get("name", ""),
             category=ind.get("cat", ""), freq=freq, unit=ind.get("unit"),
             display_group=ind.get("group"), extra=extra,
@@ -1156,6 +1091,21 @@ def import_gold(db, stats):
                 stats["cmd_value_stale_deleted"] += 1
             else:
                 stats["cmd_value_delete_skipped"] += 1
+
+
+def import_gold(db, stats):
+    """commodity-gold/data/gold.json → cmd_indicator / cmd_value(黄金供需模块)。"""
+    _import_cmd_series(db, stats, GOLD_DIR / "gold.json", "gold")
+
+
+def import_silver(db, stats):
+    """commodity-silver/data/silver.json → cmd_indicator / cmd_value(白银供需模块)。
+
+    与 import_gold 同表分 commodity 行。cmd_value 主键是 (cmd_code, data_date),
+    金银比这类两边都想展示的序列必须各用各的 code(白银版 AG_GSR,黄金版
+    GOLD_SILVER),否则两商品互灌会互相覆盖/commodity 字段翻转——采集端已防。
+    """
+    _import_cmd_series(db, stats, SILVER_DIR / "silver.json", "silver")
 
 
 def import_actions(db, stats):
@@ -1501,6 +1451,9 @@ def main():
     ap.add_argument("--only-gold", action="store_true",
                     help="只回灌 commodity-gold/data/gold.json 黄金供需序列"
                          "（fetch_gold 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-silver", action="store_true",
+                    help="只回灌 commodity-silver/data/silver.json 白银供需序列"
+                         "（fetch_silver 采集后跑；cmd_indicator/cmd_value 两表）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1522,6 +1475,8 @@ def main():
         args.no_clean = True
     if args.only_gold:
         args.no_clean = True
+    if args.only_silver:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
@@ -1529,6 +1484,7 @@ def main():
     t0 = time.time()
     mode = ("only-case" if args.only_case else "only-scores" if args.only_scores
             else "only-etf" if args.only_etf else "only-gold" if args.only_gold
+            else "only-silver" if args.only_silver
             else ("only-fresh" if args.only_fresh else "full"))
     try:
         if not args.no_clean:
@@ -1542,6 +1498,8 @@ def main():
             import_etf(db, stats)
         elif args.only_gold:
             import_gold(db, stats)
+        elif args.only_silver:
+            import_silver(db, stats)
         elif args.only_case:
             # 先灌公告面，再刷分：立案旗与 ST 高危补旗都发生在 score 行重建（build_score_rows）里
             import_case(db, stats)
@@ -1556,25 +1514,25 @@ def main():
                              quiet=args.quiet, head=False)
             import_events(db, stats)
             import_agro(db, stats)
-            import_edb(db, stats)
             import_valuation(db, stats)
             import_actions(db, stats)
             import_zygc(db, stats)
             import_sentiment(db, stats)
             import_etf(db, stats)
             import_gold(db, stats)
+            import_silver(db, stats)
         else:
             import_case(db, stats)
             import_companies(db, stats, quiet=args.quiet)
             import_events(db, stats)
             import_agro(db, stats)
-            import_edb(db, stats)
             import_valuation(db, stats)
             import_actions(db, stats)
             import_zygc(db, stats)
             import_sentiment(db, stats)
             import_etf(db, stats)
             import_gold(db, stats)
+            import_silver(db, stats)
         held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),

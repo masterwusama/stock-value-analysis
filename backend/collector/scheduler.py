@@ -10,9 +10,9 @@
              周六 deep 里刷,被 --max-age 跳过就断更一周,见 hk 并入记录)
     全市场深抓: 周六 09:05——财报/定期报告重抓(--resume --max-age 6, 约 4.5h),
              财务数据按季更新,周频足够; 新上市标的也在这一步进池
-    农价     : 每天 09:05 / 21:05(生意社每周 2~4 次,一天 2 次足够)
-    行业 EDB : 每周日 20:00——量价序列(月/周频为主,周更足够)。2026-10-02 起换免费
-             HTTP 源(新浪期货主力连续/东财宏观,收缩为 8 指标),不再依赖 Wind,云端可跑
+    农化制品 : 每天 09:05 / 21:05——生意社日频 + 中农立华周报(2026-10-27 起双入口:
+             官网新站/enongzi 转载,老 PHP 站已整体下线)。行业 EDB 五板块同日移除
+             (电解铝/航运/轮胎/地产/钢铁,原周日 20:00 job 退役)
     估值分位 : 每天 03:35——PE/PB/PS 十年分位,2026-10-04 起换免费源(东财 datacenter,
              fetch_valuation_em)刷全 A 一轮,约 110 分钟;Wind 路径退为手动
              (python -m collector.run valuation --source wind,唯一还能刷港股分位的
@@ -26,7 +26,7 @@
              要登录、按量耗积分,是自动链管不到的外部依赖(2026-09-03 09:05 的 agro
              就被当时的 fetch_edb 带成过 failed——edb 自换免费源后该风险已消除)。
 
-Wind 现状:积分 2026-09-20 耗尽后,edb(10-02)与 valuation(10-04)相继换免费源,自动任务
+Wind 现状:积分 2026-09-20 耗尽后,valuation(10-04)等相继换免费源,自动任务
 已全部不碰 Wind——events(手动 job)是仅剩的 Wind 用户,要更新跑 python -m collector.run
 events;valuation 要走 Wind 手动加 --source wind(游标/批上限逻辑在 fetch_valuation.py 原样)。
 
@@ -79,20 +79,16 @@ def main():
               hour=9, minute=5, id="deep")
     # 原 cron "0 1,13 * * *" = 北京 09:00/21:00
     s.add_job(run_job, "cron", args=["agro"], hour="9,21", minute=5, id="agro")
-    # 行业 EDB 每周一次(周日晚上,不与周六全市场深抓挤同一时段)：量价序列以月/周频
-    # 为主,日更无意义。2026-10-02 起为免费 HTTP 源(期货主力/东财),无 Wind 依赖
-    s.add_job(run_job, "cron", args=["edb"], day_of_week="sun",
-              hour=20, minute=0, id="edb")
     # 估值分位每天 03:35 铺一轮:免费源(东财 datacenter,fetch_valuation_em)刷全 A
     # 约 110 分钟,05:30 前完事;当日已更新的序列文件默认跳过,重跑即断点续传。
-    # 挑凌晨是躲开行情快照/深抓/农价/EDB 四个时段;Wind 路径退为手动(--source wind)。
+    # 挑凌晨是躲开行情快照/深抓/农化制品三个时段;Wind 路径退为手动(--source wind)。
     s.add_job(run_job, "cron", args=["valuation"], hour=3, minute=35, id="valuation")
     # 情绪日报每个交易日 16:30(收盘后 90 分钟:新浪指数日频要拖到 15:35 还没收录
     # 当日,R5 虽有实时兜底但能等到正主就等;周末不跑,休市跳过在采集器内部)。
     # 榜单池数据源只留 15 个交易日,中断超两周记得手动补跑
     s.add_job(run_job, "cron", args=["sentiment"], day_of_week="mon-fri",
               hour=16, minute=30, id="sentiment")
-    # 立案/处罚公告每周一次(周日 10:05,在 agro 早场之后、edb 之前,互不挤时段)。
+    # 立案/处罚公告每周一次(周日 10:05,在 agro 早场之后,互不挤时段)。
     # 立案是低频事件,周更足够;回灌 --only-case 顺带单刷 score_daily 把「正在立案」
     # 抬成 ST 高危旗(旗发生在 score 行重建里,只灌 case_event 看不到)
     s.add_job(run_job, "cron", args=["case"], day_of_week="sun",
@@ -104,17 +100,20 @@ def main():
     # 黄金供需每天一次(06:05:valuation(03:35~约05:25)之后、agro(09:05)之前,
     # 互不挤时段;外盘数据是前一夜收盘,晨间即最新)
     s.add_job(run_job, "cron", args=["gold"], hour=6, minute=5, id="gold")
+    # 白银供需每天一次(06:15:gold(06:05)后 10 分钟错峰——LBMA/FRED 等同源接口
+    # 不与黄金任务并发抢;agro(09:05)之前)
+    s.add_job(run_job, "cron", args=["silver"], hour=6, minute=15, id="silver")
     # etf-heal:工作日晚间每半小时自愈——机器休眠/进程崩溃跨过 17:35 时,
     # 查 etl_job_log 当日无 etf success 则幂等补跑(APScheduler misfire 宽限仅 1h,
     # 覆盖不了跨点宕机;etf 便宜且不碰 .fetch.lock,适合自动补)
     s.add_job(run_job, "cron", args=["etf-heal"], day_of_week="mon-fri",
               hour="18-23", minute="3,33", id="etf-heal")
     print("[scheduler] 已注册: stock(周一~六 16:05/22:05 估值快照) "
-          "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农价,不碰 Wind) "
-          "edb(周日 20:00 行业量价) valuation(每天 03:35 估值分位,免费源刷全 A) "
+          "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农化制品,不碰 Wind) "
+          "valuation(每天 03:35 估值分位,免费源刷全 A) "
           "sentiment(交易日 16:30 情绪日报) case(周日 10:05 立案/处罚公告) "
           "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
-          "gold(每天 06:05 黄金供需,免费源)。"
+          "gold(每天 06:05 黄金供需,免费源) silver(每天 06:15 白银供需,免费源)。"
           "Ctrl+C 退出",
           flush=True)
     s.start()
