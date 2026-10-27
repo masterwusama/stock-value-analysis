@@ -57,6 +57,18 @@ const META = {
              leftName: '伦敦银(左轴·美元/盎司)', rightName: '金银比(右轴·倍)',
              tip: '📖 正常态是两线镜像(银涨→金银比压缩=银跑赢金)。金银比走阔=银跑输金,常出现在恐慌期(白银先被抛售)。' },
   },
+  copper: {
+    title: '铜 · 四个关键数',
+    core: [
+      { code: 'CAD_MAIN', tag: '价格', note: '国际铜价基准·LME三月' },
+      { code: 'CN_PMI', tag: '需求', note: '制造业PMI·50是荣枯线' },
+      { code: 'CFTC_CU_NC', tag: '仓位', note: '基金净持仓·拥挤度' },
+      { code: 'CU_GOLD', tag: '估值', note: '铜金比·周期vs避险' },
+    ],
+    chart: { left: 'CAD_MAIN', right: 'CU_DTWEXBGS', title: '核心图:铜价 vs 美元指数(负相关是常态)',
+             leftName: 'LME铜(左轴·美元/吨)', rightName: '美元宽口径(右轴·点)',
+             tip: '📖 正常态是两线反向(美元弱→铜的美元计价成本降→需求增)。两线同向走=中国需求主导行情,美元不是主线。' },
+  },
 }
 const meta = computed(() => META[cur.value] || META.gold)
 
@@ -231,6 +243,7 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
             <span class="seg">
               <button type="button" class="seg-btn" :class="{ on: cur === 'gold' }" @click="switchCmd('gold')">黄金</button>
               <button type="button" class="seg-btn" :class="{ on: cur === 'silver' }" @click="switchCmd('silver')">白银</button>
+              <button type="button" class="seg-btn" :class="{ on: cur === 'copper' }" @click="switchCmd('copper')">铜</button>
             </span>
             <select v-model="range">
               <option value="1y">近 1 年</option>
@@ -306,7 +319,9 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
             口径:伦敦金/银现货替代已收费的 LBMA 定盘价;ETF 隐含价=总价值/持仓(与盘面价差应<1%);
             SGE 溢价率=内盘/(国际价×中间价折算)-1。CFTC 非商业走官网 legacy 口径。
             白银工业需求代理:多晶硅(广期所 PS)/光伏ETF/沪锌铅(伴生矿)。
-            供需平衡表(WGC 季度/Silver Institute 年度)与因子记分卡属 P2,先看数再谈模型
+            铜:LME/COMEX 库存无免费结构化源,仅有沪铜滚动近 3 月(诚实弱项);
+            铜金比=LME铜(美元/吨)÷伦敦金(美元/盎司),沪伦比>1=内盘溢价。
+            供需平衡表(WGC/Silver Institute/USGS)与因子记分卡属 P2,先看数再谈模型
             (设计文档:docs/设计-大宗商品供需模块-黄金.md / -白银.md)。
           </p>
         </template>

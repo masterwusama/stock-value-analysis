@@ -84,6 +84,7 @@ ETF_DIR = LEGACY_DATA_DIR / "data" / "etf"
 AGRO_DIR = LEGACY_DATA_DIR / "agro-price" / "data"
 GOLD_DIR = LEGACY_DATA_DIR / "commodity-gold" / "data"
 SILVER_DIR = LEGACY_DATA_DIR / "commodity-silver" / "data"
+COPPER_DIR = LEGACY_DATA_DIR / "commodity-copper" / "data"
 SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
 
 # Wind 事件类型 → etype
@@ -1108,6 +1109,14 @@ def import_silver(db, stats):
     _import_cmd_series(db, stats, SILVER_DIR / "silver.json", "silver")
 
 
+def import_copper(db, stats):
+    """commodity-copper/data/copper.json → cmd_indicator / cmd_value(铜供需模块)。
+
+    同款防互灌纪律:铜侧共码序列一律 CU_ 前缀(铜金比 CU_GOLD/美元 CU_DTWEXBGS)。
+    """
+    _import_cmd_series(db, stats, COPPER_DIR / "copper.json", "copper")
+
+
 def import_actions(db, stats):
     """actions/latest.json → share_action（定增 + 回购全市场明细）。
 
@@ -1454,6 +1463,9 @@ def main():
     ap.add_argument("--only-silver", action="store_true",
                     help="只回灌 commodity-silver/data/silver.json 白银供需序列"
                          "（fetch_silver 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-copper", action="store_true",
+                    help="只回灌 commodity-copper/data/copper.json 铜供需序列"
+                         "（fetch_copper 采集后跑；cmd_indicator/cmd_value 两表）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1477,6 +1489,8 @@ def main():
         args.no_clean = True
     if args.only_silver:
         args.no_clean = True
+    if args.only_copper:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
@@ -1485,6 +1499,7 @@ def main():
     mode = ("only-case" if args.only_case else "only-scores" if args.only_scores
             else "only-etf" if args.only_etf else "only-gold" if args.only_gold
             else "only-silver" if args.only_silver
+            else "only-copper" if args.only_copper
             else ("only-fresh" if args.only_fresh else "full"))
     try:
         if not args.no_clean:
@@ -1500,6 +1515,8 @@ def main():
             import_gold(db, stats)
         elif args.only_silver:
             import_silver(db, stats)
+        elif args.only_copper:
+            import_copper(db, stats)
         elif args.only_case:
             # 先灌公告面，再刷分：立案旗与 ST 高危补旗都发生在 score 行重建（build_score_rows）里
             import_case(db, stats)
@@ -1521,6 +1538,7 @@ def main():
             import_etf(db, stats)
             import_gold(db, stats)
             import_silver(db, stats)
+            import_copper(db, stats)
         else:
             import_case(db, stats)
             import_companies(db, stats, quiet=args.quiet)
@@ -1533,6 +1551,7 @@ def main():
             import_etf(db, stats)
             import_gold(db, stats)
             import_silver(db, stats)
+            import_copper(db, stats)
         held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),

@@ -9,6 +9,7 @@
     python -m collector.run etf       # ETF 综合评估(成份/指数估值序列/净值) → 回灌
     python -m collector.run gold      # 黄金供需 P0(价格/持仓/储备/宏观因子,免费源) → 回灌
     python -m collector.run silver    # 白银供需 P0(价格/持仓/工业需求代理,免费源) → 回灌
+    python -m collector.run copper    # 铜供需 P0(价格/比价/PMI/CFTC,免费源) → 回灌
     python -m collector.run import    # 跳过抓取,仅手动触发一次回灌
 尾部参数透传给该 job 首个采集脚本(传了就整体替代该 job 的默认参数),
 如 `python -m collector.run stock --codes 600519`。
@@ -109,6 +110,11 @@ JOBS = {
     # macro_cons_silver)/LBMA 金库白银列/多晶硅+光伏ETF+沪锌铅(工业需求与伴生矿代理)。
     # 回灌走 --only-silver;金银比白银版 code=AG_GSR,与黄金版 GOLD_SILVER 隔开防互灌
     "silver": [(COLLECTOR / "commodity-silver" / "scripts", "fetch_silver.py")],
+    # copper：大宗商品供需模块第三期(铜,流量主导工业金属)。LME/COMEX铜(新浪外盘
+    # CAD/HG)+沪铜(2005→)+铜金比/沪伦比(自算)+PMI+CFTC非商业(官网zip COPPER- #1)。
+    # 已知弱项:LME/COMEX 铜库存无免费结构化源,只有沪铜滚动3月(页面注明)。
+    # 回灌走 --only-copper;共码序列 CU_ 前缀(铜金比 CU_GOLD/美元 CU_DTWEXBGS)
+    "copper": [(COLLECTOR / "commodity-copper" / "scripts", "fetch_copper.py")],
     "import": [],
 }
 
@@ -143,6 +149,8 @@ IMPORT_DEFAULTS = {
     "gold": ["--only-gold"],
     # 白银两表（同 cmd_*，commodity='silver' 分行；金银比白银版 AG_GSR）
     "silver": ["--only-silver"],
+    # 铜两表(同 cmd_*,commodity='copper';共码序列 CU_ 前缀)
+    "copper": ["--only-copper"],
 }
 
 # 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
@@ -172,6 +180,7 @@ SCRIPT_TIMEOUT = {
     "etf-heal": 1200,   # 含补跑一轮完整 etf(900s)+检查,给足上限
     "gold": 1800,   # 实测 ≈3 分钟(2026-10-27 满序列 185s);含组重试(8s 退避)放宽 10 倍
     "silver": 1800,  # 实测首跑 348s(含 CFTC 41 个年 zip 全量回填);稳态增量合并更快
+    "copper": 1800,   # 同 silver 量级(CFTC zip 增量合并)
 }
 
 
