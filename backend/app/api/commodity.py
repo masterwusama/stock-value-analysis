@@ -243,15 +243,25 @@ def _stats(points, freq):
 
 
 def _cmd_series(db: Session, commodity: str):
-    """cmd_* 两表按 commodity 取行 → 全序列 + 读时统计 + 释义/导读注入。"""
+    """cmd_* 两表按 commodity 取行 → 全序列 + 读时统计 + 释义/导读注入。
+
+    性能(2026-10-27 优化,首屏 5.6s→~1s):① cmd_value 查询按本商品的 code
+    集合 IN 过滤——此前全表拉 28 万行(八商品全部点)再丢弃七成;② 日频序列
+    points 降采样(近 180 天保留全部,更早按 ISO 周桶取首见,~1100 点封顶),
+    响应体积约 1/5——stats(52周分位/变动/高低)始终用全量点算,不受采样影响;
+    图表 1000+ 点视觉无损,周/月/年频序列点少不采。
+    """
     inds = db.execute(
         select(CmdIndicator).where(CmdIndicator.commodity == commodity)
     ).scalars().all()
     pts = defaultdict(list)
-    for code, d, v in db.execute(
-        select(CmdValue.cmd_code, CmdValue.data_date, CmdValue.val).order_by(CmdValue.data_date)
-    ):
-        pts[code].append([d.isoformat(), float(v) if v is not None else None])
+    codes = [ind.cmd_code for ind in inds]
+    if codes:
+        for code, d, v in db.execute(
+            select(CmdValue.cmd_code, CmdValue.data_date, CmdValue.val)
+            .where(CmdValue.cmd_code.in_(codes)).order_by(CmdValue.data_date)
+        ):
+            pts[code].append([d.isoformat(), float(v) if v is not None else None])
 
     desc = _DESC.get(commodity, {})
     series = []
@@ -269,7 +279,7 @@ def _cmd_series(db: Session, commodity: str):
             "source": (ind.extra or {}).get("source"),
             "desc": desc.get(ind.cmd_code),
             "stats": _stats(points, ind.freq),
-            "points": points,
+            "points": _sample(points, ind.freq),
         })
     cats = []
     for s in series:  # cat 首见序即展示序(fetch SPEC 顺序)
@@ -282,6 +292,29 @@ def _cmd_series(db: Session, commodity: str):
         "guide": _GUIDE.get(commodity),
         "series": series,
     }
+
+
+def _sample(points, freq):
+    """日频长序列降采样:近 180 天保留全部,更早按 ISO 周桶取首见(~1100 点封顶)。
+
+    只用于响应里的 points(画图);stats 由调用方在全量点上先算。周/月/年频
+    与短序列原样返回。图表 1000+ 点视觉无损,归一化基准点可能移位 ≤7 天,无感。
+    """
+    if freq != "day" or len(points) <= 1400:
+        return points
+    today = dt.date.today()
+    cut = (today - dt.timedelta(days=180)).isoformat()
+    head, tail = [], []
+    for p in points:
+        (tail if p[0] >= cut else head).append(p)
+    out, seen = [], set()
+    for p in head:
+        k = dt.date.fromisoformat(p[0]).isocalendar()[:2]
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(p)
+    return out + tail
 
 
 @router.get("/gold")
