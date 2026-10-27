@@ -12,6 +12,7 @@
     python -m collector.run copper    # 铜供需 P0(价格/比价/PMI/CFTC,免费源) → 回灌
     python -m collector.run aluminum  # 铝供需 P0(价格/成本/PMI/库存,免费源) → 回灌
     python -m collector.run lithium   # 碳酸锂 P0(价格/需求ETF/仓单,免费源) → 回灌
+    python -m collector.run crudeoil  # 原油 P0(WTI/布伦特/沪油/比价/CFTC,免费源) → 回灌
     python -m collector.run import    # 跳过抓取,仅手动触发一次回灌
 尾部参数透传给该 job 首个采集脚本(传了就整体替代该 job 的默认参数),
 如 `python -m collector.run stock --codes 600519`。
@@ -125,6 +126,10 @@ JOBS = {
     # (2023-07 上市)+广期所仓单(挤仓核心)+新能车/电池ETF双需求代理(新浪,东财直连
     # 2026-10-27 起被断)。现货(SMM/百川)与锂矿价付费不采。共码序列 LI_ 前缀
     "lithium": [(COLLECTOR / "commodity-lithium" / "scripts", "fetch_lithium.py")],
+    # crudeoil：大宗商品供需模块第六期(原油)。WTI(1996→30年)/布伦特/沪原油/
+    # 布伦特-WTI价差/取暖油比价(炼制利润)/天然气/CFTC商业持仓(1986→)。
+    # EIA 库存与贝克休斯钻机数的 akshare 免费源已停更(2025-09/2024-02)不采,记 P2
+    "crudeoil": [(COLLECTOR / "commodity-crudeoil" / "scripts", "fetch_crudeoil.py")],
     "import": [],
 }
 
@@ -164,6 +169,7 @@ IMPORT_DEFAULTS = {
     # 铝两表(同 cmd_*,commodity='aluminum';共码序列 AL_ 前缀)
     "aluminum": ["--only-aluminum"],
     "lithium": ["--only-lithium"],
+    "crudeoil": ["--only-crudeoil"],
 }
 
 # 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
@@ -196,6 +202,7 @@ SCRIPT_TIMEOUT = {
     "copper": 1800,   # 同 silver 量级(CFTC zip 增量合并)
     "aluminum": 900,  # 实测 13.5s(无 CFTC zip);留足重试余量
     "lithium": 900,   # 实测 9.9s(仅 7 序列)
+    "crudeoil": 900,  # 实测 8.2s(无 CFTC zip)
 }
 
 

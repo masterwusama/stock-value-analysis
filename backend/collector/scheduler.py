@@ -109,6 +109,8 @@ def main():
     s.add_job(run_job, "cron", args=["aluminum"], hour=6, minute=35, id="aluminum")
     # 碳酸锂供需每天一次(06:45:金银铜铝之后再错峰 10 分钟)
     s.add_job(run_job, "cron", args=["lithium"], hour=6, minute=45, id="lithium")
+    # 原油供需每天一次(06:55:五商品之后再错峰 10 分钟)
+    s.add_job(run_job, "cron", args=["crudeoil"], hour=6, minute=55, id="crudeoil")
     # etf-heal:工作日晚间每半小时自愈——机器休眠/进程崩溃跨过 17:35 时,
     # 查 etl_job_log 当日无 etf success 则幂等补跑(APScheduler misfire 宽限仅 1h,
     # 覆盖不了跨点宕机;etf 便宜且不碰 .fetch.lock,适合自动补)
@@ -119,7 +121,7 @@ def main():
           "valuation(每天 03:35 估值分位,免费源刷全 A) "
           "sentiment(交易日 16:30 情绪日报) case(周日 10:05 立案/处罚公告) "
           "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
-          "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45 大宗商品供需,免费源)。"
+          "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55 大宗商品供需,免费源)。"
           "Ctrl+C 退出",
           flush=True)
     s.start()

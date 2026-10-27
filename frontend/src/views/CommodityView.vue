@@ -81,6 +81,18 @@ const META = {
              leftName: '碳酸锂(左轴·元/吨)', rightName: '新能车ETF(右轴·元)',
              tip: '📖 常态同向(需求驱动)。需求涨而锂价跌=供给大量释放(2022-2024 的主矛盾);价格独立走强=供给收缩或挤仓。' },
   },
+  crudeoil: {
+    title: '原油 · 四个关键数',
+    core: [
+      { code: 'CL_MAIN', tag: '价格', note: 'WTI原油·美元/桶' },
+      { code: 'BRENT_WTI', tag: '比价', note: '布伦特-WTI·全球紧张度' },
+      { code: 'CFTC_OIL_COMM', tag: '仓位', note: 'CFTC商业净持仓' },
+      { code: 'CRACK_HO', tag: '炼制', note: '取暖油/原油·成品油强弱' },
+    ],
+    chart: { left: 'CL_MAIN', right: 'OIL_DTWEXBGS', title: '核心图:WTI vs 美元指数(负相关是常态)',
+             leftName: 'WTI原油(左轴·美元/桶)', rightName: '美元宽口径(右轴·点)',
+             tip: '📖 正常态是两线反向(美元弱→油价涨)。两线同向走=供给冲击主导(减产/制裁),美元不是主线。' },
+  },
   copper: {
     title: '铜 · 四个关键数',
     core: [
@@ -270,6 +282,7 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
               <button type="button" class="seg-btn" :class="{ on: cur === 'copper' }" @click="switchCmd('copper')">铜</button>
               <button type="button" class="seg-btn" :class="{ on: cur === 'aluminum' }" @click="switchCmd('aluminum')">铝</button>
               <button type="button" class="seg-btn" :class="{ on: cur === 'lithium' }" @click="switchCmd('lithium')">碳酸锂</button>
+              <button type="button" class="seg-btn" :class="{ on: cur === 'crudeoil' }" @click="switchCmd('crudeoil')">原油</button>
             </span>
             <select v-model="range">
               <option value="1y">近 1 年</option>
@@ -351,6 +364,8 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
             氧化铝=电解铝直接原料(1.93 吨产 1 吨,广期所 2023-06 上市)。
             碳酸锂:现货(SMM/百川)与锂矿成本线无免费源不采;期货 2023-07 上市历史短,
             需求代理=新能车/电池ETF(新浪)。
+            原油:EIA 周度库存与贝克休斯钻机数免费源已停更(2025-09/2024-02)不采记 P2;
+            取暖油比价为无量纲比值(HO/CL),裂解价差绝对值需单位校准故用比值。
             供需平衡表(WGC/Silver Institute/USGS)与因子记分卡属 P2,先看数再谈模型
             (设计文档:docs/设计-大宗商品供需模块-黄金.md / -白银.md)。
           </p>

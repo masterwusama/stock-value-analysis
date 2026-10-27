@@ -87,6 +87,7 @@ SILVER_DIR = LEGACY_DATA_DIR / "commodity-silver" / "data"
 COPPER_DIR = LEGACY_DATA_DIR / "commodity-copper" / "data"
 ALUMINUM_DIR = LEGACY_DATA_DIR / "commodity-aluminum" / "data"
 LITHIUM_DIR = LEGACY_DATA_DIR / "commodity-lithium" / "data"
+CRUDEOIL_DIR = LEGACY_DATA_DIR / "commodity-crudeoil" / "data"
 SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
 
 # Wind 事件类型 → etype
@@ -1135,6 +1136,14 @@ def import_lithium(db, stats):
     _import_cmd_series(db, stats, LITHIUM_DIR / "lithium.json", "lithium")
 
 
+def import_crudeoil(db, stats):
+    """commodity-crudeoil/data/crudeoil.json → cmd_indicator / cmd_value(原油)。
+
+    共码纪律同前:油侧一律 OIL_ 前缀;EIA 库存/贝克休斯钻机数免费源已停更不采。
+    """
+    _import_cmd_series(db, stats, CRUDEOIL_DIR / "crudeoil.json", "crudeoil")
+
+
 def import_actions(db, stats):
     """actions/latest.json → share_action（定增 + 回购全市场明细）。
 
@@ -1490,6 +1499,9 @@ def main():
     ap.add_argument("--only-lithium", action="store_true",
                     help="只回灌 commodity-lithium/data/lithium.json 碳酸锂供需序列"
                          "（fetch_lithium 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-crudeoil", action="store_true",
+                    help="只回灌 commodity-crudeoil/data/crudeoil.json 原油供需序列"
+                         "（fetch_crudeoil 采集后跑；cmd_indicator/cmd_value 两表）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1519,6 +1531,8 @@ def main():
         args.no_clean = True
     if args.only_lithium:
         args.no_clean = True
+    if args.only_crudeoil:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
@@ -1530,6 +1544,7 @@ def main():
             else "only-copper" if args.only_copper
             else "only-aluminum" if args.only_aluminum
             else "only-lithium" if args.only_lithium
+            else "only-crudeoil" if args.only_crudeoil
             else ("only-fresh" if args.only_fresh else "full"))
     try:
         if not args.no_clean:
@@ -1551,6 +1566,8 @@ def main():
             import_aluminum(db, stats)
         elif args.only_lithium:
             import_lithium(db, stats)
+        elif args.only_crudeoil:
+            import_crudeoil(db, stats)
         elif args.only_case:
             # 先灌公告面，再刷分：立案旗与 ST 高危补旗都发生在 score 行重建（build_score_rows）里
             import_case(db, stats)
@@ -1575,6 +1592,7 @@ def main():
             import_copper(db, stats)
             import_aluminum(db, stats)
             import_lithium(db, stats)
+            import_crudeoil(db, stats)
         else:
             import_case(db, stats)
             import_companies(db, stats, quiet=args.quiet)
@@ -1590,6 +1608,7 @@ def main():
             import_copper(db, stats)
             import_aluminum(db, stats)
             import_lithium(db, stats)
+            import_crudeoil(db, stats)
         held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),
