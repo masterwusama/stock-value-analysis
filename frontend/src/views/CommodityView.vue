@@ -93,6 +93,30 @@ const META = {
              leftName: 'WTI原油(左轴·美元/桶)', rightName: '美元宽口径(右轴·点)',
              tip: '📖 正常态是两线反向(美元弱→油价涨)。两线同向走=供给冲击主导(减产/制裁),美元不是主线。' },
   },
+  ferrous: {
+    title: '黑色系 · 四个关键数',
+    core: [
+      { code: 'RB0_CLOSE', tag: '价格', note: '螺纹钢·建筑业长材' },
+      { code: 'I0_CLOSE', tag: '成本', note: '铁矿石·1.6吨/吨钢' },
+      { code: 'MILL_MARGIN', tag: '利润', note: '钢厂盘面利润·>0有得赚' },
+      { code: 'HC_RB_SPREAD', tag: '结构', note: '卷螺差·制造vs建筑' },
+    ],
+    chart: { left: 'RB0_CLOSE', right: 'I0_CLOSE', title: '核心图:螺纹钢 vs 铁矿石(成本挤压)',
+             leftName: '螺纹钢(左轴·元/吨)', rightName: '铁矿石(右轴·元/吨)',
+             tip: '📖 常态是钢价与矿价同向(需求驱动成本)。铁矿独立走强=矿端供给事件(飓风/安检),钢厂利润被挤压;螺纹领涨=终端需求定价。' },
+  },
+  agri: {
+    title: '农产品 · 四个关键数',
+    core: [
+      { code: 'LH0_CLOSE', tag: '价格', note: '生猪·元/公斤÷1000' },
+      { code: 'HOG_FEED', tag: '比价', note: '猪粮比·6是预警线' },
+      { code: 'M0_CLOSE', tag: '饲料', note: '豆粕·蛋白成本' },
+      { code: 'C0_CLOSE', tag: '粮价', note: '玉米·饲料锚' },
+    ],
+    chart: { left: 'LH0_CLOSE', right: 'C0_CLOSE', title: '核心图:生猪 vs 玉米(养殖成本传导)',
+             leftName: '生猪(左轴·元/吨)', rightName: '玉米(右轴·元/吨)',
+             tip: '📖 猪价与粮价同向温和=成本传导正常。粮价独立上涨而猪价不涨=养殖利润被挤压(自产能出清);猪价独立暴涨暴跌=猪周期本身(产能调节滞后 10 个月)。' },
+  },
   copper: {
     title: '铜 · 四个关键数',
     core: [
@@ -283,6 +307,8 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
               <button type="button" class="seg-btn" :class="{ on: cur === 'aluminum' }" @click="switchCmd('aluminum')">铝</button>
               <button type="button" class="seg-btn" :class="{ on: cur === 'lithium' }" @click="switchCmd('lithium')">碳酸锂</button>
               <button type="button" class="seg-btn" :class="{ on: cur === 'crudeoil' }" @click="switchCmd('crudeoil')">原油</button>
+              <button type="button" class="seg-btn" :class="{ on: cur === 'ferrous' }" @click="switchCmd('ferrous')">黑色系</button>
+              <button type="button" class="seg-btn" :class="{ on: cur === 'agri' }" @click="switchCmd('agri')">农产品</button>
             </span>
             <select v-model="range">
               <option value="1y">近 1 年</option>
@@ -366,6 +392,8 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
             需求代理=新能车/电池ETF(新浪)。
             原油:EIA 周度库存与贝克休斯钻机数免费源已停更(2025-09/2024-02)不采记 P2;
             取暖油比价为无量纲比值(HO/CL),裂解价差绝对值需单位校准故用比值。
+            黑色系:钢厂盘面利润=螺纹−1.6×铁矿−0.5×焦煤(吨钢配比口径);普氏与港口库存无免费源。
+            农产品:猪粮比为期货口径近似官方(生猪/玉米);能繁母猪存栏无免费源;生猪期货 2021 上市历史短。
             供需平衡表(WGC/Silver Institute/USGS)与因子记分卡属 P2,先看数再谈模型
             (设计文档:docs/设计-大宗商品供需模块-黄金.md / -白银.md)。
           </p>

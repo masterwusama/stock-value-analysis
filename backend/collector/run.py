@@ -13,6 +13,8 @@
     python -m collector.run aluminum  # 铝供需 P0(价格/成本/PMI/库存,免费源) → 回灌
     python -m collector.run lithium   # 碳酸锂 P0(价格/需求ETF/仓单,免费源) → 回灌
     python -m collector.run crudeoil  # 原油 P0(WTI/布伦特/沪油/比价/CFTC,免费源) → 回灌
+    python -m collector.run ferrous   # 黑色系 P0(铁矿/螺纹/焦煤/钢厂利润,免费源) → 回灌
+    python -m collector.run agri      # 农产品 P0(生猪/豆粕/玉米/猪粮比,免费源) → 回灌
     python -m collector.run import    # 跳过抓取,仅手动触发一次回灌
 尾部参数透传给该 job 首个采集脚本(传了就整体替代该 job 的默认参数),
 如 `python -m collector.run stock --codes 600519`。
@@ -130,6 +132,13 @@ JOBS = {
     # 布伦特-WTI价差/取暖油比价(炼制利润)/天然气/CFTC商业持仓(1986→)。
     # EIA 库存与贝克休斯钻机数的 akshare 免费源已停更(2025-09/2024-02)不采,记 P2
     "crudeoil": [(COLLECTOR / "commodity-crudeoil" / "scripts", "fetch_crudeoil.py")],
+    # ferrous：大宗商品供需模块第七期(黑色系)。铁矿/螺纹/焦煤/热卷四期货量仓
+    # +钢厂盘面利润(自算)+卷螺差。普氏指数与港口库存无免费源记 P2
+    "ferrous": [(COLLECTOR / "commodity-ferrous" / "scripts", "fetch_ferrous.py")],
+    # agri：大宗商品供需模块第八期(农产品/生猪链)。生猪/豆粕/玉米/鸡蛋
+    # +猪粮比(自算,6:1 官方预警线)。能繁母猪存栏无免费源记 P2。
+    # 注意与 agro(农化制品)是两个模块
+    "agri": [(COLLECTOR / "commodity-agri" / "scripts", "fetch_agri.py")],
     "import": [],
 }
 
@@ -170,6 +179,8 @@ IMPORT_DEFAULTS = {
     "aluminum": ["--only-aluminum"],
     "lithium": ["--only-lithium"],
     "crudeoil": ["--only-crudeoil"],
+    "ferrous": ["--only-ferrous"],
+    "agri": ["--only-agri"],
 }
 
 # 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
@@ -203,6 +214,8 @@ SCRIPT_TIMEOUT = {
     "aluminum": 900,  # 实测 13.5s(无 CFTC zip);留足重试余量
     "lithium": 900,   # 实测 9.9s(仅 7 序列)
     "crudeoil": 900,  # 实测 8.2s(无 CFTC zip)
+    "ferrous": 900,   # 实测 10.8s
+    "agri": 900,      # 实测 15.3s
 }
 
 

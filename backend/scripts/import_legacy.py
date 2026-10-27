@@ -88,6 +88,8 @@ COPPER_DIR = LEGACY_DATA_DIR / "commodity-copper" / "data"
 ALUMINUM_DIR = LEGACY_DATA_DIR / "commodity-aluminum" / "data"
 LITHIUM_DIR = LEGACY_DATA_DIR / "commodity-lithium" / "data"
 CRUDEOIL_DIR = LEGACY_DATA_DIR / "commodity-crudeoil" / "data"
+FERROUS_DIR = LEGACY_DATA_DIR / "commodity-ferrous" / "data"
+AGRI_DIR = LEGACY_DATA_DIR / "commodity-agri" / "data"
 SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
 
 # Wind 事件类型 → etype
@@ -1144,6 +1146,22 @@ def import_crudeoil(db, stats):
     _import_cmd_series(db, stats, CRUDEOIL_DIR / "crudeoil.json", "crudeoil")
 
 
+def import_ferrous(db, stats):
+    """commodity-ferrous/data/ferrous.json → cmd_*（黑色系:铁矿/螺纹/焦煤/热卷）。
+
+    共码纪律同前:黑色系一律 FE_ 前缀派生(PMI);钢厂利润/卷螺差 code 天然独立。
+    """
+    _import_cmd_series(db, stats, FERROUS_DIR / "ferrous.json", "ferrous")
+
+
+def import_agri(db, stats):
+    """commodity-agri/data/agri.json → cmd_*（农产品:生猪/豆粕/玉米/鸡蛋）。
+
+    注意与 agro-price(农化制品)是两个模块;共码纪律同前,猪粮比 HOG_FEED 独立 code。
+    """
+    _import_cmd_series(db, stats, AGRI_DIR / "agri.json", "agri")
+
+
 def import_actions(db, stats):
     """actions/latest.json → share_action（定增 + 回购全市场明细）。
 
@@ -1502,6 +1520,12 @@ def main():
     ap.add_argument("--only-crudeoil", action="store_true",
                     help="只回灌 commodity-crudeoil/data/crudeoil.json 原油供需序列"
                          "（fetch_crudeoil 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-ferrous", action="store_true",
+                    help="只回灌 commodity-ferrous/data/ferrous.json 黑色系序列"
+                         "（fetch_ferrous 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-agri", action="store_true",
+                    help="只回灌 commodity-agri/data/agri.json 农产品(生猪链)序列"
+                         "（fetch_agri 采集后跑；cmd_indicator/cmd_value 两表）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1533,6 +1557,10 @@ def main():
         args.no_clean = True
     if args.only_crudeoil:
         args.no_clean = True
+    if args.only_ferrous:
+        args.no_clean = True
+    if args.only_agri:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
@@ -1545,6 +1573,8 @@ def main():
             else "only-aluminum" if args.only_aluminum
             else "only-lithium" if args.only_lithium
             else "only-crudeoil" if args.only_crudeoil
+            else "only-ferrous" if args.only_ferrous
+            else "only-agri" if args.only_agri
             else ("only-fresh" if args.only_fresh else "full"))
     try:
         if not args.no_clean:
@@ -1568,6 +1598,10 @@ def main():
             import_lithium(db, stats)
         elif args.only_crudeoil:
             import_crudeoil(db, stats)
+        elif args.only_ferrous:
+            import_ferrous(db, stats)
+        elif args.only_agri:
+            import_agri(db, stats)
         elif args.only_case:
             # 先灌公告面，再刷分：立案旗与 ST 高危补旗都发生在 score 行重建（build_score_rows）里
             import_case(db, stats)
@@ -1593,6 +1627,8 @@ def main():
             import_aluminum(db, stats)
             import_lithium(db, stats)
             import_crudeoil(db, stats)
+            import_ferrous(db, stats)
+            import_agri(db, stats)
         else:
             import_case(db, stats)
             import_companies(db, stats, quiet=args.quiet)
@@ -1609,6 +1645,8 @@ def main():
             import_aluminum(db, stats)
             import_lithium(db, stats)
             import_crudeoil(db, stats)
+            import_ferrous(db, stats)
+            import_agri(db, stats)
         held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),
