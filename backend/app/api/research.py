@@ -131,8 +131,12 @@ def coverage() -> dict:
     if stamp != _cov_cache[0]:
         cov = {}
         for m in list_reports():
-            cov[m.code] = {"slug": m.slug, "title": m.title,
-                           "conclusion": m.conclusion, "date": m.date}
+            # 同一 code 存在多份研报时(如 603599-...-202610 与 -202610-2),
+            # 个股联动取 date 最新的那份;date 相同则让后遍历者不覆盖。
+            old = cov.get(m.code)
+            if old is None or (m.date or "") >= (old.get("date") or ""):
+                cov[m.code] = {"slug": m.slug, "title": m.title,
+                               "conclusion": m.conclusion, "date": m.date}
         _cov_cache = (stamp, cov)
     return _cov_cache[1]
 
