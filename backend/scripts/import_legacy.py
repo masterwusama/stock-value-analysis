@@ -86,6 +86,7 @@ GOLD_DIR = LEGACY_DATA_DIR / "commodity-gold" / "data"
 SILVER_DIR = LEGACY_DATA_DIR / "commodity-silver" / "data"
 COPPER_DIR = LEGACY_DATA_DIR / "commodity-copper" / "data"
 ALUMINUM_DIR = LEGACY_DATA_DIR / "commodity-aluminum" / "data"
+LITHIUM_DIR = LEGACY_DATA_DIR / "commodity-lithium" / "data"
 SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
 
 # Wind 事件类型 → etype
@@ -1126,6 +1127,14 @@ def import_aluminum(db, stats):
     _import_cmd_series(db, stats, ALUMINUM_DIR / "aluminum.json", "aluminum")
 
 
+def import_lithium(db, stats):
+    """commodity-lithium/data/lithium.json → cmd_indicator / cmd_value(碳酸锂)。
+
+    共码纪律同前:锂侧一律 LI_ 前缀(PMI/美元);现货(SMM)与锂矿价付费不采。
+    """
+    _import_cmd_series(db, stats, LITHIUM_DIR / "lithium.json", "lithium")
+
+
 def import_actions(db, stats):
     """actions/latest.json → share_action（定增 + 回购全市场明细）。
 
@@ -1478,6 +1487,9 @@ def main():
     ap.add_argument("--only-aluminum", action="store_true",
                     help="只回灌 commodity-aluminum/data/aluminum.json 铝供需序列"
                          "（fetch_aluminum 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-lithium", action="store_true",
+                    help="只回灌 commodity-lithium/data/lithium.json 碳酸锂供需序列"
+                         "（fetch_lithium 采集后跑；cmd_indicator/cmd_value 两表）")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1505,6 +1517,8 @@ def main():
         args.no_clean = True
     if args.only_aluminum:
         args.no_clean = True
+    if args.only_lithium:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
@@ -1515,6 +1529,7 @@ def main():
             else "only-silver" if args.only_silver
             else "only-copper" if args.only_copper
             else "only-aluminum" if args.only_aluminum
+            else "only-lithium" if args.only_lithium
             else ("only-fresh" if args.only_fresh else "full"))
     try:
         if not args.no_clean:
@@ -1534,6 +1549,8 @@ def main():
             import_copper(db, stats)
         elif args.only_aluminum:
             import_aluminum(db, stats)
+        elif args.only_lithium:
+            import_lithium(db, stats)
         elif args.only_case:
             # 先灌公告面，再刷分：立案旗与 ST 高危补旗都发生在 score 行重建（build_score_rows）里
             import_case(db, stats)
@@ -1557,6 +1574,7 @@ def main():
             import_silver(db, stats)
             import_copper(db, stats)
             import_aluminum(db, stats)
+            import_lithium(db, stats)
         else:
             import_case(db, stats)
             import_companies(db, stats, quiet=args.quiet)
@@ -1571,6 +1589,7 @@ def main():
             import_silver(db, stats)
             import_copper(db, stats)
             import_aluminum(db, stats)
+            import_lithium(db, stats)
         held = list(hold_notes)
         db.add(EtlJobLog(
             job_name="import_legacy", started_at=started, finished_at=datetime.now(),
