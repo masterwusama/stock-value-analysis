@@ -10,9 +10,11 @@
 import { computed, onBeforeUnmount, onMounted, nextTick, ref, watch } from 'vue'
 import { get } from '../api/client'
 import { ensureEcharts } from '../lib/echartsLoader'
-import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
+import { useMediaQuery } from '../lib/useMediaQuery'
 
-const isMobile = useMediaQuery(MOBILE_QUERY)
+// 移动断点与 CSS .m 类统一 640px(MOBILE_QUERY 全局常量是 600px,本页自带);
+// 样式用 .m class 而非 @media——桌面注入 class 即可验证移动布局
+const isMobile = useMediaQuery('(max-width: 640px)')
 const cur = ref('gold')    // 当前商品 gold | silver
 const data = ref(null)
 const error = ref('')
@@ -30,6 +32,14 @@ let chart = null
 let echarts = null
 
 const RANGE_DAYS = { '1y': 365, '3y': 365 * 3, '5y': 365 * 5, all: 0 }
+
+// 商品切换条(模板循环;新商品在这里加一行)
+const CMDS = [
+  { key: 'gold', name: '黄金' }, { key: 'silver', name: '白银' },
+  { key: 'copper', name: '铜' }, { key: 'aluminum', name: '铝' },
+  { key: 'lithium', name: '碳酸锂' }, { key: 'crudeoil', name: '原油' },
+  { key: 'ferrous', name: '黑色系' }, { key: 'agri', name: '农产品' },
+]
 
 // 按商品定制:标题/四件套/核心图双轴与解读
 const META = {
@@ -215,17 +225,20 @@ function renderCore() {
     }
   }
   const ss = [mk(L, cfg.leftName, '#c9a227'), mk(R, cfg.rightName, '#2d6cdf')].filter(Boolean)
+  const m = isMobile.value
   coreChart.setOption({
-    textStyle: { fontFamily: 'inherit' }, grid: { left: 60, right: 56, top: 40, bottom: 48 },
-    title: { text: cfg.title, left: 0, top: 0, textStyle: { fontSize: 13 } },
-    tooltip: { trigger: 'axis', confine: true },
-    legend: { top: 6, right: 0, icon: 'roundRect', itemWidth: 14, itemHeight: 8, textStyle: { fontSize: 11 } },
-    xAxis: { type: 'category', data: dates, boundaryGap: false, axisLabel: { fontSize: 10 } },
+    textStyle: { fontFamily: 'inherit' },
+    grid: { left: m ? 42 : 60, right: m ? 40 : 56, top: m ? 38 : 40, bottom: m ? 44 : 48 },
+    title: { text: cfg.title, left: 0, top: 0, textStyle: { fontSize: m ? 12 : 13 } },
+    tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: m ? 10 : 12 } },
+    legend: { top: 6, right: 0, icon: 'roundRect', itemWidth: m ? 10 : 14, itemHeight: 8,
+              textStyle: { fontSize: m ? 9.5 : 11 } },
+    xAxis: { type: 'category', data: dates, boundaryGap: false, axisLabel: { fontSize: m ? 8 : 10 } },
     yAxis: [
-      { type: 'value', scale: true, axisLabel: { fontSize: 10 }, splitLine: { lineStyle: { opacity: 0.35 } } },
-      { type: 'value', scale: true, axisLabel: { fontSize: 10 }, splitLine: { show: false } },
+      { type: 'value', scale: true, axisLabel: { fontSize: m ? 8 : 10 }, splitLine: { lineStyle: { opacity: 0.35 } } },
+      { type: 'value', scale: true, axisLabel: { fontSize: m ? 8 : 10 }, splitLine: { show: false } },
     ],
-    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 8 }],
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: m ? 14 : 16, bottom: 6 }],
     series: ss.map((x, i) => ({ ...x, yAxisIndex: i })),
   }, true)
 }
@@ -234,7 +247,9 @@ function renderCore() {
 function render() {
   if (!chartEl.value || !echarts || !expanded.value) return
   if (!chart) chart = echarts.init(chartEl.value)
-  const base = { textStyle: { fontFamily: 'inherit' }, grid: { left: 56, right: 18, top: 34, bottom: 48 } }
+  const m = isMobile.value
+  const base = { textStyle: { fontFamily: 'inherit' },
+                 grid: { left: m ? 42 : 56, right: m ? 12 : 18, top: 34, bottom: m ? 44 : 48 } }
   if (normalize.value) {
     const list = catSeries.value.map((s) => ({ s, pts: windowPoints(s) })).filter((x) => x.pts.length)
     if (!list.length) { chart.clear(); return }
@@ -242,12 +257,12 @@ function render() {
     const disc = new Map(dates.map((d, i) => [d, i]))
     chart.setOption({
       ...base,
-      title: { text: `${curCat.value} · 归一化对比(区间起点=100)`, left: 0, top: 0, textStyle: { fontSize: 13 } },
-      tooltip: { trigger: 'axis', confine: true, valueFormatter: (v) => (v == null ? '-' : (+v).toFixed(1)) },
-      legend: { top: 6, type: 'scroll', icon: 'roundRect', itemWidth: 14, itemHeight: 8, textStyle: { fontSize: 11 } },
-      xAxis: { type: 'category', data: dates, boundaryGap: false, axisLabel: { fontSize: 10 } },
-      yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 10 } },
-      dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 8 }],
+      title: { text: `${curCat.value} · 归一化对比(区间起点=100)`, left: 0, top: 0, textStyle: { fontSize: m ? 12 : 13 } },
+      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: m ? 10 : 12 }, valueFormatter: (v) => (v == null ? '-' : (+v).toFixed(1)) },
+      legend: { top: 6, type: 'scroll', icon: 'roundRect', itemWidth: m ? 10 : 14, itemHeight: 8, textStyle: { fontSize: m ? 9.5 : 11 } },
+      xAxis: { type: 'category', data: dates, boundaryGap: false, axisLabel: { fontSize: m ? 8 : 10 } },
+      yAxis: { type: 'value', scale: true, axisLabel: { fontSize: m ? 8 : 10 } },
+      dataZoom: [{ type: 'inside' }, { type: 'slider', height: m ? 14 : 16, bottom: 6 }],
       series: list.map(({ s, pts }) => {
         const v0 = pts[0][1]
         return {
@@ -263,11 +278,11 @@ function render() {
     const pts = windowPoints(s)
     chart.setOption({
       ...base,
-      title: { text: `${s.name}(${s.unit || ''}) · ${s.source || ''}`, left: 0, top: 0, textStyle: { fontSize: 13 } },
-      tooltip: { trigger: 'axis', confine: true },
-      xAxis: { type: 'category', data: pts.map((p) => p[0]), boundaryGap: false, axisLabel: { fontSize: 10 } },
-      yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 10 } },
-      dataZoom: [{ type: 'inside' }, { type: 'slider', height: 16, bottom: 8 }],
+      title: { text: `${s.name}(${s.unit || ''}) · ${s.source || ''}`, left: 0, top: 0, textStyle: { fontSize: m ? 11 : 13 } },
+      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: m ? 10 : 12 } },
+      xAxis: { type: 'category', data: pts.map((p) => p[0]), boundaryGap: false, axisLabel: { fontSize: m ? 8 : 10 } },
+      yAxis: { type: 'value', scale: true, axisLabel: { fontSize: m ? 8 : 10 } },
+      dataZoom: [{ type: 'inside' }, { type: 'slider', height: m ? 14 : 16, bottom: 6 }],
       series: [{ name: s.label, type: 'line', showSymbol: false,
                  lineStyle: { width: 1.6, color: '#2d6cdf' }, itemStyle: { color: '#2d6cdf' },
                  areaStyle: { opacity: 0.06, color: '#2d6cdf' },
@@ -279,10 +294,12 @@ function render() {
 watch(range, () => nextTick(() => { renderCore(); render() }))
 watch([curCat, curCode, normalize], () => nextTick(render))
 watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize() }) })
+// 端切换(旋转屏/拖窗口):图参数随端重渲染,尺寸由 onResize 兜
+watch(isMobile, () => nextTick(() => { renderCore(); render() }))
 </script>
 
 <template>
-  <div class="cmd">
+  <div class="cmd" :class="{ m: isMobile }">
     <div v-if="error" class="err">加载失败:{{ error }}<template v-if="loading"> …重试中</template></div>
     <div v-else-if="!data" class="empty">数据加载中…</div>
 
@@ -300,16 +317,6 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
           <h3>{{ meta.title }}</h3>
           <span class="sub">数据截至 {{ data.updated_at }} · 免费源 · 研究看板,非投资建议</span>
           <span class="tools">
-            <span class="seg">
-              <button type="button" class="seg-btn" :class="{ on: cur === 'gold' }" @click="switchCmd('gold')">黄金</button>
-              <button type="button" class="seg-btn" :class="{ on: cur === 'silver' }" @click="switchCmd('silver')">白银</button>
-              <button type="button" class="seg-btn" :class="{ on: cur === 'copper' }" @click="switchCmd('copper')">铜</button>
-              <button type="button" class="seg-btn" :class="{ on: cur === 'aluminum' }" @click="switchCmd('aluminum')">铝</button>
-              <button type="button" class="seg-btn" :class="{ on: cur === 'lithium' }" @click="switchCmd('lithium')">碳酸锂</button>
-              <button type="button" class="seg-btn" :class="{ on: cur === 'crudeoil' }" @click="switchCmd('crudeoil')">原油</button>
-              <button type="button" class="seg-btn" :class="{ on: cur === 'ferrous' }" @click="switchCmd('ferrous')">黑色系</button>
-              <button type="button" class="seg-btn" :class="{ on: cur === 'agri' }" @click="switchCmd('agri')">农产品</button>
-            </span>
             <select v-model="range">
               <option value="1y">近 1 年</option>
               <option value="3y">近 3 年</option>
@@ -317,6 +324,11 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
               <option value="all">全部</option>
             </select>
           </span>
+        </div>
+        <!-- 商品切换独立一行:八个商品在标题行放不下;移动端横向滚动不换行 -->
+        <div class="seg-bar">
+          <button v-for="c in CMDS" :key="c.key" type="button" class="seg-btn"
+                  :class="{ on: cur === c.key }" @click="switchCmd(c.key)">{{ c.name }}</button>
         </div>
         <p v-if="data.guide" class="guide">💡 {{ data.guide }}</p>
         <div class="kpis">
@@ -419,11 +431,35 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
   border-radius: 8px; font-size: 13px; line-height: 1.7; margin-bottom: 12px; }
 .up { color: var(--up, #dc2626); } .down { color: var(--down, #16a34a); }
 
-/* 商品切换分段钮 */
-.seg { display: inline-flex; border: 1px solid var(--line, #e5e9f2); border-radius: 8px; overflow: hidden; }
-.seg-btn { font-size: 12.5px; padding: 4px 14px; border: none; cursor: pointer;
-  background: var(--card, #fff); color: var(--txt-2, #4b5563); }
-.seg-btn.on { background: var(--accent, #2d6cdf); color: #fff; font-weight: 600; }
+/* 商品切换条:独立一行,桌面自动换行,移动端横向滚动 */
+.seg-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.seg-btn { font-size: 13px; padding: 5px 14px; border-radius: 999px; border: 1px solid var(--line, #e5e7eb);
+  background: var(--card, #fff); cursor: pointer; color: var(--txt-2, #4b5563); }
+.seg-btn.on { border-color: var(--accent, #2d6cdf); color: #fff; background: var(--accent, #2d6cdf); font-weight: 600; }
+
+/* ---- 移动端(≤640px,isMobile 注入 .m 类;桌面注入同名 class 可直接验证) ---- */
+.m .card { padding: 10px 12px; border-radius: 10px; }
+.m .card h3 { font-size: 14px; }
+.m .title-row { align-items: flex-start; }
+.m .title-row .sub { font-size: 11px; margin-left: 0; width: 100%; order: 3; }
+.m .title-row .tools { margin-left: 0; }
+.m .seg-bar { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; margin-bottom: 10px; }
+.m .seg-bar::-webkit-scrollbar { display: none; }
+.m .seg-btn { flex: 0 0 auto; padding: 4px 12px; font-size: 12.5px; white-space: nowrap; }
+.m .guide { font-size: 12px; padding: 7px 10px; line-height: 1.7; }
+.m .kpis { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.m .kpi { padding: 10px 11px; }
+.m .k-val { font-size: clamp(17px, 5.6vw, 21px); margin: 4px 0 3px; }
+.m .k-row { font-size: 11px; }
+.m .k-desc { font-size: 11px; }
+.m .pbar { width: 38px; }
+.m .tip { font-size: 11px; line-height: 1.6; }
+.m .fold-btn { font-size: 12px; padding: 8px 0; }
+.m .tab { font-size: 12px; padding: 5px 10px; }
+.m .ind-rows { grid-template-columns: 1fr; }
+.m .foot { font-size: 11px; }
+.m .stale-warn { font-size: 12px; }
 
 /* 四件套:更少更大,一眼扫完 */
 .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
@@ -480,9 +516,5 @@ watch(expanded, (v) => { if (v) nextTick(() => { render(); chart && chart.resize
 .i-foot { font-size: 10.5px; color: var(--sub, #9ca3af); margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .foot { line-height: 1.8; padding: 8px 4px 0; }
-
-@media (max-width: 640px) {
-  .kpis { grid-template-columns: repeat(2, 1fr); }
-  .tools { margin-left: 0; }
-}
+/* 移动规则统一走 .m 类(见上),不再用 @media——断点由 useMediaQuery(640px) 单点维护 */
 </style>
