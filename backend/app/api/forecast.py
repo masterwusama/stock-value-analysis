@@ -133,6 +133,161 @@ def _spread_series(a_pts, b_pts):
     return [[d, round(v - mb[d], 2)] for d, v in a_pts if d in mb]
 
 
+def _dyn_price(stats, days_gone, days_total, scenario_pct=0.0):
+    """动态加权预估价:QTD已实现均值×已过天数权重 + 最新价×(1+情景)×剩余权重。"""
+    if not stats or stats.get("qtd") is None:
+        return None
+    w = min(1.0, max(0.0, days_gone / days_total))
+    return stats["qtd"] * w + stats["latest"] * (1 + scenario_pct) * (1 - w)
+
+
+def _q4_window(today=None):
+    """Q4 已过/总天数(自然日,10-01~12-31)。"""
+    today = today or dt.date.today()
+    q_start, q_end = dt.date(today.year, 10, 1), dt.date(today.year, 12, 31)
+    if today < q_start:
+        return 0, (q_end - q_start).days + 1
+    return (today - q_start).days + 1, (q_end - q_start).days + 1
+
+
+SCN = ("low", "base", "high")
+
+
+def _model_projection(t, cmd_cache):
+    """增量桥模型:Q4E 与 FY2027E 三情景。结构化假设在 targets.json model 块,
+    价格侧动态(库内序列),输出 营收/毛利率/归母/扣非 区间。"""
+    m = t.get("model")
+    if not m:
+        return None
+    conduit = m.get("conduit", 0.7)
+    days_gone, days_total = _q4_window()
+    out = {"method": m.get("method"), "conduit": conduit,
+           "conduit_note": m.get("conduit_note"),
+           "q4_window": {"days_gone": days_gone, "days_total": days_total},
+           "q4": None, "fy26": None, "fy27": None, "assumptions": []}
+    q4m = m.get("q4_2026") or {}
+    base = q4m.get("baseline") or {}
+    price_scn = q4m.get("price_scenario_pct") or [-0.05, 0.0, 0.03]
+
+    # —— 紫金式:增量桥(分部 Δ毛利 = (Δ价−Δ成本)×情景量) ——
+    if any(s.get("price_code") for s in q4m.get("segments", [])):
+        rows, deltas = [], [0.0, 0.0, 0.0]
+        for s in q4m.get("segments", []):
+            if not s.get("price_code"):
+                static = s.get("static_margin_change_yi") or [0, 0, 0]
+                deltas = [d + x for d, x in zip(deltas, static)]
+                continue
+            pts = cmd_cache.get(s["price_code"]) or []
+            stats = _qtd_stats(pts) if pts else {}
+            p3 = stats.get("prev_q")
+            vols = s.get("vol_scenarios") or {}
+            c3, cq = s.get("q3_cost"), 1 + (s.get("cost_qoq") or 0)
+            mult = s.get("mult", 1)
+            row = {"product": s["product"], "p_q3": p3, "p_q4_dyn": None,
+                   "vols": vols, "vol_note": s.get("vol_note")}
+            seg_d = [0.0, 0.0, 0.0]
+            for i, scn in enumerate(SCN):
+                v = vols.get(scn if scn != "high" else "high") or vols.get("base")
+                p4 = _dyn_price(stats, days_gone, days_total, price_scn[i])
+                if vols.get("guide") and scn == "high":
+                    v = vols["guide"]
+                if p3 is None or p4 is None or v is None or c3 is None:
+                    continue
+                d = (p4 - p3 - c3 * (cq - 1)) * v * mult * conduit / 1e8
+                seg_d[i] += d
+                if scn == "base":
+                    row["p_q4_dyn"] = round(p4, 1)
+            deltas = [d + x for d, x in zip(deltas, seg_d)]
+            row["delta_yi"] = [round(x, 1) for x in seg_d]
+            rows.append(row)
+        imp = (q4m.get("other_lines") or {}).get("impairment_yi") or [0, 0, 0]
+        nonrec_q = base.get("attributable_yi", 0) - base.get("non_gaap_yi", 0)
+        proj = []
+        for i, scn in enumerate(SCN):
+            att = base["attributable_yi"] + deltas[i] + imp[i]
+            proj.append({"scenario": scn,
+                         "attributable_yi": round(att, 1),
+                         "non_gaap_yi": round(att - nonrec_q, 1)})
+        out["q4"] = {"mode": "增量桥", "segments": rows,
+                     "impairment_yi": imp,
+                     "note": (q4m.get("other_lines") or {}).get("impairment_note"),
+                     "proj": proj}
+        if base.get("ytd_attributable_yi"):
+            out["fy26"] = {"scenario": SCN,
+                           "attributable_yi": [round(base["ytd_attributable_yi"] + p["attributable_yi"], 0) for p in proj],
+                           "non_gaap_yi": [round(base.get("ytd_non_gaap_yi", 0) + p["non_gaap_yi"], 0) for p in proj]}
+        # FY27: 量增×当前单位毛利×传导 ± 价格情景
+        f27 = m.get("fy_2027") or {}
+        segs27, growth = f27.get("segments", []), [0.0, 0.0, 0.0]
+        for s in segs27:
+            v26 = s.get("vol_2026e")
+            v27 = s.get("vol_2027") or [v26, v26, v26]
+            pc = next((x for x in q4m.get("segments", []) if x.get("product") == s["product"]), None)
+            if pc and v26:
+                pts = cmd_cache.get(pc["price_code"]) or []
+                stats = _qtd_stats(pts) if pts else {}
+                p = stats.get("latest")
+                c27 = pc.get("q3_cost", 0) * (1 + (f27.get("cost_escalation") or 0))
+                mult = pc.get("mult", 1)
+                for i in range(3):
+                    growth[i] += ((v27[i] - v26) * (p - c27) * mult * conduit / 1e8
+                                  + v26 * (p * (f27.get("price_scenario_pct") or [0, 0, 0])[i]) * mult * conduit / 1e8)
+            elif s.get("delta_margin_yi"):
+                growth = [g + x * conduit for g, x in zip(growth, s["delta_margin_yi"])]
+        fy26_mid = out["fy26"]["attributable_yi"][1] if out.get("fy26") else None
+        if fy26_mid:
+            out["fy27"] = {"attributable_yi": [round(fy26_mid + g, 0) for g in growth],
+                           "growth_yi": [round(g, 0) for g in growth],
+                           "note": f27.get("note")}
+        return out
+
+    # —— 广信式:分部收入×毛利率直接重构(Q3公告给了分部量价) ——
+    seg_rows, gross_all, rev_all = [], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
+    for s in q4m.get("segments", []):
+        gm_s = s.get("q4_gm_scenarios_pct") or [s.get("q3_gm_pct")] * 3
+        rev_s = s.get("q4_rev_scenarios_yi") or [s.get("q3_rev_yi")] * 3
+        for i in range(3):
+            gross_all[i] += rev_s[i] * gm_s[i] / 100
+            rev_all[i] += rev_s[i]
+        seg_rows.append({"product": s["product"], "q3_rev_yi": s.get("q3_rev_yi"),
+                         "q3_gm_pct": s.get("q3_gm_pct"),
+                         "q4_rev_yi": rev_s, "q4_gm_pct": gm_s, "note": s.get("note")})
+    opex = q4m.get("opex_q4_yi") or [-1.4, -1.4, -1.4]
+    nop = q4m.get("non_op") or {}
+    wealth = nop.get("wealth_yi") or [1.4, 1.4, 1.4]
+    comp = nop.get("compensation_yi") or [0, 0, 0]
+    subs = nop.get("subsidy_yi") or [0.1, 0.1, 0.1]
+    proj = []
+    for i, scn in enumerate(SCN):
+        op = gross_all[i] + opex[i]
+        non_gaap = op * 0.85  # 税15%
+        att = non_gaap + wealth[i] + comp[i] + subs[i]
+        proj.append({"scenario": scn,
+                     "revenue_yi": round(rev_all[i], 2),
+                     "gross_margin_pct": round(gross_all[i] / rev_all[i] * 100, 1) if rev_all[i] else None,
+                     "non_gaap_yi": round(non_gaap, 2),
+                     "attributable_yi": round(att, 2)})
+    out["q4"] = {"mode": "分部重构", "segments": seg_rows,
+                 "opex_yi": opex, "opex_note": q4m.get("opex_note"),
+                 "non_op": nop, "proj": proj}
+    if base.get("ytd_attributable_yi") is not None:
+        out["fy26"] = {
+            "attributable_yi": [round(base["ytd_attributable_yi"] + p["attributable_yi"], 2) for p in proj],
+            "non_gaap_yi": [round(base.get("ytd_non_gaap_yi", 0) + p["non_gaap_yi"], 2) for p in proj],
+            "revenue_yi": [round(base.get("ytd_revenue_yi", 0) + p["revenue_yi"], 1) for p in proj]}
+    f27 = m.get("fy_2027") or {}
+    if f27.get("items"):
+        adds = [0.0, 0.0, 0.0]
+        for it in f27["items"]:
+            c = it.get("contrib_yi") or [0, 0, 0]
+            adds = [a + x for a, x in zip(adds, c)]
+            out["assumptions"].append({"name": it["name"], "contrib_yi": c, "driver": it.get("driver")})
+        fy26_mid = out["fy26"]["non_gaap_yi"][1] if out.get("fy26") else 0
+        out["fy27"] = {"non_gaap_yi": [round(fy26_mid + a, 2) for a in adds],
+                       "crosscheck": f27.get("crosscheck")}
+    return out
+
+
 def _target_detail(db, t, cmd_cache, agro_cache):
     """单标的合成:分部行(量/价/成本/价差/敏感度)+指引完成度+观察哨。"""
     segs_out = []
@@ -208,6 +363,7 @@ def _target_detail(db, t, cmd_cache, agro_cache):
         "equity_notes": t.get("equity_notes"),
         "watchlist": t.get("watchlist") or [],
         "segments": segs_out,
+        "model": _model_projection(t, cmd_cache),
     }
 
 
