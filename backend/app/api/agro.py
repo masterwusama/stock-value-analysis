@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""农价/EDB 接口:结构与原 agro-price/data/{products,edb}.json 对齐。"""
+"""农化制品价格接口:结构与 agro-price/data/products.json 对齐。
+
+2026-10-27 起模块聚焦农化制品:行业 EDB 五板块(电解铝/航运/轮胎/地产/钢铁)整体
+移除(视图/采集链/调度),/edb 端点同步下线;edb_indicator/edb_value 两表与模型
+保留为历史数据存档,不再有写入方。
+"""
 import datetime as dt
 from collections import defaultdict
 
@@ -8,12 +13,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import AgroPrice, AgroProduct, EdbIndicator, EdbValue
+from app.models import AgroPrice, AgroProduct
 
 router = APIRouter(prefix="/api/agro", tags=["agro"])
-
-# edb_indicator.freq(枚举) → 原 edb.json 中文值
-_FREQ_BACK = {"day": "日", "week": "周", "month": "月"}
 
 # 断档阈值，与 collector/agro-price/scripts/fetch_prices.py 的 STALE_MAX_DAYS 同值（那边是告警
 # 口径的唯一权威）。两个目录不同包、agro-price 带连字符不能 import，只能靠注释互指；改一处
@@ -60,53 +62,4 @@ def agro_products(db: Session = Depends(get_session)):
     return {
         "updated_at": updated.isoformat() if updated else None,
         "products": items,
-    }
-
-
-@router.get("/edb")
-def edb_indicators(db: Session = Depends(get_session)):
-    """EDB 宏观行业量价(同 edb.json:categories→indicators→points;2026-10-02 起免费源采集)。
-
-    原始展示顺序由导入时记录的 extra.cat_idx / ind_idx 还原。
-    """
-    inds = db.execute(select(EdbIndicator)).scalars().all()
-    pts = defaultdict(list)
-    for code, d, v in db.execute(
-        select(EdbValue.edb_code, EdbValue.data_date, EdbValue.val).order_by(EdbValue.data_date)
-    ):
-        pts[code].append([d.isoformat(), _f(v)])
-
-    cats: dict[str, dict] = {}
-    for ind in inds:
-        extra = ind.extra or {}
-        cat = cats.setdefault(ind.category, {
-            "id": ind.category, "name": extra.get("cat_name") or ind.category,
-            "_idx": extra.get("cat_idx"), "indicators": [],
-        })
-        cat["indicators"].append({
-            "code": ind.edb_code, "name": extra.get("name"), "label": ind.name,
-            "unit": ind.unit, "freq": _FREQ_BACK.get(ind.freq, ind.freq),
-            "source": extra.get("source"), "group": ind.display_group,
-            "_idx": extra.get("ind_idx"), "points": pts.get(ind.edb_code, []),
-        })
-
-    def _key(x):
-        return (x.get("_idx") is None, x.get("_idx") or 0)
-
-    for cat in cats.values():
-        cat["indicators"].sort(key=_key)
-        for i in cat["indicators"]:
-            i.pop("_idx", None)
-    ordered = sorted(cats.values(), key=_key)
-    for cat in ordered:
-        cat.pop("_idx", None)
-
-    begin, end = db.execute(
-        select(func.min(EdbValue.data_date), func.max(EdbValue.data_date))
-    ).one()
-    return {
-        "updated_at": end.isoformat() if end else None,
-        "range": {"begin": begin.isoformat() if begin else None,
-                  "end": end.isoformat() if end else None},
-        "categories": ordered,
     }

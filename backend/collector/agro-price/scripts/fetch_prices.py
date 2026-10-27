@@ -1,18 +1,27 @@
 # -*- coding: utf-8 -*-
 """
-农化制品价格跟踪 — 数据抓取脚本（仅标准库，供 GitHub Actions 定时运行）
+农化制品价格跟踪 — 数据抓取脚本（仅标准库，供调度自动运行）
 
 数据源（均已实测可直抓）：
-  1. 中农立华原药价格指数（www.sino-agri-sal.com）——原药主序列
-     - 列表页 pnlist.php?cid=28&page=N（原药价格指数周报，2023.07 起含品种报价）
-       pnlist.php?cid=29&page=N（原药市场行情周报，2023.12~2026.07 持续更新）
-     - 正文格式：`多菌灵原药报价3.6万元/吨`、`95%含量报2.7万元/吨`（草甘膦特殊）
+  1. 中农立华原药价格指数周报 ——原药主序列，2026-10-27 起双入口：
+     a. 官网新站 www.sino-agri-sal.com：老 PHP 站(pnlist/pnshow) 2026-09 起整体下线
+        (列表 500/文章 500/首页 403)。新站列表页 /yyjgzs 服务端只渲染最新 3 期，
+        文章页 /newsinfo/{id}.html 可直抓，正文格式与老站一致(正则不变)；页内
+        w-next 链(更早一期)可回溯但 20260906 期起迁移断链。
+     b. 农资与市场 www.enongzi.com 全文转载(比官网新站更及时更全，2025-01 起)：
+        专题「农药价格行情」/topic/details/{uuid}/{page} 服务端渲染，每页过滤标题
+        含「中农立华原药市场行情」的文章。增量默认翻前 3 页；--backfill-enongzi
+        全页回填。两源同口径(都是周报正文)，统一记 source='sino-agri'。
   2. 生意社（www.100ppi.com）——中间体主序列 + 原药历史填充
      - news/detail-*.html 报价动态文章（多交易商报价，按交易商分组取主序列）
      - mprice/plist-1-{商品ID}-{页}.html 最新报价表格（含报价类型：市场价/出厂价）
   3. 3456.tv（火爆农资招商网）行情文章（2022~2025 已停更，仅用于历史回填）
 
 输出：data/products.json（增量合并，按品种、日期去重）
+
+用法：
+    python fetch_prices.py                    # 常规增量(官网3期+enongzi前3页+生意社)
+    python fetch_prices.py --backfill-enongzi # 全页回填 enongzi 周报史(2025-01起)
 """
 import json
 import os
@@ -23,6 +32,7 @@ import time
 import urllib.request
 import ssl
 from collections import Counter
+from html import unescape as _unescape
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_FILE = os.path.join(BASE_DIR, 'data', 'products.json')
@@ -64,6 +74,20 @@ PRODUCTS = [
         'sunsirs_seed': 'https://www.100ppi.com/news/detail-20210730-1866835.html',
     },
     {
+        # 广信股份 2026H1 转固新线(预算2.17亿)——2026-10 接入;周报自2025年初起持续报价
+        'id': 'indoxacarb', 'name': '茚虫威', 'category': '杀虫剂', 'spec': '原药(折百)',
+        'primary': 'sino-agri',
+        'sunsirs_seed': None,
+    },
+    {
+        # 广信股份 2026H1 转固新线(预算4.2亿)。同篇常现双价:「厂家报价28.3万」(疑高规格/
+        # 口径另列)与「报价14.6万」(与市场区间一致的常规规格)——take_last 取后者
+        'id': 'oxadiazon', 'name': '噁草酮', 'category': '除草剂', 'spec': '原药',
+        'primary': 'sino-agri',
+        'take_last': True,
+        'sunsirs_seed': None,
+    },
+    {
         'id': 'o-phenylenediamine', 'name': '邻苯二胺', 'category': '中间体', 'spec': '优等品',
         'primary': 'sunsirs',
         'sunsirs_seed': 'https://www.100ppi.com/news/detail-20260818-6084138.html',
@@ -81,10 +105,11 @@ PRODUCTS = [
     },
 ]
 
-# 中农立华列表页：cid=(28 原药价格指数, 29 原药市场行情)，每页 30 篇
-# 品种报价自 2023 年中起才出现在正文：cid=28 仅第 1 页（2023.01~2023.11）、
-# cid=29 前 4 页（2023.12~2026.07）
-SINO_AGRI_PAGES = [(28, 1), (29, 4)]
+# 官网新站列表页(服务端只渲染最新3期) + enongzi 转载专题(2025-01 起全)
+SINO_OFFICIAL_LIST = 'https://www.sino-agri-sal.com/yyjgzs'
+ENONGZI_TOPIC = 'https://www.enongzi.com/topic/details/8057273d-f247-425c-96d9-f45884b0b1db/%d'
+ENONGZI_DAILY_PAGES = 3    # 增量默认翻页数(约覆盖近 5~6 周周报)
+ENONGZI_MAX_PAGES = 40     # 回填上限(专题实测 29 页,留余量)
 
 # 生意社 detail 栏目翻页上限（增量模式：历史数据保留在仓库内 products.json 中）
 SUNSIRS_MAX_PAGES = 5
@@ -147,21 +172,122 @@ def other_agro(between, name):
     return False
 
 
-def sino_agri_links(cid, max_page):
-    """抓列表页全部文章 URL（pnshow.php?cid=..&id=..）"""
-    urls = set()
-    for page in range(1, max_page + 1):
-        u = 'https://www.sino-agri-sal.com/pnlist.php?cid=%d&page=%d' % (cid, page)
-        html = fetch(u, referer='https://www.sino-agri-sal.com/listyyzs.php')
-        found = set(re.findall(r'pnshow\.php\?cid=%d&id=\d+' % cid, html))
-        if not found:
+def official_new_links():
+    """官网新站：/yyjgzs 列表页(服务端只渲染最新 3 期) + 文章页 w-next 链回溯。
+
+    w-next=更早一期；20260906 期起迁移断链即停(更早历史走 enongzi)。
+    """
+    urls = []
+    html = fetch(SINO_OFFICIAL_LIST, referer='https://www.sino-agri-sal.com/')
+    for m in re.finditer(r'href="(/newsinfo/\d+\.html)', html):
+        u = 'https://www.sino-agri-sal.com' + m.group(1)
+        if u not in urls:
+            urls.append(u)
+    for _ in range(8):
+        m = re.search(r'href="(/newsinfo/\d+\.html)[^"]*"[^>]*class="w-next"', html)
+        if not m:
             break
-        urls |= {'https://www.sino-agri-sal.com/%s' % x for x in found}
+        u = 'https://www.sino-agri-sal.com' + m.group(1)
+        if u in urls:
+            break
+        urls.append(u)
+        try:
+            html = fetch(u, referer=SINO_OFFICIAL_LIST)
+        except Exception:  # noqa: BLE001 链断即止,已有 URL 照用
+            break
         time.sleep(SLEEP)
     return urls
 
 
-def parse_sino_agri_article(html, names):
+def enongzi_weekly_links(max_pages):
+    """农资与市场转载：专题页翻页收集「中农立华原药市场行情」文章。
+
+    返回 [(url, 数据日YYYY-MM-DD|None)]，数据日从转载标题里的期号取
+    (正文页的 8 位数字可能命中站内其他编号，标题最可靠)。页内混排大量日评，
+    按标题过滤；整页没有任何文章链接 = 专题末页。
+    """
+    out = []
+    for page in range(1, max_pages + 1):
+        try:
+            html = fetch(ENONGZI_TOPIC % page, referer='https://www.enongzi.com/')
+        except Exception as e:  # noqa: BLE001 单页失败不终止(专题页偶发 502)
+            print('  [warn] enongzi 专题第 %d 页失败: %r' % (page, e))
+            time.sleep(SLEEP)
+            continue
+        if '/news/details/' not in html:
+            break  # 末页(实测专题共 29 页)
+        for href, title in re.findall(
+                r'href="(/news/details/[0-9a-f-]+)"[^>]*>([^<]+)</a>', html):
+            t = _unescape(title)
+            if '中农立华原药市场行情' not in t:
+                continue
+            m = re.search(r'原药市场行情(\d{8})', t)
+            date = None
+            if m:
+                try:  # 期号必须是合法日期(2026-10 实测有标题粘连出 20251165 的坏串)
+                    import datetime as _dt
+                    s = m.group(1)
+                    date = '%s-%s-%s' % (s[:4], s[4:6], s[6:8])
+                    _dt.date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+                except ValueError:
+                    date = None
+            u = 'https://www.enongzi.com' + href
+            if not any(x[0] == u for x in out):
+                out.append((u, date))
+        time.sleep(SLEEP)
+    return out
+
+
+def fetch_sino_agri(product_names, take_last=(), backfill=False):
+    """抓中农立华周报（官网新站 + enongzi 转载双入口），返回 {品种名: [...]}"""
+    by_name = {n: [] for n in product_names}
+    articles = []  # (url, 日期提示或 None)
+    try:
+        articles += [(u, None) for u in official_new_links()]
+    except Exception as e:  # noqa: BLE001 单源降级
+        print('  [warn] 官网新站列表失败: %r' % e)
+    try:
+        articles += enongzi_weekly_links(ENONGZI_MAX_PAGES if backfill else ENONGZI_DAILY_PAGES)
+    except Exception as e:  # noqa: BLE001
+        print('  [warn] enongzi 专题抓取失败: %r' % e)
+    if not articles:
+        print('  [warn] 中农立华双入口都没拿到文章，本轮主序列靠库内旧点')
+        return by_name
+    for u, hint in sorted(articles):
+        try:
+            html = fetch(u)
+            r = parse_sino_agri_article(html, product_names, take_last)
+            if not r:
+                continue
+            if hint:
+                date = hint
+            elif 'enongzi.com' in u:
+                # enongzi 正文页的裸 8 位数字可能命中 _version=YYYYMMDDHHMMSS 等资源串
+                # (2026-10 实测),日期只认 <title> 里的期号;少数转载标题是中文日期式
+                # (「行情2024年10月20日」),一并支持
+                tm = re.search(r'<title>[^<]*原药市场行情(\d{8})', html)
+                if tm:
+                    s = tm.group(1)
+                    date = '%s-%s-%s' % (s[:4], s[4:6], s[6:8])
+                else:
+                    cm = re.search(
+                        r'<title>[^<]*原药市场行情(\d{4})年(\d{1,2})月(\d{1,2})日', html)
+                    date = ('%04d-%02d-%02d' % tuple(int(x) for x in cm.groups())
+                            if cm else None)
+            else:
+                date = sino_agri_article_date(html)
+            if not date:
+                continue
+            for name, price in r.items():
+                by_name[name].append(
+                    {'date': date, 'price': price, 'source': 'sino-agri', 'note': '中农立华'})
+            time.sleep(SLEEP)
+        except Exception as e:  # noqa: BLE001 单篇失败不终止
+            print('  [warn] 周报文章失败 %s: %r' % (u, e))
+    return by_name
+
+
+def parse_sino_agri_article(html, names, take_last=()):
     """解析一篇中农立华周报：返回 {品种名: 价格(元/吨)}
 
     正文格式（2023 年中起）：
@@ -172,8 +298,14 @@ def parse_sino_agri_article(html, names):
     "甘氨酸路线原药"是草甘膦工艺名，不视为其他品种）。
     报价动词变体（长模式在前）：`报价在4万元/吨` `价格报至8.8万元/吨`
     `价格报到4万元/吨` `市场报价 2.52万元/吨` `报到2.5万元/吨`
+    take_last 中的品种取全文最后一个匹配(噁草酮同篇双价:描述性厂家报价在前、
+    常规规格报价在后，取后者与市场区间一致)。
     """
     txt = strip_html(html)
+    # enongzi 转载排版会在数字内插空格(实测「95%含量报 2. 85万元/吨」),统一
+    # 压掉「数字. 数字」内的空格——不清洗时草甘膦 95% 专用式失配,通用式还会
+    # 跨段误配草铵膦报价(有 other_agro 兜底不污染,但整段丢失)
+    txt = re.sub(r'(\d)\.\s+(\d)', r'\1.\2', txt)
     verb = r'(?:价格报至|价格报到|价格报|报价在|报价|报到|报至|报)'
     result = {}
     for name in names:
@@ -183,10 +315,10 @@ def parse_sino_agri_article(html, names):
                 result[name] = float(m.group(2)) * 10000
                 continue
         pat = re.compile(re.escape(name) + r'原药(.{0,200}?)' + verb + r'\s*([\d.]+)\s*万元/吨')
-        for mm in pat.finditer(txt):
-            if not other_agro(mm.group(1), name):
-                result[name] = float(mm.group(2)) * 10000
-                break
+        hits = [mm for mm in pat.finditer(txt) if not other_agro(mm.group(1), name)]
+        if hits:
+            mm = hits[-1] if name in take_last else hits[0]
+            result[name] = float(mm.group(2)) * 10000
     return result
 
 
@@ -200,29 +332,6 @@ def sino_agri_article_date(html):
     if m:
         return '%s-%s-%s' % m.groups()
     return None
-
-
-def fetch_sino_agri(product_names):
-    """抓中农立华全部周报，返回 {品种名: [{date, price, source, note}...]}"""
-    by_name = {n: [] for n in product_names}
-    urls = set()
-    for cid, max_page in SINO_AGRI_PAGES:
-        try:
-            urls |= sino_agri_links(cid, max_page)
-        except Exception as e:  # noqa: BLE001
-            print('  [warn] 中农立华 cid=%d 列表抓取失败: %r' % (cid, e))
-    for u in sorted(urls):
-        try:
-            html = fetch(u, referer='https://www.sino-agri-sal.com/pnlist.php')
-            date = sino_agri_article_date(html)
-            r = parse_sino_agri_article(html, product_names)
-            for name, price in r.items():
-                by_name[name].append(
-                    {'date': date, 'price': price, 'source': 'sino-agri', 'note': '中农立华'})
-            time.sleep(SLEEP)
-        except Exception as e:  # noqa: BLE001
-            print('  [warn] 中农立华文章失败 %s: %r' % (u, e))
-    return by_name
 
 
 # ---------------- 生意社解析 ----------------
@@ -469,7 +578,19 @@ def merge_prices(existing, fresh, primary, exclude_sources=(), merge_all_traders
     all_p = (existing or []) + (fresh or [])
     main_src = 'sino-agri' if primary == 'sino-agri' else 'sunsirs'
     if primary == 'sino-agri':
-        main_items = [p for p in (fresh or []) if p.get('source') == main_src]
+        # 2026-10-27 起周报源只能增量覆盖(enongzi 转载 2025-01 起 + 官网新站最新 3 期),
+        # 不再是老站时代"每周全量重抓全部历史":本轮 fresh 覆盖到的日期以本轮为准,
+        # 没覆盖到的日期沿用 existing 同源点——2023-07~2024-12 的周报史只在库里,
+        # 老 PHP 站已整体下线不可重抓;不加这道保留,一轮网络抖动就会把两年历史洗掉
+        # (2026-10-24/25 两轮实测被洗,靠 git 恢复的教训,与 sunsirs 分支同款防线)。
+        fresh_items = [p for p in (fresh or []) if p.get('source') == main_src]
+        if fresh_items:
+            fresh_dates = {p['date'] for p in fresh_items}
+            existing_main = [p for p in (existing or [])
+                             if p.get('source') == main_src and p.get('date') not in fresh_dates]
+            main_items = fresh_items + existing_main
+        else:
+            main_items = [p for p in all_p if p.get('source') == main_src]
     else:
         # 主序列以本轮 fresh 为准（existing 存的已是聚合值，同一天再进来会让该日期样本
         # 翻倍计权），但 existing 只按「本轮没抓到这个日期」补回，不能按时间轴切一刀：
@@ -544,6 +665,13 @@ def audit_freshness(products):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--backfill-enongzi', action='store_true',
+                    help='全页翻 enongzi 专题回填周报史(2025-01 起,~90 篇);默认只翻前 %d 页'
+                         % ENONGZI_DAILY_PAGES)
+    args = ap.parse_args()
+
     old = {}
     reported = set()
     if os.path.exists(DATA_FILE):
@@ -562,7 +690,8 @@ def main():
         reported = set(old_data.get('stale_reported') or [])
 
     names = [p['name'] for p in PRODUCTS]
-    all_sino = fetch_sino_agri(names)
+    take_last = tuple(p['name'] for p in PRODUCTS if p.get('take_last'))
+    all_sino = fetch_sino_agri(names, take_last, backfill=args.backfill_enongzi)
     all_3456 = fetch_3456(names)
 
     result_products = []
@@ -595,7 +724,7 @@ def main():
             'prices': merged,
         })
 
-    cat_order = {'杀菌剂': 0, '除草剂': 1, '中间体': 2}
+    cat_order = {'杀菌剂': 0, '除草剂': 1, '杀虫剂': 2, '中间体': 3}
     result_products.sort(key=lambda x: (cat_order.get(x['category'], 9), x['name']))
 
     from datetime import datetime, timezone, timedelta

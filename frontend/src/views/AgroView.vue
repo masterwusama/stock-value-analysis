@@ -1,6 +1,8 @@
 <script setup>
-/* 农价/行业EDB量价页:DOM 骨架与原 agro-price/index.html 一致,
- * 渲染整体复用 legacy 链(agroLegacy.js + edbLegacy.js),数据源 /api/agro/*
+/* 农化制品价格页:DOM 骨架与原 agro-price/index.html 一致,
+ * 渲染复用 legacy 链(agroLegacy.js),数据源 /api/agro/products。
+ * 2026-10-27 起聚焦农化制品:行业 EDB 五板块(电解铝/航运/轮胎/地产/钢铁)
+ * 整体移除(视图/接口/采集链),中农立华周报双入口修复+茚虫威/噁草酮接入。
  */
 import { nextTick, onBeforeUnmount, onMounted } from 'vue'
 import { ensureEcharts } from '../lib/echartsLoader'
@@ -8,6 +10,7 @@ import { MOBILE_QUERY, useMediaQuery } from '../lib/useMediaQuery'
 import '../assets/agro.css'
 
 const isMobile = useMediaQuery(MOBILE_QUERY)
+
 let mods = null
 // 卸载竞态：onMounted 里两个 await import 期间切走路由时，onBeforeUnmount 见到的
 // mods 还是 null 会直接 return，随后迟到的 init() 却照常执行——resize 监听挂上后
@@ -19,15 +22,13 @@ onMounted(async () => {
   await nextTick()
   // echarts 后台加载（不阻塞骨架与数据请求）；本页图表主体是农化价格曲线，
   // legacy 渲染层读 window.echarts——ensureEcharts 完成前若已到画图步，等它
-  const [agro, edb] = await Promise.all([
+  const [agro] = await Promise.all([
     import('../lib/agroLegacy.js'),
-    import('../lib/edbLegacy.js'),
     ensureEcharts(),
   ])
   if (!alive) return
-  mods = { agro, edb }
-  agro.init() // 拉 /api/agro/products 渲染农化视图
-  edb.init()  // 绑定行业切换栏(EDB 数据懒加载)
+  mods = { agro }
+  agro.init() // 拉 /api/agro/products 渲染
 })
 
 onBeforeUnmount(() => {
@@ -35,32 +36,16 @@ onBeforeUnmount(() => {
   if (!mods) return
   const c = mods.agro.agroState.chart
   if (c) { try { c.dispose() } catch (e) { /* 已释放 */ } mods.agro.agroState.chart = null }
-  mods.edb.edbState.instances.forEach((x) => { try { x.dispose() } catch (e) { /* 已释放 */ } })
-  mods.edb.edbState.instances = []
-  // 光 dispose 不够：两个模块的 resize 监听还挂在 window 上，路由切走后
-  // 每次窗口变化都会去 resize 已释放的实例，反复来回切会越积越多
+  // 光 dispose 不够：resize 监听还挂在 window 上，路由切走后每次窗口变化都会
+  // 去 resize 已释放的实例，反复来回切会越积越多
   mods.agro.teardown?.()
-  mods.edb.teardown?.()
 })
 </script>
 
 <template>
   <div id="agro-app">
 
-    <!-- 行业切换栏 -->
-    <div class="edb-switch" id="edb-switch">
-      <div class="edb-segs">
-        <button class="edb-seg active" data-view="agro">农化制品</button>
-        <button class="edb-seg" data-view="alu">电解铝</button>
-        <button class="edb-seg" data-view="shipping">航运</button>
-        <button class="edb-seg" data-view="tire">轮胎橡胶</button>
-        <button class="edb-seg" data-view="realestate">地产链</button>
-        <button class="edb-seg" data-view="steel">钢铁</button>
-      </div>
-      <span class="edb-switch-note">行业 EDB 量价跟踪 · 免费源(新浪期货主力连续/东财宏观,周/月聚合)</span>
-    </div>
-
-    <!-- ========== 农化制品视图 ========== -->
+    <!-- 农化制品视图 -->
     <div id="agro-view">
       <div id="agro-loading" class="agro-hint">数据加载中...</div>
       <div id="agro-error" class="agro-hint" style="display:none"></div>
@@ -74,7 +59,7 @@ onBeforeUnmount(() => {
             <span class="agro-revenue-title">2025 年营收结构 · 主营产品价格跟踪</span>
           </div>
           <div class="agro-revenue-bar" id="agro-revenue-bar"></div>
-          <div class="agro-revenue-note">产品价格 → 出厂价/毛利率 → 业绩（年报口径：杀菌剂毛利率波动主要系多菌灵价格变动所致）</div>
+          <div class="agro-revenue-note">产品价格 → 出厂价/毛利率 → 业绩（年报口径：杀菌剂毛利率波动主要系多菌灵价格变动所致）。茚虫威/噁草酮为 2026H1 新投产线，周报自 2025 年初起有连续报价</div>
         </div>
 
         <!-- 分类筛选 -->
@@ -82,6 +67,7 @@ onBeforeUnmount(() => {
           <button class="agro-tab active" data-cat="全部">全部</button>
           <button class="agro-tab" data-cat="杀菌剂">杀菌剂</button>
           <button class="agro-tab" data-cat="除草剂">除草剂</button>
+          <button class="agro-tab" data-cat="杀虫剂">杀虫剂</button>
           <button class="agro-tab" data-cat="中间体">中间体</button>
         </div>
 
@@ -106,33 +92,6 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="agro-foot" id="agro-foot"></div>
-      </div>
-    </div>
-
-    <!-- ========== EDB 量价视图 ========== -->
-    <div id="edb-view" style="display:none">
-      <div id="edb-loading" class="agro-hint" style="display:none">EDB 数据加载中...</div>
-      <div id="edb-error" class="agro-hint" style="display:none"></div>
-
-      <div id="edb-body" style="display:none">
-        <div class="edb-cat-head" id="edb-cat-head"></div>
-
-        <!-- KPI 指标卡行 -->
-        <div class="edb-kpis" id="edb-kpis"></div>
-
-        <!-- 相对走势总览 -->
-        <div class="edb-panel">
-          <div class="edb-panel-head">
-            <span class="edb-panel-title">相对走势总览</span>
-            <span class="edb-panel-sub">各指标区间起点归一为 100，仅比较相对涨跌幅（单位不同不可直接比高低）</span>
-          </div>
-          <div id="edb-chart-overview" class="edb-chart" :style="{ height: isMobile ? '300px' : '420px' }"></div>
-        </div>
-
-        <!-- 多维度分类图表（动态生成） -->
-        <div id="edb-dim-charts"></div>
-
-        <div class="agro-foot" id="edb-foot"></div>
       </div>
     </div>
 

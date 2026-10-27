@@ -1,5 +1,5 @@
 {
- "updated_at": "2026-09-19T09:15:04+08:00",
+ "updated_at": "2026-10-27T16:27:11+08:00",
  "products": [
   {
    "id": "carbendazim",
@@ -39,7 +39,43 @@
      "note": "中农立华"
     },
     {
+     "date": "2023-12-24",
+     "price": 36000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-07",
+     "price": 35500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-14",
+     "price": 35500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-28",
+     "price": 35500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-18",
+     "price": 35500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-03-10",
+     "price": 35500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-17",
      "price": 35500.0,
      "source": "sino-agri",
      "note": "中农立华"
@@ -75,6 +111,12 @@
      "note": "中农立华"
     },
     {
+     "date": "2024-04-28",
+     "price": 34500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-05-05",
      "price": 34500.0,
      "source": "sino-agri",
@@ -93,6 +135,12 @@
      "note": "中农立华"
     },
     {
+     "date": "2024-05-26",
+     "price": 34500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-06-09",
      "price": 34500.0,
      "source": "sino-agri",
@@ -106,6 +154,18 @@
     },
     {
      "date": "2024-06-23",
+     "price": 34500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-30",
+     "price": 34500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-07",
      "price": 34500.0,
      "source": "sino-agri",
      "note": "中农立华"
@@ -130,6 +190,12 @@
     },
     {
      "date": "2024-08-04",
+     "price": 34500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-11",
      "price": 34500.0,
      "source": "sino-agri",
      "note": "中农立华"
@@ -711,55 +777,61 @@
      "note": "中农立华"
     },
     {
-     "date": "2026-09-01",
+     "date": "2026-09-06",
+     "price": 35000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-13",
+     "price": 35000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 35000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-27",
+     "price": 35000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-11",
+     "price": 35000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-18",
+     "price": 35000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-20",
      "price": 40000.0,
      "source": "sunsirs",
      "note": "苏州市森菲达化工有限公司"
     },
     {
-     "date": "2026-09-02",
+     "date": "2026-10-22",
      "price": 40000.0,
      "source": "sunsirs",
      "note": "苏州市森菲达化工有限公司"
     },
     {
-     "date": "2026-09-04",
+     "date": "2026-10-23",
      "price": 40000.0,
      "source": "sunsirs",
      "note": "苏州市森菲达化工有限公司"
     },
     {
-     "date": "2026-09-08",
-     "price": 40000.0,
-     "source": "sunsirs",
-     "note": "苏州市森菲达化工有限公司"
-    },
-    {
-     "date": "2026-09-09",
-     "price": 40000.0,
-     "source": "sunsirs",
-     "note": "苏州市森菲达化工有限公司"
-    },
-    {
-     "date": "2026-09-11",
-     "price": 40000.0,
-     "source": "sunsirs",
-     "note": "苏州市森菲达化工有限公司"
-    },
-    {
-     "date": "2026-09-15",
-     "price": 40000.0,
-     "source": "sunsirs",
-     "note": "苏州市森菲达化工有限公司"
-    },
-    {
-     "date": "2026-09-16",
-     "price": 40000.0,
-     "source": "sunsirs",
-     "note": "苏州市森菲达化工有限公司"
-    },
-    {
-     "date": "2026-09-18",
+     "date": "2026-10-27",
      "price": 40000.0,
      "source": "sunsirs",
      "note": "苏州市森菲达化工有限公司"
@@ -810,7 +882,55 @@
      "note": "中农立华"
     },
     {
+     "date": "2023-12-24",
+     "price": 39000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-07",
+     "price": 39000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-14",
+     "price": 39000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-28",
+     "price": 39000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-18",
+     "price": 39000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-25",
+     "price": 39000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-03",
+     "price": 39000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-03-10",
+     "price": 38000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-17",
      "price": 38000.0,
      "source": "sino-agri",
      "note": "中农立华"
@@ -846,6 +966,12 @@
      "note": "中农立华"
     },
     {
+     "date": "2024-04-28",
+     "price": 38000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-05-05",
      "price": 38000.0,
      "source": "sino-agri",
@@ -864,6 +990,12 @@
      "note": "中农立华"
     },
     {
+     "date": "2024-05-26",
+     "price": 38000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-06-09",
      "price": 38000.0,
      "source": "sino-agri",
@@ -877,6 +1009,18 @@
     },
     {
      "date": "2024-06-23",
+     "price": 38000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-30",
+     "price": 38000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-07",
      "price": 38000.0,
      "source": "sino-agri",
      "note": "中农立华"
@@ -901,6 +1045,12 @@
     },
     {
      "date": "2024-08-04",
+     "price": 38000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-11",
      "price": 38000.0,
      "source": "sino-agri",
      "note": "中农立华"
@@ -1308,6 +1458,12 @@
      "note": "中农立华"
     },
     {
+     "date": "2026-01-18",
+     "price": 30000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2026-01-25",
      "price": 30000.0,
      "source": "sino-agri",
@@ -1478,6 +1634,591 @@
     {
      "date": "2026-08-30",
      "price": 32000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-06",
+     "price": 30000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-13",
+     "price": 32000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 32000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-27",
+     "price": 32000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-11",
+     "price": 32000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-18",
+     "price": 32000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    }
+   ]
+  },
+  {
+   "id": "oxadiazon",
+   "name": "噁草酮",
+   "category": "除草剂",
+   "spec": "原药",
+   "unit": "元/吨",
+   "prices": [
+    {
+     "date": "2023-12-24",
+     "price": 170000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-07",
+     "price": 170000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-14",
+     "price": 170000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-21",
+     "price": 170000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-28",
+     "price": 170000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-18",
+     "price": 170000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-25",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-03",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-10",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-17",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-24",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-31",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-04-14",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-04-21",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-04-28",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-05-05",
+     "price": 165000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-05-12",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-05-19",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-05-26",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-09",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-16",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-23",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-30",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-07",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-14",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-21",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-28",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-04",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-11",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-18",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-25",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-09-01",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-09-08",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-09-15",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-10-13",
+     "price": 160000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-10-20",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-12-01",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-01-05",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-01-12",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-01-19",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-03-30",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-04-06",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-04-20",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-04-27",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-05-04",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-05-11",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-05-25",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-06-01",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-06-08",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-06-15",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-06-22",
+     "price": 310000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-07-20",
+     "price": 303000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-07-27",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-03",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-10",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-17",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-24",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-31",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-09-14",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-09-21",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-10-12",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-10-19",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-10-26",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-11-02",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-11-09",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-11-23",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-12-07",
+     "price": 305000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-12-14",
+     "price": 300000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-12-28",
+     "price": 150000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-04",
+     "price": 150000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-11",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-18",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-25",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-02-01",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-02-08",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-03-01",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-03-22",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-06-07",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-06-14",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-07-19",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-07-26",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-08-09",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-08-16",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-08-30",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-06",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-13",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 148000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-27",
+     "price": 146000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-11",
+     "price": 146000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-18",
+     "price": 146000.0,
      "source": "sino-agri",
      "note": "中农立华"
     }
@@ -2515,6 +3256,114 @@
      "price": 55000.0,
      "source": "sunsirs",
      "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-09-19",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-09-22",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-09-28",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-09-29",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-06",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-08",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-09",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-10",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-14",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-15",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-16",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-17",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-19",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-20",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-23",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-24",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
+    },
+    {
+     "date": "2026-10-27",
+     "price": 55000.0,
+     "source": "sunsirs",
+     "note": "佳恩化学（山东）有限公司"
     }
    ]
   },
@@ -2598,8 +3447,56 @@
      "note": "中农立华"
     },
     {
+     "date": "2023-12-24",
+     "price": 26000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-07",
+     "price": 26000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-14",
+     "price": 26000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-21",
+     "price": 26000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-28",
+     "price": 26000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-18",
+     "price": 25800.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-25",
+     "price": 25800.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-03-10",
      "price": 25600.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-17",
+     "price": 25500.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -2634,6 +3531,12 @@
      "note": "中农立华"
     },
     {
+     "date": "2024-04-28",
+     "price": 26700.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-05-05",
      "price": 26700.0,
      "source": "sino-agri",
@@ -2652,6 +3555,12 @@
      "note": "中农立华"
     },
     {
+     "date": "2024-05-26",
+     "price": 26200.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
      "date": "2024-06-09",
      "price": 26000.0,
      "source": "sino-agri",
@@ -2666,6 +3575,18 @@
     {
      "date": "2024-06-23",
      "price": 25500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-30",
+     "price": 25200.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-07",
+     "price": 25000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -2690,6 +3611,12 @@
     {
      "date": "2024-08-04",
      "price": 25500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-11",
+     "price": 25000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -2983,13 +3910,13 @@
     },
     {
      "date": "2025-08-24",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
     {
      "date": "2025-08-31",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -3001,13 +3928,13 @@
     },
     {
      "date": "2025-09-14",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
     {
      "date": "2025-09-21",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -3025,31 +3952,31 @@
     },
     {
      "date": "2025-10-12",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
     {
      "date": "2025-10-19",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
     {
      "date": "2025-10-26",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
     {
      "date": "2025-11-02",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
     {
      "date": "2025-11-09",
-     "price": 27500.0,
+     "price": 28000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -3061,7 +3988,7 @@
     },
     {
      "date": "2025-11-23",
-     "price": 27000.0,
+     "price": 27500.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -3073,13 +4000,13 @@
     },
     {
      "date": "2025-12-07",
-     "price": 27000.0,
+     "price": 27500.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
     {
      "date": "2025-12-14",
-     "price": 26000.0,
+     "price": 26500.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -3103,6 +4030,12 @@
     },
     {
      "date": "2026-01-11",
+     "price": 24000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-18",
      "price": 24000.0,
      "source": "sino-agri",
      "note": "中农立华"
@@ -3145,7 +4078,7 @@
     },
     {
      "date": "2026-03-22",
-     "price": 29500.0,
+     "price": 30000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -3241,13 +4174,13 @@
     },
     {
      "date": "2026-07-19",
-     "price": 26500.0,
+     "price": 27000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
     {
      "date": "2026-07-26",
-     "price": 26500.0,
+     "price": 27000.0,
      "source": "sino-agri",
      "note": "中农立华"
     },
@@ -3278,6 +4211,483 @@
     {
      "date": "2026-08-30",
      "price": 26000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-06",
+     "price": 26000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-13",
+     "price": 26000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 28500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-27",
+     "price": 28500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-11",
+     "price": 28500.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    }
+   ]
+  },
+  {
+   "id": "indoxacarb",
+   "name": "茚虫威",
+   "category": "杀虫剂",
+   "spec": "原药(折百)",
+   "unit": "元/吨",
+   "prices": [
+    {
+     "date": "2023-12-24",
+     "price": 900000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-07",
+     "price": 900000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-14",
+     "price": 900000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-21",
+     "price": 900000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-01-28",
+     "price": 900000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-18",
+     "price": 900000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-02-25",
+     "price": 920000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-03",
+     "price": 920000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-17",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-24",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-03-31",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-04-14",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-04-28",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-05-05",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-05-12",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-05-19",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-05-26",
+     "price": 950000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-09",
+     "price": 940000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-16",
+     "price": 940000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-23",
+     "price": 940000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-06-30",
+     "price": 940000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-07",
+     "price": 940000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-14",
+     "price": 940000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-21",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-07-28",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-04",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-11",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-18",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-08-25",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-09-01",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-09-08",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-09-15",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-10-13",
+     "price": 930000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-10-20",
+     "price": 920000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2024-12-01",
+     "price": 920000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-01-05",
+     "price": 920000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-01-12",
+     "price": 900000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-01-19",
+     "price": 900000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-03-30",
+     "price": 850000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-04-20",
+     "price": 850000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-05-04",
+     "price": 800000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-06-01",
+     "price": 800000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-06-15",
+     "price": 750000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-07-20",
+     "price": 680000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-07-27",
+     "price": 680000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-03",
+     "price": 650000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-10",
+     "price": 650000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-17",
+     "price": 650000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-24",
+     "price": 650000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-08-31",
+     "price": 650000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-09-14",
+     "price": 620000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2025-12-28",
+     "price": 530000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-04",
+     "price": 530000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-11",
+     "price": 530000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-18",
+     "price": 450000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-01-25",
+     "price": 500000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-02-01",
+     "price": 500000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-02-08",
+     "price": 500000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-03-01",
+     "price": 500000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-03-22",
+     "price": 500000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-06-14",
+     "price": 500000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-06-28",
+     "price": 470000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-07-19",
+     "price": 410000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-07-26",
+     "price": 400000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-08-09",
+     "price": 400000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-08-16",
+     "price": 400000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-08-30",
+     "price": 400000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-06",
+     "price": 400000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-13",
+     "price": 400000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 400000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-09-27",
+     "price": 400000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-11",
+     "price": 380000.0,
+     "source": "sino-agri",
+     "note": "中农立华"
+    },
+    {
+     "date": "2026-10-18",
+     "price": 360000.0,
      "source": "sino-agri",
      "note": "中农立华"
     }
@@ -3595,6 +5005,240 @@
      "price": 8800.0,
      "source": "sunsirs",
      "note": "上海瀚扬化工"
+    },
+    {
+     "date": "2026-09-19",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-09-21",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-09-22",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-09-23",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-09-24",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-09-25",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-09-26",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-09-27",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-09-28",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-09-29",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-09-30",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-10-01",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-02",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-03",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-10-04",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-05",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-06",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-07",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-08",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-09",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-10",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-11",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-12",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-13",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-14",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-15",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-10-16",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-17",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-18",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-10-19",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-10-20",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-21",
+     "price": 9300.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-10-22",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-23",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-10-24",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "聊城芫泽化工"
+    },
+    {
+     "date": "2026-10-25",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
+    },
+    {
+     "date": "2026-10-26",
+     "price": 8800.0,
+     "source": "sunsirs",
+     "note": "上海德诺化工"
+    },
+    {
+     "date": "2026-10-27",
+     "price": 9300.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工"
     }
    ]
   },
@@ -7279,6 +8923,204 @@
     },
     {
      "date": "2026-09-18",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-09-21",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-09-22",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-09-23",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-09-24",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-09-25",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-09-27",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-09-29",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-01",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-02",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-03",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-04",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-06",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-08",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-09",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-10",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-11",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-12",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-13",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-14",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-15",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-16",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-17",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-18",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-19",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-20",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-21",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-22",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-23",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-24",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-25",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-26",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "山东艾特化工有限公司"
+    },
+    {
+     "date": "2026-10-27",
      "price": 11000.0,
      "source": "sunsirs",
      "note": "山东艾特化工有限公司"
