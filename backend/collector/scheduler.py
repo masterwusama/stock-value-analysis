@@ -19,6 +19,9 @@
              路径;港股行情快照自 2026-10-21 起走每日 stock job,不依赖这里)
     立案公告 : 每周日 10:05——巨潮全文检索「立案告知书/行政处罚决定书」(免 Wind),
              灌 case_event 并单刷 score_daily,「正在立案」抬 ST 高危旗
+    黄金供需 : 每天 06:05——大宗商品模块第一期(免费源:新浪/SGE/东财/FRED/GPR,
+             ≈2 分钟)。挑 06:05 是避开 valuation(03:35 起约 110 分钟)收尾,
+             国际源(美盘前日收盘/FRED 滞后 2 天)晨间已落库
     其余 Wind 侧(events/valuation 之外的 events job)仍不进调度:本机 Wind 客户端 CLI
              要登录、按量耗积分,是自动链管不到的外部依赖(2026-09-03 09:05 的 agro
              就被当时的 fetch_edb 带成过 failed——edb 自换免费源后该风险已消除)。
@@ -98,6 +101,9 @@ def main():
     # 成份股联动用的是当日 16:05 批次的新评分)。估值序列日更累积,分位样本满 30 日
     # 后估值分自动纳入综合分
     s.add_job(run_job, "cron", args=["etf"], hour=17, minute=35, id="etf")
+    # 黄金供需每天一次(06:05:valuation(03:35~约05:25)之后、agro(09:05)之前,
+    # 互不挤时段;外盘数据是前一夜收盘,晨间即最新)
+    s.add_job(run_job, "cron", args=["gold"], hour=6, minute=5, id="gold")
     # etf-heal:工作日晚间每半小时自愈——机器休眠/进程崩溃跨过 17:35 时,
     # 查 etl_job_log 当日无 etf success 则幂等补跑(APScheduler misfire 宽限仅 1h,
     # 覆盖不了跨点宕机;etf 便宜且不碰 .fetch.lock,适合自动补)
@@ -107,7 +113,8 @@ def main():
           "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农价,不碰 Wind) "
           "edb(周日 20:00 行业量价) valuation(每天 03:35 估值分位,免费源刷全 A) "
           "sentiment(交易日 16:30 情绪日报) case(周日 10:05 立案/处罚公告) "
-          "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑)。"
+          "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
+          "gold(每天 06:05 黄金供需,免费源)。"
           "Ctrl+C 退出",
           flush=True)
     s.start()

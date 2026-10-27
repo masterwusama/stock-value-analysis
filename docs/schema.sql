@@ -159,6 +159,10 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+
+CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
+
 CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
 
 CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
@@ -172,10 +176,6 @@ CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
-
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
-
-CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -346,6 +346,25 @@ CREATE TABLE edb_value (
 	data_date DATE NOT NULL, 
 	val NUMERIC(24, 6), 
 	PRIMARY KEY (edb_code, data_date)
+);
+
+CREATE TABLE cmd_indicator (
+	cmd_code VARCHAR(32) NOT NULL, 
+	commodity VARCHAR(16) NOT NULL, 
+	name VARCHAR(128) NOT NULL, 
+	category VARCHAR(32) NOT NULL, 
+	freq ENUM('day','week','month') NOT NULL, 
+	unit VARCHAR(32), 
+	display_group VARCHAR(64), 
+	extra JSON, 
+	PRIMARY KEY (cmd_code)
+);
+
+CREATE TABLE cmd_value (
+	cmd_code VARCHAR(32) NOT NULL, 
+	data_date DATE NOT NULL, 
+	val NUMERIC(24, 6), 
+	PRIMARY KEY (cmd_code, data_date)
 );
 
 CREATE TABLE sentiment_daily (

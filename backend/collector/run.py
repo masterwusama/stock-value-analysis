@@ -8,6 +8,7 @@
     python -m collector.run edb       # 行业 EDB 量价（免费源:新浪期货主力/东财宏观,周日 20:00 自动,云端可跑）
     python -m collector.run events    # Wind 事件(一次性/手动,不进每日调度) → 回灌
     python -m collector.run etf       # ETF 综合评估(成份/指数估值序列/净值) → 回灌
+    python -m collector.run gold      # 黄金供需 P0(价格/持仓/储备/宏观因子,免费源) → 回灌
     python -m collector.run import    # 跳过抓取,仅手动触发一次回灌
 尾部参数透传给该 job 首个采集脚本(传了就整体替代该 job 的默认参数),
 如 `python -m collector.run stock --codes 600519`。
@@ -104,6 +105,10 @@ JOBS = {
     # etf-heal:晚间自愈补跑(18 点后查当日无 etf success 则重跑;周末/当日已成功=空转)。
     # 独立 job 而不是塞进 fetch_etf,是为了 etl_job_log 里 heal 动作自己留痕
     "etf-heal": [(SCRIPTS, "_etf_catchup.py")],
+    # gold：大宗商品供需模块第一期(黄金)。免费源(akshare/新浪/东财/SGE/FRED/GPR),
+    # 不碰 Wind 云端可跑;单序列失败降级留旧数据,失败过半才红。回灌走 --only-gold
+    # (cmd_indicator/cmd_value 两表,与 agro EDB 分表,见 import_gold 头注)
+    "gold": [(COLLECTOR / "commodity-gold" / "scripts", "fetch_gold.py")],
     "import": [],
 }
 
@@ -134,6 +139,8 @@ IMPORT_DEFAULTS = {
     "case": ["--only-case"],
     # ETF 六表（序列档全量重放幂等，不追删）
     "etf": ["--only-etf"],
+    # 黄金两表（cmd_*；指标定义不做差集删除，见 import_gold 头注）
+    "gold": ["--only-gold"],
 }
 
 # 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
@@ -162,6 +169,7 @@ SCRIPT_TIMEOUT = {
     "case": 1800,   # 全量回填 28 页 ≈1 分钟，增量更少；放宽到与 sentiment 同档
     "etf": 900,     # 每只 ≈15 秒(中证2000 2000 只行情批拉最重),多只线性涨,留足余量
     "etf-heal": 1200,   # 含补跑一轮完整 etf(900s)+检查,给足上限
+    "gold": 1800,   # 实测 ≈3 分钟(2026-10-27 满序列 185s);含组重试(8s 退避)放宽 10 倍
 }
 
 

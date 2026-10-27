@@ -528,6 +528,36 @@ class EdbValue(Base):
     val: Mapped[float | None] = mapped_column(Numeric(24, 6))
 
 
+class CmdIndicator(Base):
+    """大宗商品供需模块·指标定义(采集:collector/commodity-gold/scripts/fetch_gold.py)。
+
+    与 EdbIndicator 分表而不是复用,是刻意的:import_edb 以 agro edb.json 为唯一
+    清单做差集删除(have - src_codes),任何寄住在 edb_* 表里的外模块指标都会被
+    周任务静默清掉。commodity 列为后续品种(白银等)预留,gold 是第一期。
+    """
+
+    __tablename__ = "cmd_indicator"
+
+    cmd_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    commodity: Mapped[str] = mapped_column(String(16), nullable=False, default="gold")
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)  # 展示分组(价格/持仓库存/...)
+    freq: Mapped[str] = mapped_column(Enum("day", "week", "month"), nullable=False)
+    unit: Mapped[str | None] = mapped_column(String(32))
+    display_group: Mapped[str | None] = mapped_column(String(64))
+    extra: Mapped[dict | None] = mapped_column(JSON)
+
+
+class CmdValue(Base):
+    """大宗商品供需模块·数据点。"""
+
+    __tablename__ = "cmd_value"
+
+    cmd_code: Mapped[str] = mapped_column(String(32), primary_key=True)
+    data_date: Mapped[date] = mapped_column(primary_key=True)
+    val: Mapped[float | None] = mapped_column(Numeric(24, 6))
+
+
 class SentimentDaily(Base):
     """情绪日报:盘后市场情绪状态/转移预案/板块效应与三名单(采集:fetch_sentiment.py)。
 
