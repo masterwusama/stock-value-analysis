@@ -306,6 +306,9 @@ def parse_sino_agri_article(html, names, take_last=()):
     # 压掉「数字. 数字」内的空格——不清洗时草甘膦 95% 专用式失配,通用式还会
     # 跨段误配草铵膦报价(有 other_agro 兜底不污染,但整段丢失)
     txt = re.sub(r'(\d)\.\s+(\d)', r'\1.\2', txt)
+    # 2026-10 期的编辑器排版更碎:「万元 / 吨」「95% 含量报价」词间带空格
+    txt = re.sub(r'\s*/\s*', '/', txt)
+    txt = re.sub(r'(95%)\s+含', r'\1含', txt)
     verb = r'(?:价格报至|价格报到|价格报|报价在|报价|报到|报至|报)'
     result = {}
     for name in names:
