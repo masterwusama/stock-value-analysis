@@ -1,5 +1,5 @@
 {
- "updated_at": "2026-10-27T18:22:05+08:00",
+ "updated_at": "2026-10-27T23:31:36+08:00",
  "products": [
   {
    "id": "carbendazim",
@@ -9390,7 +9390,1712 @@
      "note": "山东艾特化工有限公司"
     }
    ]
+  },
+  {
+   "id": "liquid-chlorine",
+   "name": "液氯",
+   "category": "原材料",
+   "spec": "槽车出厂",
+   "unit": "元/吨",
+   "prices": []
+  },
+  {
+   "id": "caustic-soda",
+   "name": "烧碱",
+   "category": "原材料",
+   "spec": "32%液碱为主",
+   "unit": "元/吨",
+   "prices": [
+    {
+     "date": "2026-10-20",
+     "price": 629.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-21",
+     "price": 629.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-22",
+     "price": 629.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-23",
+     "price": 627.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-27",
+     "price": 627.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    }
+   ]
+  },
+  {
+   "id": "glycine",
+   "name": "甘氨酸",
+   "category": "原材料",
+   "spec": "工业级",
+   "unit": "元/吨",
+   "prices": [
+    {
+     "date": "2026-01-29",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-01-30",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-01-31",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-02-02",
+     "price": 10700.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-02-03",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-04",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-05",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-06",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-07",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-02-08",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-02-09",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-10",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-11",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-02-18",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-02-21",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-02-22",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-02-23",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-02-24",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-25",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-26",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-27",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-02-28",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-01",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-02",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-03",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-04",
+     "price": 9850.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-05",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-06",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-07",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-08",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-09",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-10",
+     "price": 9900.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-11",
+     "price": 11000.0,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-12",
+     "price": 12800.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-03-13",
+     "price": 11500.0,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-14",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-15",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-16",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-17",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-18",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-19",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-20",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-21",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-22",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-23",
+     "price": 11800.0,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-24",
+     "price": 12800.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-03-25",
+     "price": 12800.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-03-26",
+     "price": 12800.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-03-27",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-03-28",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-29",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-30",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-03-31",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-01",
+     "price": 12500.0,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-02",
+     "price": 12800.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-04-03",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-05",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-06",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-07",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-08",
+     "price": 12500.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-09",
+     "price": 12800.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-04-11",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-12",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-13",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-14",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-15",
+     "price": 12800.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-04-16",
+     "price": 12250.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-17",
+     "price": 13300.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-18",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-19",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-20",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-21",
+     "price": 13300.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-04-22",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-23",
+     "price": 22800.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-04-24",
+     "price": 12600.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-04-25",
+     "price": 18066.665,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-04-26",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-04-27",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-28",
+     "price": 18500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-04-29",
+     "price": 12600.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-04-30",
+     "price": 13300.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-03",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-05-06",
+     "price": 13300.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-07",
+     "price": 14500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-08",
+     "price": 12500.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-09",
+     "price": 14000.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-10",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-05-11",
+     "price": 12500.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-12",
+     "price": 12250.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-13",
+     "price": 12500.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-14",
+     "price": 12500.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-15",
+     "price": 12500.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-16",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-05-17",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-05-18",
+     "price": 14000.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-19",
+     "price": 12500.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-20",
+     "price": 13300.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-21",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-22",
+     "price": 12300.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-24",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-05-25",
+     "price": 14500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-26",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-27",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-05-28",
+     "price": 14000.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-29",
+     "price": 14000.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-05-30",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-05-31",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-01",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-02",
+     "price": 14500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-06-03",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-04",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-05",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-06",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-07",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-08",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-09",
+     "price": 14750.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-06-10",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-11",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-12",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-13",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-14",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-15",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-16",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-17",
+     "price": 12300.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-18",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-19",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-20",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-22",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-23",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-24",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-25",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-06-26",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-27",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-28",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-06-29",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-06-30",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-01",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-02",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-03",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-04",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-07-06",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-07-07",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-08",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-07-09",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-10",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-11",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-07-12",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-07-13",
+     "price": 14750.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-07-14",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-15",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-16",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-17",
+     "price": 13300.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-18",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-07-19",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-07-20",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-21",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-22",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-23",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-24",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-25",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-07-27",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-28",
+     "price": 12300.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-29",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-30",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-07-31",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-03",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-04",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-05",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-06",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-08-07",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-08-08",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-09",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-10",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-08-11",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-08-12",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-13",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-08-14",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-15",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-16",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-17",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-18",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-19",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-08-20",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-21",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-08-22",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-24",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-08-25",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-08-26",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-27",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-28",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-29",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-30",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-08-31",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-01",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-02",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-03",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-04",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-05",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-06",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-07",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-08",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-09",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-10",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-11",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-12",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-13",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-14",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-15",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-16",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-09-17",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-18",
+     "price": 12000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-09-19",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-20",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-21",
+     "price": 12300.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-09-22",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-23",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-09-24",
+     "price": 16000.0,
+     "source": "sunsirs",
+     "note": "山东源和鑫盛化工贸易有限公司"
+    },
+    {
+     "date": "2026-09-25",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-26",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-27",
+     "price": 16000.0,
+     "source": "sunsirs",
+     "note": "山东源和鑫盛化工贸易有限公司"
+    },
+    {
+     "date": "2026-09-28",
+     "price": 13750.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-09-29",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-09-30",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-01",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-02",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-03",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-04",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-05",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-06",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-07",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-08",
+     "price": 14000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-10-09",
+     "price": 15250.0,
+     "source": "sunsirs",
+     "note": "山东源和鑫盛化工贸易有限公司"
+    },
+    {
+     "date": "2026-10-10",
+     "price": 14000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-10-11",
+     "price": 16000.0,
+     "source": "sunsirs",
+     "note": "山东源和鑫盛化工贸易有限公司"
+    },
+    {
+     "date": "2026-10-12",
+     "price": 14250.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-10-13",
+     "price": 13750.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-10-14",
+     "price": 15000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-10-15",
+     "price": 15000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-10-16",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-10-17",
+     "price": 16500.0,
+     "source": "sunsirs",
+     "note": "山东源和鑫盛化工贸易有限公司"
+    },
+    {
+     "date": "2026-10-18",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-19",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-10-20",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-10-21",
+     "price": 15000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-10-22",
+     "price": 15000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    },
+    {
+     "date": "2026-10-23",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-10-24",
+     "price": 16500.0,
+     "source": "sunsirs",
+     "note": "山东源和鑫盛化工贸易有限公司"
+    },
+    {
+     "date": "2026-10-25",
+     "price": 13333.33,
+     "source": "sunsirs",
+     "note": "上海生意社信息服务有限公司"
+    },
+    {
+     "date": "2026-10-26",
+     "price": 15500.0,
+     "source": "sunsirs",
+     "note": "河北华阳生物科技有限公司"
+    },
+    {
+     "date": "2026-10-27",
+     "price": 16000.0,
+     "source": "sunsirs",
+     "note": "山东富盛永商贸有限公司"
+    }
+   ]
+  },
+  {
+   "id": "benzene",
+   "name": "纯苯",
+   "category": "原材料",
+   "spec": "石油苯99.9%",
+   "unit": "元/吨",
+   "prices": [
+    {
+     "date": "2026-10-19",
+     "price": 10441.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-20",
+     "price": 10351.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-21",
+     "price": 10317.67,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-22",
+     "price": 10334.33,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-23",
+     "price": 10351.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-24",
+     "price": 9800.0,
+     "source": "sunsirs",
+     "note": "常州市启迪化工"
+    },
+    {
+     "date": "2026-10-25",
+     "price": 10250.0,
+     "source": "sunsirs",
+     "note": "山东卓裕化工"
+    },
+    {
+     "date": "2026-10-26",
+     "price": 10600.0,
+     "source": "sunsirs",
+     "note": "山东卓裕化工"
+    },
+    {
+     "date": "2026-10-27",
+     "price": 10501.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    }
+   ]
+  },
+  {
+   "id": "o-nitrochlorobenzene",
+   "name": "邻硝基氯化苯",
+   "category": "原材料",
+   "spec": "99%",
+   "unit": "元/吨",
+   "prices": [
+    {
+     "date": "2026-10-26",
+     "price": 6000.0,
+     "source": "sunsirs",
+     "note": "上海德诺化工"
+    }
+   ]
+  },
+  {
+   "id": "yellow-phosphorus",
+   "name": "黄磷",
+   "category": "原材料",
+   "spec": "优等品",
+   "unit": "元/吨",
+   "prices": [
+    {
+     "date": "2026-10-10",
+     "price": 28300.0,
+     "source": "sunsirs",
+     "note": "江苏盛荣化工"
+    },
+    {
+     "date": "2026-10-12",
+     "price": 28888.0,
+     "source": "sunsirs",
+     "note": "尔泰实业（海南）有限公司"
+    },
+    {
+     "date": "2026-10-15",
+     "price": 28888.0,
+     "source": "sunsirs",
+     "note": "尔泰实业（海南）有限公司"
+    },
+    {
+     "date": "2026-10-19",
+     "price": 28888.0,
+     "source": "sunsirs",
+     "note": "尔泰实业（海南）有限公司"
+    },
+    {
+     "date": "2026-10-20",
+     "price": 28246.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-21",
+     "price": 28567.0,
+     "source": "sunsirs",
+     "note": "尔泰实业（海南）有限公司"
+    },
+    {
+     "date": "2026-10-22",
+     "price": 28296.0,
+     "source": "sunsirs",
+     "note": "生意社基准价"
+    },
+    {
+     "date": "2026-10-23",
+     "price": 28592.0,
+     "source": "sunsirs",
+     "note": "尔泰实业（海南）有限公司"
+    },
+    {
+     "date": "2026-10-26",
+     "price": 28888.0,
+     "source": "sunsirs",
+     "note": "尔泰实业（海南）有限公司"
+    },
+    {
+     "date": "2026-10-27",
+     "price": 28198.0,
+     "source": "sunsirs",
+     "note": "江苏盛荣化工"
+    }
+   ]
   }
  ],
- "stale_reported": []
+ "stale_reported": [
+  "liquid-chlorine"
+ ]
 }

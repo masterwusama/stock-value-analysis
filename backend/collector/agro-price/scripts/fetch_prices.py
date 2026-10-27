@@ -103,6 +103,55 @@ PRODUCTS = [
         # 多交易商报价全部按日取中位数合并（默认只取样本最多的单一交易商）
         'merge_all_traders': True,
     },
+    # ---------------- 原材料(广信股份成本链,2026-10-27 接入) ----------------
+    # mprice 商品ID=生意社栏目编号(同源规律,逐个实测验证);口径:报价中心市场价为主
+    {
+        # 草甘膦(甘氨酸路线)核心外购原料
+        'id': 'glycine', 'name': '甘氨酸', 'category': '原材料', 'spec': '工业级',
+        'primary': 'sunsirs',
+        'sunsirs_seed': 'https://www.100ppi.com/news/detail-20210610-1829052.html',
+        'mprice_ids': [(1751, '甘氨酸')],
+        'merge_all_traders': True,
+    },
+    {
+        # 草甘膦亚磷酸/草铵膦链磷源
+        'id': 'yellow-phosphorus', 'name': '黄磷', 'category': '原材料', 'spec': '优等品',
+        'primary': 'sunsirs',
+        'mprice_ids': [(1170, '黄磷')],
+        'bench': True,
+        'merge_all_traders': True,
+    },
+    {
+        # 广信自产 30 万吨离子膜烧碱(研报点名跟踪,32%液碱口径为主,页面混片碱由
+        # 离群交易商过滤兜底)
+        'id': 'caustic-soda', 'name': '烧碱', 'category': '原材料', 'spec': '32%液碱为主',
+        'primary': 'sunsirs',
+        'mprice_ids': [(520, '烧碱')],
+        'bench': True,
+        'merge_all_traders': True,
+    },
+    {
+        # 光气原料(烧碱副产氯气,外售/平衡口径)
+        'id': 'liquid-chlorine', 'name': '液氯', 'category': '原材料', 'spec': '槽车出厂',
+        'primary': 'sunsirs',
+        'mprice_ids': [(817, '液氯')],
+        'merge_all_traders': True,
+    },
+    {
+        # 硝化链源头原料(硝基氯化苯上游)
+        'id': 'benzene', 'name': '纯苯', 'category': '原材料', 'spec': '石油苯99.9%',
+        'primary': 'sunsirs',
+        'mprice_ids': [(48, '纯苯')],
+        'bench': True,
+        'merge_all_traders': True,
+    },
+    {
+        # 多菌灵/甲基硫菌灵链中间体(邻苯二胺上游,对硝基氯化苯的姊妹产品,广信自产外售)
+        'id': 'o-nitrochlorobenzene', 'name': '邻硝基氯化苯', 'category': '原材料', 'spec': '99%',
+        'primary': 'sunsirs',
+        'mprice_ids': [(1689, '邻硝基氯化苯')],
+        'merge_all_traders': True,
+    },
 ]
 
 # 官网新站列表页(服务端只渲染最新3期) + enongzi 转载专题(2025-01 起全)
@@ -113,6 +162,10 @@ ENONGZI_MAX_PAGES = 40     # 回填上限(专题实测 29 页,留余量)
 
 # 生意社 detail 栏目翻页上限（增量模式：历史数据保留在仓库内 products.json 中）
 SUNSIRS_MAX_PAGES = 5
+# 基准价日报列表翻页数。注意该列表分页不是时间倒序而是当日商品分组轮转
+# (2026-10-27 实测:页30全是10-21、页60全是10-27),翻深页捞不到历史——它只能
+# 做「增量累积源」:每天翻几页拿当日新行,历史从接入日起日积月累
+BENCH_MAX_PAGES = 8
 
 # 3456.tv 行情文章聚合页
 T3456_PAGES = ['http://www.3456.tv/jiage/nongyao/']
@@ -427,6 +480,53 @@ def parse_sunsirs_mprice(html, names):
     return results
 
 
+def parse_sunsirs_bench(html, names):
+    """解析生意社基准价日报列表（news/list--1217-{page}.html）。
+
+    行格式：`<a href=".../detail-20261027-xxxx.html">10月27日生意社纯苯基准价为
+    10351.00元/吨</a><span>2026-10-27 08:30</span>`——detail 链接自带完整日期。
+    基准价=生意社综合评估价(与 mprice 交易商挂单是两个口径,note 区分);只覆盖
+    指数商品(纯苯/烧碱/黄磷有,甘氨酸/硝基氯化苯/液氯无)。每页 ~43 条全商品混排。
+    """
+    rows = []
+    for m in re.finditer(
+            r'detail-(\d{8})-\d+\.html"[^>]*>\s*\d{1,2}月\d{1,2}日\s*生意社\s*'
+            r'([\u4e00-\u9fa5A-Za-z（）()]+?)基准价为\s*([\d.]+)\s*元/吨', html):
+        date = '%s-%s-%s' % (m.group(1)[:4], m.group(1)[4:6], m.group(1)[6:8])
+        if m.group(2) in names:
+            rows.append({'date': date, 'price': float(m.group(3)),
+                         'note': '生意社基准价'})
+    return rows
+
+
+def fetch_sunsirs_bench(names, max_pages=BENCH_MAX_PAGES):
+    """翻基准价日报列表收集目标品种的当日/近期行(增量累积,见 BENCH_MAX_PAGES 注)。"""
+    rows, empty = [], 0
+    for page in range(1, max_pages + 1):
+        try:
+            html = fetch('https://www.100ppi.com/news/list--1217-%d.html' % page,
+                         referer='https://www.100ppi.com/')
+        except Exception as e:  # noqa: BLE001 单页失败不终止
+            print('  [warn] 基准价列表第 %d 页失败: %r' % (page, e))
+            time.sleep(SLEEP)
+            continue
+        if '基准价为' not in html:
+            # 生意社间歇返回 ~636B 壳页(200 但无内容)——按瞬断重试不计数;
+            # 真翻穿(有内容但无基准价行)才累计停页。2026-10-27 实测壳页曾连出
+            # 2 页,把黄磷/烧碱的回填在第 8 页掐断只收到 5 条
+            if len(html) < 5000:
+                time.sleep(SLEEP)
+                continue
+            empty += 1
+            if empty >= 3:
+                break
+        else:
+            empty = 0
+        rows += parse_sunsirs_bench(html, names)
+        time.sleep(SLEEP)
+    return rows
+
+
 def filter_outlier_traders(rows):
     """剔除价格口径系统性偏离的交易商（离群价混入其他规格）
 
@@ -485,6 +585,14 @@ def fetch_sunsirs(product):
     # 离群交易商过滤：避免混入其他规格的报价污染按日聚合中位数
     mprice_rows = filter_outlier_traders(mprice_rows)
     prices += mprice_rows
+    # 基准价日频序列(配了 bench 的品种:纯苯/黄磷/烧碱这类有生意社指数的大宗)
+    if product.get('bench'):
+        try:
+            b = fetch_sunsirs_bench([product['name']])
+            prices += b
+            print('   基准价: %d 条' % len(b))
+        except Exception as e:  # noqa: BLE001
+            print('   [warn] %s 基准价抓取失败: %r' % (product['name'], e))
     for p in prices:
         p['source'] = 'sunsirs'
     return prices
@@ -727,7 +835,7 @@ def main():
             'prices': merged,
         })
 
-    cat_order = {'杀菌剂': 0, '除草剂': 1, '杀虫剂': 2, '中间体': 3}
+    cat_order = {'杀菌剂': 0, '除草剂': 1, '杀虫剂': 2, '中间体': 3, '原材料': 4}
     result_products.sort(key=lambda x: (cat_order.get(x['category'], 9), x['name']))
 
     from datetime import datetime, timezone, timedelta
