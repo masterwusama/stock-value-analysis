@@ -130,15 +130,21 @@ watch(() => allPrices.value.length, (n) => {
         <div class="thesis">{{ target.thesis }}</div>
         <p class="dim note-line">{{ target.period_note }}</p>
         <div v-if="target.guidance_2026" class="guide">
-          <div class="guide-title">2026 指引完成度(Q1-3 实际 / 全年指引)</div>
+          <div class="guide-title">2026 指引完成度({{ periodShort === 'H2' ? 'H1 实际' : 'Q1-3 实际' }} / 全年指引)</div>
           <div class="guide-grid">
-            <div v-for="(g, prod) in target.guidance_2026" :key="prod" class="g-item">
+            <div v-for="(g, prod) in target.guidance_2026" :key="prod" class="g-item" :class="{ fact: g.fact }">
               <div class="g-name">{{ prod }}<i v-if="g.note" class="g-note">{{ g.note }}</i></div>
-              <div class="g-bar"><b :style="{ width: Math.min(100, (g.q1_3 || 0) / g.qty * 100).toFixed(0) + '%' }" /></div>
-              <div class="g-vals">
-                <span class="g-q">{{ g.q1_3 != null ? g.q1_3 : '—' }} / {{ g.qty }} {{ g.unit }}</span>
-                <span v-if="g.q1_3" :class="cls((g.q1_3 / g.qty) - 0.75)">{{ num((g.q1_3 / g.qty) * 100, 0) }}%</span>
+              <div v-if="g.fact" class="g-vals">
+                <span class="g-q">{{ g.qty }} {{ g.unit }}</span><span class="g-wait">事实口径</span>
               </div>
+              <template v-else>
+                <div class="g-bar" :class="{ pending: g.q1_3 == null }"><b :style="{ width: Math.min(100, (g.q1_3 || 0) / g.qty * 100).toFixed(0) + '%' }" /></div>
+                <div class="g-vals">
+                  <span class="g-q">{{ g.q1_3 != null ? g.q1_3 : '—' }} / {{ g.qty }} {{ g.unit }}</span>
+                  <span v-if="g.q1_3 != null" :class="cls((g.q1_3 / g.qty) - (periodShort === 'H2' ? 0.5 : 0.75))">{{ num((g.q1_3 / g.qty) * 100, 0) }}%</span>
+                  <span v-else class="g-wait">待披露</span>
+                </div>
+              </template>
             </div>
           </div>
           <p class="dim" v-if="target.guidance_source">{{ target.guidance_source }}</p>
@@ -327,6 +333,9 @@ watch(() => allPrices.value.length, (n) => {
 .g-note { font-style: normal; font-weight: normal; color: var(--sub); font-size: 11px; margin-left: 4px; }
 .g-bar { height: 6px; border-radius: 3px; background: var(--line-soft, #e5e9f2); overflow: hidden; margin: 6px 0 4px; }
 .g-bar b { display: block; height: 100%; background: var(--accent, #2d6cdf); opacity: .6; }
+.g-bar.pending { background: repeating-linear-gradient(45deg, var(--line-soft, #e5e9f2) 0 6px, transparent 6px 12px); }
+.g-wait { font-size: 11px; color: var(--muted, #8a93a6); }
+.g-item.fact .g-vals { justify-content: flex-start; gap: 8px; }
 .g-vals { display: flex; justify-content: space-between; font-size: 12px; font-variant-numeric: tabular-nums; }
 table.grid { width: 100%; border-collapse: collapse; font-size: 12.5px; margin: 6px 0; }
 table.grid th, table.grid td { padding: 6px 8px; border-bottom: 1px solid var(--line-soft, #eef1f7); text-align: right; white-space: nowrap; }
