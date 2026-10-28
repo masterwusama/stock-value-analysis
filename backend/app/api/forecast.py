@@ -190,6 +190,11 @@ def _model_projection(t, cmd_cache, agro_cache=None):
             if not s.get("price_code"):
                 static = s.get("static_margin_change_yi") or [0, 0, 0]
                 deltas = [d + x for d, x in zip(deltas, static)]
+                # 也输出成行,让前端"分部毛利变动"chips 加总与三情景大数对账闭合
+                rows.append({"product": s["product"], "p_prev": None, "p_dyn": None,
+                             "vols": s.get("vol_scenarios") or {},
+                             "vol_note": s.get("vol_note"),
+                             "delta_yi": [round(x, 1) for x in static]})
                 continue
             pts = cmd_cache.get(s["price_code"]) or []
             stats = _qtd_stats(pts) if pts else {}

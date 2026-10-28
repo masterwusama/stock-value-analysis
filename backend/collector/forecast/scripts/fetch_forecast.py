@@ -71,8 +71,13 @@ def parse_bench_row(html, name):
     return out
 
 
-def fetch_coal_bench():
-    rows, empty = [], 0
+def fetch_bench(names):
+    """基准价日报列表 → {name: [(date, price)]};一次翻页多品种共用。
+
+    品种按全名精确匹配(动力煤/聚合MDI…);同日多行取末值。
+    """
+    rows = {n: [] for n in names}
+    empty = 0
     for page in range(1, BENCH_PAGES + 1):
         try:
             html = fetch('https://www.100ppi.com/news/list--1217-%d.html' % page,
@@ -89,13 +94,16 @@ def fetch_coal_bench():
                 break
         else:
             empty = 0
-        rows += parse_bench_row(html, '动力煤')
+        for n in names:
+            rows[n] += parse_bench_row(html, n)
         time.sleep(SLEEP)
-    # 同日去重取末值
-    dedup = {}
-    for d, v in rows:
-        dedup[d] = v
-    return sorted(dedup.items())
+    out = {}
+    for n, rs in rows.items():
+        dedup = {}
+        for d, v in rs:
+            dedup[d] = v
+        out[n] = sorted(dedup.items())
+    return out
 
 
 MDI_MPRICE_ID = 823  # 生意社 MDI 报价中心(聚合PM200/纯PM100 混排,2026-10-28 验证 30 行)
@@ -194,7 +202,8 @@ def main():
     warnings = []
     series = []
 
-    coal = fetch_coal_bench()
+    bench = fetch_bench(['动力煤', '聚合MDI'])
+    coal = bench.get('动力煤') or []
     if coal:
         series.append({
             'code': 'COAL_BENCH', 'idx': 0, 'name': '动力煤(生意社基准价)', 'label': '动力煤',
@@ -205,6 +214,9 @@ def main():
         print('[forecast] 动力煤基准价: %d 点 %s~%s' % (len(coal), coal[0][0], coal[-1][0]), flush=True)
     else:
         warnings.append('COAL_BENCH: 本轮零收获(列表页无动力煤行或全壳页)')
+    mdi_bench = dict(bench.get('聚合MDI') or [])
+    if mdi_bench:
+        print('[forecast] 聚合MDI基准价: %d 点(同日将覆盖挂单中位)' % len(mdi_bench), flush=True)
 
     # MDI(万华核心产品,聚合PM200/纯PM100)
     try:
@@ -214,11 +226,19 @@ def main():
         for i, (code, pts) in enumerate(sorted(mdi.items())):
             if not pts:
                 continue
+            # 聚合MDI 挂单三家中位常被低价拖偏(2026-10-26 实测 15,000×2+19,000
+            # 中位 15,000 vs 基准价 18,233),同日用生意社基准价覆盖挂单中位
+            src_note = '生意社报价中心(mprice %d,市场价挂单按日中位数;仅近期窗口,历史从2026-10-28累积)' % MDI_MPRICE_ID
+            if code == 'MDI_POLY' and mdi_bench:
+                merged = dict((d, v) for d, v in pts)
+                merged.update(mdi_bench)
+                pts = [[d, merged[d]] for d in sorted(merged)]
+                src_note += ';同日基准价优先'
             series.append({
                 'code': code, 'idx': 10 + i, 'name': labels[code][0],
                 'label': labels[code][0], 'cat': '化工品', 'group': labels[code][1],
                 'unit': '元/吨', 'freq': '日',
-                'source': '生意社报价中心(mprice %d,市场价挂单按日中位数;仅近期窗口,历史从2026-10-28累积)' % MDI_MPRICE_ID,
+                'source': src_note,
                 'points': pts,
             })
             print('[forecast] %s: %d 点 %s~%s' % (code, len(pts), pts[0][0], pts[-1][0]), flush=True)
