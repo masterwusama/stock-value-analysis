@@ -159,7 +159,7 @@ def _q4_window(today=None):
 SCN = ("low", "base", "high")
 
 
-def _model_projection(t, cmd_cache):
+def _model_projection(t, cmd_cache, agro_cache=None):
     """增量桥模型:Q4E 与 FY2027E 三情景。结构化假设在 targets.json model 块,
     价格侧动态(库内序列),输出 营收/毛利率/归母/扣非 区间。"""
     m = t.get("model")
@@ -190,13 +190,15 @@ def _model_projection(t, cmd_cache):
                 continue
             pts = cmd_cache.get(s["price_code"]) or []
             stats = _qtd_stats(pts) if pts else {}
-            if semi:
+            if s.get("p_prev_override") is not None:
+                p3 = s["p_prev_override"]
+                p4_pair = None
+            elif semi:
                 # prev=H1均价(Q1+Q2桶),预估=Q3桶与Q4动态各半
                 q1, q2 = _bucket_avg(pts, year, 1), _bucket_avg(pts, year, 2)
                 q3 = _bucket_avg(pts, year, 3)
                 p3 = (q1 + q2) / 2 if q1 is not None and q2 is not None else None
-                dyn4 = _dyn_price(stats, days_gone, days_total, 0.0)
-                p4_pair = (q3, dyn4)
+                p4_pair = (q3, None)
             else:
                 p3 = stats.get("prev_q")
                 p4_pair = None
@@ -227,7 +229,14 @@ def _model_projection(t, cmd_cache):
                 # 成本变动:cost_links(价格联动的单耗成本)优先,否则披露成本×环比
                 cost_delta = 0.0
                 for cl in cost_links:
-                    cpts = cmd_cache.get(cl["code"]) or []
+                    if cl.get("type") == "agro":
+                        if cl["id"] not in (agro_cache or {}):
+                            (agro_cache or {}).update(_load_agro_series(db, [cl["id"]]))
+                        cpts = (agro_cache or {}).get(cl["id"]) or []
+                    else:
+                        if cl["code"] not in cmd_cache:
+                            cmd_cache.update(_load_cmd_series(db, [cl["code"]]))
+                        cpts = cmd_cache.get(cl["code"]) or []
                     cm = cl.get("mult", 1.0)
                     if not cpts:
                         continue
@@ -241,9 +250,11 @@ def _model_projection(t, cmd_cache):
                             cost_delta += (((cq3 + cdyn) / 2) - (cq1 + cq2) / 2) * cm
                     else:
                         cst = _qtd_stats(cpts)
-                        if cst.get("qtd") is not None and cst.get("prev_q") is not None:
+                        # prev 可显式 override(新接入序列无上季历史,如纯苯2026-10起)
+                        prev = cl["prev"] if cl.get("prev") is not None else cst.get("prev_q")
+                        if cst.get("qtd") is not None and prev is not None:
                             cost_delta += (_dyn_price(cst, days_gone, days_total, 0.0)
-                                           - cst["prev_q"]) * cm
+                                           - prev) * cm
                 if not cost_links and c3 is not None:
                     cost_delta = c3 * (cq - 1)
                 d = (p4 - p3 - cost_delta) * v * mult * conduit / 1e8
@@ -420,7 +431,7 @@ def _target_detail(db, t, cmd_cache, agro_cache):
         "equity_notes": t.get("equity_notes"),
         "watchlist": t.get("watchlist") or [],
         "segments": segs_out,
-        "model": _model_projection(t, cmd_cache),
+        "model": _model_projection(t, cmd_cache, agro_cache),
     }
 
 

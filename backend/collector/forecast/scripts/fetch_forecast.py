@@ -98,6 +98,57 @@ def fetch_coal_bench():
     return sorted(dedup.items())
 
 
+MDI_MPRICE_ID = 823  # 生意社 MDI 报价中心(聚合PM200/纯PM100 混排,2026-10-28 验证 30 行)
+MDI_PAGES = 5
+
+
+def fetch_mdi_mprice():
+    """生意社 MDI 报价中心 → 聚合MDI(PM200)/纯MDI(PM100) 按日中位数两条序列。
+
+    行格式(agro parse_sunsirs_mprice 同款):`聚合MDI PM200 万华化学 19000元/吨
+    市场价 山东省/淄博市 山东北鲁恒升化工有限公司 VIP 2026-10-27`;只取市场价。
+    """
+    from collections import defaultdict
+    rows = {"MDI_POLY": [], "MDI_PURE": []}
+    for page in range(1, MDI_PAGES + 1):
+        try:
+            html = fetch('https://www.100ppi.com/mprice/plist-1-%d-%d.html'
+                         % (MDI_MPRICE_ID, page), referer='https://www.100ppi.com/mprice/')
+        except Exception as e:  # noqa: BLE001
+            print('[forecast] MDI 页 %d 失败: %r' % (page, e), flush=True)
+            break
+        txt = re.sub(r'<[^>]+>', ' ', re.sub(r'<script[\s\S]*?</script>', '', html))
+        txt = re.sub(r'\s+', ' ', txt)
+        for m in re.finditer(
+                r'(聚合MDI|纯MDI|MDI)\s+[^元]{0,80}?(\d[\d,]*(?:\.\d+)?)\s*元/(吨|千克)\s*'
+                r'(市场价|出厂价)\s+(\S+?)\s+([\u4e00-\u9fa5（）()]{3,30}?(?:有限公司|化工))'
+                r'(?:\s+VIP)?\s+(\d{4}-\d{2}-\d{2})', txt):
+            grp, price, unit, kind, _, trader, date = m.groups()
+            if kind != '市场价':
+                continue
+            price = float(price.replace(',', ''))
+            if unit == '千克':
+                price *= 1000
+            # 行首商品名分组:含「聚合」→聚合MDI;其余(PM100/纯MDI/MDI)→纯MDI
+            key = 'MDI_POLY' if '聚合' in grp else 'MDI_PURE'
+            rows[key].append((date, price, trader))
+        time.sleep(SLEEP)
+        if page == 1 and not (rows['MDI_POLY'] or rows['MDI_PURE']):
+            break  # 首页空=页面结构变了,不空翻
+    out = {}
+    for key, triplets in rows.items():
+        by_day = defaultdict(list)
+        for d, v, _ in triplets:
+            by_day[d].append(v)
+        med = []
+        for d in sorted(by_day):
+            vs = sorted(by_day[d])
+            n = len(vs)
+            med.append([d, round((vs[n // 2] if n % 2 else (vs[n // 2 - 1] + vs[n // 2]) / 2), 0)])
+        out[key] = med
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dry-run', action='store_true')
@@ -122,6 +173,25 @@ def main():
         print('[forecast] 动力煤基准价: %d 点 %s~%s' % (len(coal), coal[0][0], coal[-1][0]), flush=True)
     else:
         warnings.append('COAL_BENCH: 本轮零收获(列表页无动力煤行或全壳页)')
+
+    # MDI(万华核心产品,聚合PM200/纯PM100)
+    try:
+        mdi = fetch_mdi_mprice()
+        labels = {'MDI_POLY': ('聚合MDI(PM200市场价)', '聚氨酯'),
+                  'MDI_PURE': ('纯MDI(PM100市场价)', '聚氨酯')}
+        for i, (code, pts) in enumerate(sorted(mdi.items())):
+            if not pts:
+                continue
+            series.append({
+                'code': code, 'idx': 10 + i, 'name': labels[code][0],
+                'label': labels[code][0], 'cat': '化工品', 'group': labels[code][1],
+                'unit': '元/吨', 'freq': '日',
+                'source': '生意社报价中心(mprice %d,市场价挂单按日中位数;仅近期窗口,历史从2026-10-28累积)' % MDI_MPRICE_ID,
+                'points': pts,
+            })
+            print('[forecast] %s: %d 点 %s~%s' % (code, len(pts), pts[0][0], pts[-1][0]), flush=True)
+    except Exception as e:  # noqa: BLE001
+        warnings.append('MDI: %r' % e)
 
     # manual_series 原样并入(人工维护,不发包)
     try:

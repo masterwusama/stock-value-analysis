@@ -226,6 +226,95 @@
       ]
     },
     {
+      "sid": "600309",
+      "name": "万华化学",
+      "market": "A",
+      "thesis": "MDI 全球绝对龙头(~450万吨,全球第一)——聚氨酯板块贡献 70%+ 毛利,MDI 市场价×纯苯成本价差是利润第一驱动;成本端纯苯/液氯/烧碱/原油库内全有,MDI 价格新接入生意社(2026-09-28 起累积)",
+      "period_note": "Q3'26 单季归母 55.95亿(+84%),营收 665.51亿创单季历史新高;Q1-3 归母 156.58亿(+71%)已超 2025 全年(125.27亿归母口径);聚氨酯收入+27.6%/石化+26.9%/精细新材料+45.4%",
+      "guidance_2026": {
+        "MDI产能": {"qty": 450, "unit": "万吨", "note": "全球第一;年销量口径~380万吨"},
+        "聚氨酯销量(季)": {"qty": 100, "unit": "万吨", "note": "MDI+TDI+聚醚合计口径(假设)"}
+      },
+      "guidance_source": "2026三季报(2026-10-26/27 披露)+新浪/网易/东财三源",
+      "segments": [
+        {
+          "product": "聚氨酯(MDI/TDI/聚醚)",
+          "volume_unit": "万吨",
+          "price_links": [
+            {"type": "cmd", "code": "MDI_POLY", "name": "聚合MDI(PM200市场价)", "unit": "元/吨"},
+            {"type": "cmd", "code": "MDI_PURE", "name": "纯MDI(PM100市场价)", "unit": "元/吨"}
+          ],
+          "cost_links": [
+            {"type": "agro", "id": "benzene", "name": "纯苯(单耗~1.05吨/吨MDI)", "unit": "元/吨", "prev": 7300, "prev_note": "Q3纯苯均价口径(生意社基准价9月约7,000-7,500中值,flag——序列10月起无Q3历史);Q4纯苯随油价暴涨至10,400(+42%)是万华重大成本冲击"}
+          ],
+          "spreads": [
+            {"name": "聚合MDI-1.05×纯苯 价差", "a": {"type": "cmd", "code": "MDI_POLY"}, "b": {"type": "agro", "id": "benzene"}, "b_mult": 1.05},
+            {"name": "纯MDI-聚合MDI 价差(规格溢价)", "a": {"type": "cmd", "code": "MDI_PURE"}, "b": {"type": "cmd", "code": "MDI_POLY"}}
+          ],
+          "volume": [
+            {"period": "2026Q3", "qty": 100, "unit": "万吨", "flag": "假设口径:MDI ~95+TDI/聚醚;万华不披露分品销量"}
+          ],
+          "unit_cost_model": "MDI完全成本≈1.05×纯苯+苯胺加工~3,000+氯气/烧碱(自产)+甲醛+折旧人工~2,500;聚合MDI成本~12,000-13,000 vs 现价15,000-19,000",
+          "note": "挂牌价(万华官方旬度)与市场价并行,模型用市场价;纯MDI现价21,200(10月下旬) vs 聚合15,000——规格溢价6,200"
+        },
+        {
+          "product": "石化(C2/C3/C4,PDH+乙烯)",
+          "price_link": {"type": "cmd", "code": "BRENT_WTI", "unit": "美元/桶", "note": "原料LPG与产品烯烃的油价传导链"},
+          "volume": [{"period": "2026Q3", "qty": null}],
+          "note": "收入占比~40%但毛利占比~10%(PDH 微利);丙烷CP价未入库(油价代理);板块弹性小,static处理"
+        },
+        {
+          "product": "精细化学品+新材料(ADI/TPU/PC/柠檬醛/电池材料)",
+          "price_link": null,
+          "volume": [{"period": "2026Q1-3", "note": "收入+45.4%(三季报口径)"}],
+          "note": "高增长板块但不跟踪单品价格,static处理"
+        }
+      ],
+      "equity_notes": "万华少数股东损益占比小(烟台/宁波全资为主);所得税~18%(高新)",
+      "model": {
+        "method": "增量桥:Q4E=Q3实际+Σ分部毛利变动×传导;MDI价格=新采集序列QTD动态(2026-09-28起) vs Q3均价(override,新闻口径flag);纯苯成本联动(agro序列)",
+        "conduit": 0.75,
+        "conduit_note": "毛利变动→归母=税~18%+少数股东~7%(万华综合口径估)",
+        "q4_2026": {
+          "baseline": {"label": "Q3'26 归母55.95亿/营收665.51亿", "revenue_yi": 665.51, "attributable_yi": 55.95, "non_gaap_yi": 54.4, "ytd_revenue_yi": 1858.67, "ytd_attributable_yi": 156.58, "ytd_non_gaap_yi": 152.5, "source": "2026三季报;扣非=归母-约1.5亿非经/季(估,flag);Q1-3营收/归母与库fin表H1互洽✓"},
+          "segments": [
+            {"product": "聚氨酯(MDI口径)", "price_code": "MDI_POLY", "vol_unit": "万吨", "mult": 1e4,
+             "p_prev_override": 15500,
+             "p_prev_note": "Q3聚合MDI市场均价口径(新闻/研报综合,flag——序列2026-09-28起无Q3历史)",
+             "cost_links": [{"type": "agro", "id": "benzene", "mult": 1.05, "prev": 7300}],
+             "vol_scenarios": {"low": 92, "base": 100, "high": 106},
+             "vol_note": "Q4检修季(烟台/宁波轮检)+出口淡季:量环比微降是常态;high=检修推迟"},
+            {"product": "石化(PDH+乙烯)", "price_code": null, "static_margin_change_yi": [-6, 0, 4],
+             "vol_note": "油价10月暴涨(PDH原料丙烷跟涨):low=价差进一步压缩;板块毛利占比小"},
+            {"product": "精细+新材料", "price_code": null, "static_margin_change_yi": [2, 4, 6],
+             "vol_note": "高增长延续(+45%收入)叠加新产能"}
+          ],
+          "other_lines": {
+            "impairment_yi": [-3, -1, 0],
+            "impairment_note": "年末计提惯例(存货跌价+固定资产),幅度小于矿企"
+          },
+          "price_scenario_pct": [-0.06, 0.0, 0.04]
+        },
+        "fy_2027": {
+          "method": "FY27E = FY26E + 量价情景(MDI 新产能(福建40万吨满产)+新材料放量 vs MDI周期回落风险)",
+          "segments": [
+            {"product": "聚氨酯(MDI口径)", "vol_2026e": 395, "vol_2027": [390, 405, 420]},
+            {"product": "石化+精细+新材料", "delta_margin_yi": [-10, 5, 20]}
+          ],
+          "price_scenario_pct": [-0.12, 0.0, 0.06],
+          "cost_escalation": 0.02,
+          "note": "基准=MDI 价格平台震荡(纯MDI溢价维持);悲观=MDI 周期回落12%(2021-2025 曾从 25,000 跌至 15,000);乐观=地产链修复+出口共振"
+        }
+      },
+      "watchlist": [
+        "MDI 挂牌价(万华旬度公告)与市场价背离度",
+        "纯MDI-聚合MDI 规格溢价(现 6,200,高溢价=高端需求强)",
+        "Q4 烟台/宁波基地检修安排",
+        "油价→丙烷CP→PDH 价差(石化板块弹性)",
+        "福建 40 万吨新 MDI 产能爬坡(2027 满产)"
+      ]
+    },
+    {
       "sid": "603599",
       "name": "广信股份",
       "market": "A",
