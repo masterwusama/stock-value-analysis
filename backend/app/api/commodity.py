@@ -14,10 +14,14 @@ cmd_indicator/cmd_value 两表(commodity 列分行)→ 本接口读库。
 设计文档:docs/设计-大宗商品供需模块-{黄金,白银}.md。
 """
 import datetime as dt
+import json
+import threading
+import time
 from collections import defaultdict
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi.responses import Response
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
@@ -242,6 +246,22 @@ def _stats(points, freq):
     }
 
 
+# 商品载荷缓存:commodity -> (指纹, payload, 缓存时刻)。指纹查询实测 gold ~18ms
+_cmd_cache: dict = {}
+_cmd_lock = threading.Lock()
+_CMD_CACHE_TTL = 600.0
+
+
+def _cmd_fingerprint(db: Session, commodity: str) -> tuple:
+    """(本商品最新数据日, 行数)。PK (cmd_code, data_date) 前缀范围扫,足够便宜。"""
+    codes = select(CmdIndicator.cmd_code).where(CmdIndicator.commodity == commodity)
+    row = db.execute(
+        select(func.max(CmdValue.data_date), func.count())
+        .where(CmdValue.cmd_code.in_(codes))
+    ).one()
+    return tuple(str(v) for v in row)
+
+
 def _cmd_series(db: Session, commodity: str):
     """cmd_* 两表按 commodity 取行 → 全序列 + 读时统计 + 释义/导读注入。
 
@@ -250,7 +270,16 @@ def _cmd_series(db: Session, commodity: str):
     points 降采样(近 180 天保留全部,更早按 ISO 周桶取首见,~1100 点封顶),
     响应体积约 1/5——stats(52周分位/变动/高低)始终用全量点算,不受采样影响;
     图表 1000+ 点视觉无损,周/月/年频序列点少不采。
+    进程内缓存(2026-10-28):gold 每次请求拉 8.5 万行仅 pymysql 解码就 ~430ms
+    再加全量 stats 重算,八商品 Tab 切换全程全款;键=(该商品 max(data_date),
+    行数) 指纹,日更任务落库后指纹变化自动失效,同指纹 TTL 只兜原地 UPDATE。
     """
+    with _cmd_lock:
+        ent = _cmd_cache.get(commodity)
+    if ent is not None:
+        fp_now = _cmd_fingerprint(db, commodity)
+        if ent[0] == fp_now and time.time() - ent[2] < _CMD_CACHE_TTL:
+            return Response(content=ent[1], media_type="application/json")
     inds = db.execute(
         select(CmdIndicator).where(CmdIndicator.commodity == commodity)
     ).scalars().all()
@@ -285,13 +314,23 @@ def _cmd_series(db: Session, commodity: str):
     for s in series:  # cat 首见序即展示序(fetch SPEC 顺序)
         if s["cat"] not in cats:
             cats.append(s["cat"])
-    return {
+    payload = {
         "updated_at": max((s["stats"].get("latest_date") for s in series), default=None),
         "commodity": commodity,
         "cats": cats,
         "guide": _GUIDE.get(commodity),
         "series": series,
     }
+    # 缓存预序列化的响应体:gold 载荷 148KB,每请求走 dict→JSON 编码要 ~150ms,
+    # 构建时序列化一次后命中路径只剩指纹查询(~18ms)+gzip。注意 Response 对象
+    # 不能跨请求复用(GZip 中间件下二次发送会 Content-Length 错乱),缓存的是
+    # bytes,每请求新建 Response——content 传 bytes 时 render 是零拷贝。
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    with _cmd_lock:
+        _cmd_cache[commodity] = (
+            _cmd_fingerprint(db, commodity), body, time.time(),
+        )
+        return Response(content=body, media_type="application/json")
 
 
 def _sample(points, freq):

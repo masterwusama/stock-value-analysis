@@ -15,17 +15,40 @@
 两者时点差是本模块误差的主来源,页面对每个数字带 as-of。
 """
 import datetime as dt
+import json
+import threading
+import time
 from collections import defaultdict
 from statistics import median
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi.responses import Response
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
 from app.models import AgroPrice, CmdValue, FcTarget
 
 router = APIRouter(prefix="/api/forecast", tags=["forecast"])
+
+# 响应缓存:读时合成每请求全量重算(~0.4s);数据日更,指纹一变即重建
+_fc_cache: dict = {"key": None, "at": 0.0, "payload": None}
+_fc_lock = threading.Lock()
+_FC_CACHE_TTL = 600.0
+
+
+def _fc_fingerprint(db: Session) -> tuple:
+    """(标的最新更新时刻+标的数, cmd_ 最新数据日, agro 最新数据日)。
+
+    cmd/agro 只取 max(数据日):日更任务必然写入更新日期,全表 COUNT(28 万行)
+    反而比它要保护的东西更贵;FcTarget 是人工编辑的,updated_at+行数双保险。
+    """
+    row = db.execute(
+        select(func.max(FcTarget.updated_at), func.count()).select_from(FcTarget)
+    ).one()
+    cmd = db.execute(select(func.max(CmdValue.data_date))).scalar_one()
+    agro = db.execute(select(func.max(AgroPrice.price_date))).scalar_one()
+    return tuple(str(v) for v in row) + (str(cmd), str(agro))
 
 
 def _quarter_of(d: dt.date) -> str:
@@ -474,6 +497,11 @@ def _target_detail(db, t, cmd_cache, agro_cache):
 @router.get("")
 def forecast_targets(db: Session = Depends(get_session)):
     """全部标的(含分部合成)。两三个标的体量,一次全返;价格 points 限近 400 点。"""
+    fp = _fc_fingerprint(db)
+    with _fc_lock:
+        if (_fc_cache["payload"] is not None and _fc_cache["key"] == fp
+                and time.time() - _fc_cache["at"] < _FC_CACHE_TTL):
+            return Response(content=_fc_cache["payload"], media_type="application/json")
     targets = db.execute(select(FcTarget).order_by(FcTarget.sid)).scalars().all()
     cmd_cache, agro_cache = {}, {}
     out = []
@@ -484,4 +512,10 @@ def forecast_targets(db: Session = Depends(get_session)):
                 for p in seg.get(key) or []:
                     p["points"] = p["points"][-400:]
         out.append(d)
-    return {"updated_at": dt.date.today().isoformat(), "targets": out}
+    # 缓存序列化后的 bytes 而非 Response 对象:Response 不能跨请求复用
+    # (GZip 中间件下二次发送会错乱),每请求新建 Response 是零拷贝。
+    body = json.dumps({"updated_at": dt.date.today().isoformat(), "targets": out},
+                      ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    with _fc_lock:
+        _fc_cache.update(key=fp, at=time.time(), payload=body)
+    return Response(content=body, media_type="application/json")

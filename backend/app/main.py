@@ -57,12 +57,17 @@ def health(db: Session = Depends(get_session)):
 # 生产前端:npm run build 产物存在时直接托管(本机一体服务 :8000;hash 路由无需 fallback)
 # index.html 必须禁缓存:它引用带内容哈希的 chunk,浏览器缓存旧 index.html 就会加载旧
 # chunk——每次发版后用户看到的都是旧前端,还必须手动强刷(2026-09-19 实测踩坑)。
-# 带哈希的 assets/ 长缓存没问题(内容不变哈希不变)。
+# 带哈希的 assets/ 反过来要长缓存:内容变哈希就变,URL 即版本,immutable 让
+# Tailscale/手机端的重复访问省掉每个 JS/CSS 一次协商往返(2026-10-28)。
 class _NoCacheIndex(StaticFiles):
     def file_response(self, *args, **kwargs):
         resp = super().file_response(*args, **kwargs)
-        if getattr(resp, "name", "") == "index.html" or getattr(resp, "path", "").endswith("index.html"):
+        p = getattr(resp, "path", "") or ""
+        if p.endswith("index.html"):
             resp.headers["Cache-Control"] = "no-cache"
+        elif ("assets" in Path(p).parts
+              and Path(p).suffix.lower() in (".js", ".css", ".woff2", ".png", ".svg")):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return resp
 
 

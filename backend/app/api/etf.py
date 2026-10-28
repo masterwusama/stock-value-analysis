@@ -47,11 +47,11 @@ GATE_LABELS = {"audit_qualify": "审计非标", "risk_warning": "ST/风险警示
 
 
 # ---------------------------------------------------------------------------
-# 装载(进程内缓存,键=各表最新日期)
+# 装载(进程内缓存,键=各表最新日期+当日行数;TTL 1 小时兜底,同 pick 2026-10-28)
 # ---------------------------------------------------------------------------
 
 _cache: dict = {"key": None, "at": 0.0, "payload": None}
-_CACHE_TTL = 300.0
+_CACHE_TTL = 3600.0
 
 
 def _pct(vals: list[float], v: float | None):
@@ -64,12 +64,18 @@ def _pct(vals: list[float], v: float | None):
     return min(100.0, max(0.0, round(sum(1 for x in win if x <= v) / len(win) * 100, 1))), len(win)
 
 
+def _cnt(db, model):
+    """(最新日, 当日行数) 指纹对:同日重灌(行数变)会让键失配,缓存自动重建。"""
+    d = db.execute(select(func.max(model.trade_date))).scalar_one()
+    if d is None:
+        return (None, None)
+    n = db.execute(select(func.count()).select_from(model)
+                   .where(model.trade_date == d)).scalar_one()
+    return (d.isoformat(), n)
+
+
 def _load(db: Session, fresh: bool = False):
-    key = (
-        db.execute(select(func.max(EtfSpot.trade_date))).scalar_one(),
-        db.execute(select(func.max(EtfIndexVal.trade_date))).scalar_one(),
-        db.execute(select(func.max(ScoreDaily.trade_date))).scalar_one(),
-    )
+    key = (_cnt(db, EtfSpot), _cnt(db, EtfIndexVal), _cnt(db, ScoreDaily))
     if (not fresh and _cache["payload"] is not None and _cache["key"] == key
             and time.time() - _cache["at"] < _CACHE_TTL):
         return _cache["payload"]
@@ -95,7 +101,8 @@ def _load(db: Session, fresh: bool = False):
         holds_by_etf.setdefault(h.code, []).append(h)
 
     # 成份股评分 join:score_daily 最新交易日 × security(code, market)
-    td = key[2]
+    td = db.execute(select(func.max(ScoreDaily.trade_date))).scalar_one()
+    spot_td = db.execute(select(func.max(EtfSpot.trade_date))).scalar_one()
     score_rows = db.execute(
         select(Security.code, Security.market, Security.industry, ScoreDaily)
         .join(ScoreDaily, ScoreDaily.sid == Security.sid)
@@ -108,10 +115,10 @@ def _load(db: Session, fresh: bool = False):
         out[info.code] = _synth_one(info, (spots.get(info.code) or [None])[-1],
                                     by_idx_val.get(info.index_key) or [],
                                     by_idx_close.get(info.index_key) or [],
-                                    holds_by_etf.get(info.code) or [], smap, td, key[0],
+                                    holds_by_etf.get(info.code) or [], smap, td, spot_td,
                                     spot_hist=spots.get(info.code) or [])
     payload = {"etfs": out, "score_date": td.isoformat() if td else None,
-               "spot_date": key[0].isoformat() if key[0] else None}
+               "spot_date": spot_td.isoformat() if spot_td else None}
     _cache.update(key=key, at=time.time(), payload=payload)
     return payload
 

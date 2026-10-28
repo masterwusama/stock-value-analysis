@@ -15,3 +15,12 @@ export function ensureEcharts() {
   }
   return pending
 }
+
+// 空闲预热:十个视图七个要画图,首屏挂载后趁空闲把 chunk 拉好,用户点进任一
+// 图表页时不再付「下载 1MB + 解析」的关键路径开销。与 stockLegacy 的 warm 同款
+// 节奏;后台页签 idle 不触发由 timeout 兜底。
+export function prefetchEcharts() {
+  const warm = () => { ensureEcharts().catch(() => {}) }
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(warm, { timeout: 4000 })
+  else setTimeout(warm, 2000)
+}

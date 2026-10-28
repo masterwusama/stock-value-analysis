@@ -291,12 +291,11 @@ onMounted(async () => {
   if (q.get('page')) page.value = Math.max(1, Number(q.get('page')) || 1)
 
   try {
-    await loadStars()
-    await loadIndustries()
-    await loadCloud()
+    // 四路并行:各自只写自己的状态,总耗时=最慢一路而非四路求和(端点各自有缓存,
+    // 但冷启动时 board 1.5s、stars/industries/cloud 各几十 ms,串行白等)
+    await Promise.all([loadStars(), loadIndustries(), loadCloud(), loadBoard()])
     chart?.on('click', onCloudClick)
     loading.value = false
-    await loadBoard()
   } catch (e) {
     error.value = e.message
     loading.value = false

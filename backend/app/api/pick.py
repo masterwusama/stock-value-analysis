@@ -34,12 +34,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from app.db import get_session
 from app.api.research import coverage as _research_cov
-from app.api.securities import RECENT_DATES, _age_months, _latest_sub
+from app.api.securities import RECENT_DATES, _age_months
 from app.models import QuoteDaily, ScoreDaily, Security, SentimentDaily, ValuationPctile
 from collector.scripts import sentiment_score
 
@@ -404,11 +404,13 @@ def _to_item(s, sec, q, val_row, cov, today) -> PickItem:
 
 
 # ---------------------------------------------------------------------------
-# 基础数据装载(进程内缓存:键=评分日+最新行情日,TTL 5 分钟)
+# 基础数据装载(进程内缓存:键=评分日/行情日+两表当日行数,TTL 1 小时兜底)
 # ---------------------------------------------------------------------------
 
 _cache: dict = {"key": None, "at": 0.0, "items": None, "meta": None}
-_CACHE_TTL = 300.0
+# 2026-10-28:300s→3600s。键已含行数,同日重跑采集(行数变)会立即失效;纯 TTL 只是
+# 原地 UPDATE 行数不变时的兜底,放太短只会让用户每 5 分钟重付一次 1.5s 全量合成。
+_CACHE_TTL = 3600.0
 
 
 def _sentiment_snapshot(db: Session) -> dict | None:
@@ -445,28 +447,37 @@ def _hk_connect_codes() -> set[str] | None:
 
 
 def _load_base(db: Session, fresh: bool = False):
-    """全量合成行 + meta。缓存键 = (评分日, 最新行情日),同键 TTL 内直接复用。"""
+    """全量合成行 + meta。缓存键 = (评分日, 该日行数, 最新行情日, 该日行数)。
+
+    行数进键:refresh_scores 同日重跑只改行内容不挪日期,纯日期键看不见这种变化。
+    """
     td = db.execute(select(func.max(ScoreDaily.trade_date))).scalar_one()
     qdates = db.execute(
         select(QuoteDaily.trade_date).distinct()
         .order_by(QuoteDaily.trade_date.desc()).limit(RECENT_DATES)
     ).scalars().all()
+    qd_max = qdates[0] if qdates else None
     key = (td.isoformat() if td else None,
-           qdates[0].isoformat() if qdates else None)
+           db.execute(select(func.count()).select_from(ScoreDaily)
+                      .where(ScoreDaily.trade_date == td)).scalar_one() if td else None,
+           qd_max.isoformat() if qd_max else None,
+           db.execute(select(func.count()).select_from(QuoteDaily)
+                      .where(QuoteDaily.trade_date == qd_max)).scalar_one() if qd_max else None)
     if (not fresh and _cache["items"] is not None and _cache["key"] == key
             and time.time() - _cache["at"] < _CACHE_TTL):
         return _cache["items"], _cache["meta"]
 
     today = date.today()
-    # 行情取「最近 RECENT_DATES 个交易日内每家最新一行」(停牌/滞后收盘由窗口兜住),
-    # 与列表页同一套子查询
-    qd = _latest_sub(db, QuoteDaily, "qd")
+    # 行情取「每家最新一行」(停牌/滞后收盘由 outer 语义兜住)。相关标量子查询替代
+    # GROUP BY 派生表(与列表页 2026-10-28 同款重写,宽表物化 join 实测慢一个数量级)
+    _Q2 = aliased(QuoteDaily)
     rows = db.execute(
         select(ScoreDaily, Security, QuoteDaily)
         .join(Security, Security.sid == ScoreDaily.sid)
-        .join(qd, qd.c.sid == ScoreDaily.sid)
-        .join(QuoteDaily, (QuoteDaily.sid == ScoreDaily.sid)
-              & (QuoteDaily.trade_date == qd.c.qd))
+        .join(QuoteDaily, and_(
+            QuoteDaily.sid == ScoreDaily.sid,
+            QuoteDaily.trade_date == select(func.max(_Q2.trade_date))
+            .where(_Q2.sid == ScoreDaily.sid).scalar_subquery()))
         .where(ScoreDaily.trade_date == td, Security.market.in_(MARKETS),
                or_(Security.list_date.is_(None), Security.list_date < _listed_cutoff(today)))
     ).all()

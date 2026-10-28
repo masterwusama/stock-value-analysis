@@ -21,8 +21,10 @@ const VISIBLE_DAYS = 60          // dataZoom 默认露出的天数(其余拖滚�
 
 onMounted(async () => {
   try {
-    daily.value = await get('/sentiment/daily')
-    history.value = await get('/sentiment/history', { limit: TREND_DAYS })
+    // 两路并行:daily/history 互不依赖,串行会把两次 RTT 叠加
+    ;[daily.value, history.value] = await Promise.all([
+      get('/sentiment/daily'), get('/sentiment/history', { limit: TREND_DAYS }),
+    ])
   } catch (e) {
     error.value = String(e.message || e)
   }

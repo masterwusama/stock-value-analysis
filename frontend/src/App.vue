@@ -1,4 +1,10 @@
 <script setup>
+import { onMounted } from 'vue'
+import { prefetchEcharts } from './lib/echartsLoader'
+
+// 任一页首屏挂载后空闲预热 echarts(1MB chunk):不阻塞本页,只让下一个
+// 图表页免付下载+解析(十个视图七个画图,预热命中率很高)
+onMounted(prefetchEcharts)
 </script>
 
 <template>
