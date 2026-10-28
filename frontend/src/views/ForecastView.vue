@@ -97,20 +97,31 @@ const fy27IsNonGaap = computed(() => {
 
 function pickPrice(p) { curCode.value = p.code }
 
+// 移动端分部表:三张表(价格/成本/价差)拍平成序列卡列表用的分组描述
+function segTables(seg) {
+  return [
+    { title: "价格序列", rows: seg.prices || [], kind: "price" },
+    { title: "成本序列(原料/能源)", rows: seg.costs || [], kind: "cost" },
+    { title: "价差(产品−原料,简单差)", rows: seg.spreads || [], kind: "spread" },
+  ].filter(t => t.rows.length)
+}
+
 function render() {
   if (!chartEl.value || !echarts || !curCode.value) return
   const p = byCode.value[curCode.value]
   if (!p) return
   if (!chart) chart = echarts.init(chartEl.value)
   const pts = p.points || []
+  const m = isMobile.value
   chart.setOption({
     textStyle: { fontFamily: 'inherit' },
-    grid: { left: 60, right: 16, top: 30, bottom: 44 },
-    title: { text: `${p.name}(${p.unit})`, left: 0, top: 0, textStyle: { fontSize: 13 } },
+    grid: { left: m ? 44 : 60, right: 16, top: 30, bottom: m ? 50 : 44 },
+    title: { text: `${p.name}(${p.unit})`, left: 0, top: 0, textStyle: { fontSize: m ? 12 : 13 } },
     tooltip: { trigger: 'axis', confine: true },
     xAxis: { type: 'category', data: pts.map(x => x[0]), boundaryGap: false, axisLabel: { fontSize: 10 } },
     yAxis: { type: 'value', scale: true, axisLabel: { fontSize: 10 } },
-    dataZoom: [{ type: 'inside' }, { type: 'slider', height: 15, bottom: 6 }],
+    // 移动端滑杆加高到 18px:15px 的拖把手指点不中
+    dataZoom: [{ type: 'inside' }, { type: 'slider', height: m ? 18 : 15, bottom: m ? 4 : 6 }],
     series: [{ type: 'line', showSymbol: false, lineStyle: { width: 1.5, color: '#2d6cdf' },
                itemStyle: { color: '#2d6cdf' }, areaStyle: { opacity: 0.06 },
                data: pts.map(x => x[1]) }],
@@ -133,8 +144,9 @@ watch(() => allPrices.value.length, (n) => {
                 :class="{ on: t.sid === curSid }" @click="curSid = t.sid">
           <i class="mkt" :class="mktCls(t.market)">{{ mktLabel(t.market) }}</i>{{ t.name }}<span class="code">{{ t.sid }}</span>
         </button>
-        <span class="sub head-sub">业绩预测 · 研究工具非投资建议 · 量/成本为披露值,价格为库内最新</span>
       </div>
+      <!-- 口径说明独立成行(移动端 tabs 单行横滑,塞不进按钮行) -->
+      <p class="sub head-sub">业绩预测 · 研究工具非投资建议 · 量/成本为披露值,价格为库内最新</p>
 
       <!-- 头卡:市场口径条+论点+期间速览+指引完成度 -->
       <section class="card">
@@ -225,10 +237,24 @@ watch(() => allPrices.value.length, (n) => {
         </div>
       </section>
 
-      <!-- 分部表 -->
+      <!-- 分部表(桌面) / 序列卡(移动:7列表格在 375px 必然横向溢出) -->
       <section v-for="seg in target.segments" :key="seg.product" class="card">
         <h3>{{ seg.product }}</h3>
         <div v-if="seg.note" class="dim note-line">{{ seg.note }}</div>
+        <div v-if="isMobile" class="mrows">
+          <template v-for="tbl in segTables(seg)" :key="tbl.kind">
+            <div class="m-tbl-title" :class="tbl.kind">{{ tbl.title }}</div>
+            <button v-for="p in tbl.rows" :key="tbl.kind + p.code" type="button"
+                    class="mrow" :class="{ on: curCode === p.code }" @click="pickPrice(p)">
+              <span class="mrow-head">
+                <b class="mrow-name">{{ p.name }}</b>
+                <span class="mrow-latest">{{ num(p.stats.latest, p.unit === '元/克' ? 1 : 0) }} <i class="dim">{{ p.unit }}</i></span>
+              </span>
+              <span class="mrow-sub">最新 {{ p.stats.latest_date }}<template v-if="p.freq === 'week'"> · 周频</template> · QTD {{ num(p.stats.qtd, 0) }} · 上季 {{ num(p.stats.prev_q, 0) }} · 环比 <b :class="cls(p.stats.qoq)">{{ pct(p.stats.qoq) }}</b></span>
+            </button>
+          </template>
+        </div>
+        <template v-else>
         <table class="grid" v-if="seg.prices.length">
           <thead>
             <tr><th class="stick">价格序列</th><th>单位</th><th>最新</th><th>QTD均</th><th>上季均</th><th>环比</th><th></th></tr>
@@ -276,6 +302,7 @@ watch(() => allPrices.value.length, (n) => {
             </tr>
           </tbody>
         </table>
+        </template>
         <div class="meta">
           <span v-if="seg.unit_margin != null" class="chip v" title="QTD均价 − 最新披露单位成本(单位一致才可减;成本披露滞后一个报告期)">
             单位毛利 {{ seg.unit_margin }} {{ (seg.unit_cost.latest.unit || '').replace('元/','') }}<i class="dim">({{ seg.unit_cost.latest.period }}成本)</i>
@@ -323,6 +350,9 @@ watch(() => allPrices.value.length, (n) => {
 
 <style scoped>
 .fc { max-width: 1100px; margin: 0 auto; }
+/* 移动端横滑容器(tabs)用负 margin 拉满屏宽,取整会把页面撑出 1px 横向滚动;
+   clip 单轴裁切(可与另一轴 visible 组合),横滑容器内部滚动不受影响 */
+@media (max-width: 600px) { .fc { overflow-x: clip; } }
 .card { background: var(--card, #fff); border: 1px solid var(--line, #e5e9f2); border-radius: var(--r-m, 12px);
   padding: 14px 16px; margin-bottom: 14px; box-shadow: var(--shadow-s, 0 1px 2px rgba(20,30,55,.05)); }
 .card h3 { margin: 0 0 8px; font-size: 15px; }
@@ -332,12 +362,13 @@ watch(() => allPrices.value.length, (n) => {
 .up { color: var(--up, #dc2626); } .down { color: var(--down, #16a34a); }
 .note-line { margin: 4px 0 8px; line-height: 1.6; }
 .thesis { font-size: 14px; font-weight: 600; line-height: 1.7; }
-.tabs { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+.tabs { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .tab { font-size: 13px; padding: 6px 14px; border-radius: 999px; border: 1px solid var(--line, #e5e7eb);
-  background: var(--card, #fff); cursor: pointer; color: var(--txt, #374151); }
+  background: var(--card, #fff); cursor: pointer; color: var(--txt, #374151); white-space: nowrap; }
 .tab.on { border-color: var(--accent, #2d6cdf); color: var(--accent, #2d6cdf); background: #eff6ff; font-weight: 600; }
 .tab .code { color: var(--sub, #9ca3af); font-size: 12px; margin-left: 4px; font-weight: normal; }
-.head-sub { margin-left: auto; }
+/* 口径说明独立成行(原在 tabs 行内右侧;移动端 tabs 单行横滑后塞不下) */
+.head-sub { margin: 0 2px 12px; text-align: right; }
 .guide { margin-top: 10px; }
 .guide-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
 .guide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
@@ -397,10 +428,41 @@ tbody tr.on { background: var(--accent-soft, #eaf1fe); }
 .fy-val em { font-style: normal; font-size: 12px; color: var(--sub); font-weight: normal; }
 .fy-cmp { font-size: 12px; }
 .proj-detail { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line, #e5e9f2); }
-@media (max-width: 640px) {
+
+/* —— 移动端:三张分部表合成序列卡(7列 nowrap 表格在 375px 宽 548px+,撑破卡片) —— */
+.m-tbl-title { font-size: 11.5px; color: var(--sub, #6b7280); margin: 10px 0 5px; font-weight: 600; }
+.m-tbl-title:first-child { margin-top: 2px; }
+.m-tbl-title.cost { color: #92400e; }      /* 与桌面成本表 stick 列同色 */
+.m-tbl-title.spread { color: #1e40af; }    /* 与桌面价差表 stick 列同色 */
+.mrow { display: flex; flex-direction: column; gap: 3px; width: 100%; text-align: left;
+  border: 1px solid var(--line, #e5e9f2); border-radius: 10px; background: var(--card, #fff);
+  padding: 9px 12px; margin-bottom: 6px; cursor: pointer; font: inherit; color: inherit; }
+.mrow.on { background: var(--accent-soft, #eaf1fe); border-color: var(--accent, #2d6cdf); }
+.mrow-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.mrow-name { font-size: 13px; font-weight: 600; min-width: 0; }
+.mrow-latest { font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mrow-latest .dim { font-style: normal; }
+.mrow-sub { font-size: 11.5px; color: var(--sub, #6b7280); font-variant-numeric: tabular-nums; line-height: 1.5; }
+.mrow-sub b { font-weight: 600; }
+
+/* 断点与全站 MOBILE_QUERY(600px)对齐;此前 640 是本页孤例 */
+@media (max-width: 600px) {
+  .card { padding: 12px 11px; }
+  /* 标的 tabs 单行横滑(五个标的换行堆两层错落);口径说明整行左对齐 */
+  .tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch; margin-inline: -11px; padding-inline: 11px; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab { flex: none; min-height: 36px; }
+  .head-sub { text-align: left; margin: 0 1px 10px; }
   .scn-cards { grid-template-columns: 1fr; }
   .scn-card.base { order: -1; }
   .scn-val { font-size: 26px; }
+  /* 窄屏行内元素换行后加行距,消除视觉重叠感(环比/同比、营收/毛利/扣非两行) */
+  .scn-cmp { gap: 6px 10px; flex-wrap: wrap; }
+  .scn-extra { row-gap: 3px; }
+  .guide-grid { grid-template-columns: 1fr; }
+  .fy-grid { grid-template-columns: 1fr; }
+  .mkt-strip { align-items: flex-start; }
 }
 .watch { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.9; }
 .watch.compact { font-size: 12px; line-height: 1.7; }
