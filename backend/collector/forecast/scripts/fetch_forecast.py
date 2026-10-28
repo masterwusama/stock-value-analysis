@@ -159,6 +159,62 @@ def fetch_mdi_mprice():
 
 SMM_TC_URL = 'https://www.smm.cn/mpdb/1705462337105_price'
 
+KCL_MPRICE_ID = 927  # 生意社氯化钾报价中心(工业级/60%粉/62%粉/进口混排)
+KCL_PAGES = 5
+
+
+def fetch_kcl_mprice():
+    """生意社氯化钾报价中心 → 按产地分组三条序列(按日中位数)。
+
+    行形态:`氯化钾 氧化钾含量/%≥:60% 盐湖股份 3600元/吨 市场价 山东省/…
+    山东佳铭化工 VIP 2026-10-27`——价格前的最后一个词段是产地/来源,
+    「盐湖股份」直销挂单=最贴近分部实现的出厂价口径;进口系(俄罗斯/
+    加拿大/以色列等)与国产系(含工业级)分列,规格混杂用中位数+离群过滤。
+    """
+    from collections import defaultdict
+    buckets = {'KCL_SALT_LAKE': [], 'KCL_IMPORT': [], 'KCL_DOMESTIC': []}
+    IMPORT_HINTS = ('进口', '俄罗斯', '加拿大', '以色列', '白俄罗斯', '约旦', '老挝', '智利')
+    for page in range(1, KCL_PAGES + 1):
+        try:
+            html = fetch('https://www.100ppi.com/mprice/plist-1-%d-%d.html'
+                         % (KCL_MPRICE_ID, page), referer='https://www.100ppi.com/mprice/')
+        except Exception as e:  # noqa: BLE001
+            print('[forecast] KCL 页 %d 失败: %r' % (page, e), flush=True)
+            break
+        txt = re.sub(r'<[^>]+>', ' ', re.sub(r'<script[\s\S]*?</script>', '', html))
+        txt = re.sub(r'\s+', ' ', txt)
+        # (氯化钾)(规格…)(产地词)(价格)元/吨(市场价/出厂价)(地区)(交易商)(VIP)(日期)
+        for m in re.finditer(
+                r'氯化钾\s+([^元]{0,60}?)\s*([\u4e00-\u9fa5A-Za-z]{2,10}?)\s+'
+                r'(\d[\d,]*(?:\.\d+)?)\s*元/吨\s*(?:市场价|出厂价)\s+\S+\s+'
+                r'[\u4e00-\u9fa5（）()]{3,30}?(?:有限公司|化工)[\s.]*(?:VIP\s+)?(\d{4}-\d{2}-\d{2})',
+                txt):
+            spec, origin, price, date = m.groups()
+            price = float(price.replace(',', ''))
+            if '工业' in spec and '98' in spec:
+                continue  # 工业级是另一条产品线(非肥用),剔除
+            if '盐湖' in origin:
+                key = 'KCL_SALT_LAKE'
+            elif any(h in origin for h in IMPORT_HINTS):
+                key = 'KCL_IMPORT'
+            else:
+                key = 'KCL_DOMESTIC'
+            buckets[key].append((date, price))
+        time.sleep(SLEEP)
+        if page == 1 and not any(buckets.values()):
+            break  # 页面结构变了,不空翻
+    out = {}
+    for key, rows in buckets.items():
+        by_day = defaultdict(list)
+        for d, v in rows:
+            by_day[d].append(v)
+        med = []
+        for d in sorted(by_day):
+            vs = sorted(by_day[d])
+            med.append([d, round(vs[len(vs) // 2], 0)])
+        out[key] = med
+    return out
+
 
 def fetch_cu_tc():
     """SMM 铜精矿价格页 → 进口铜精矿指数(周)/(月) 最新值。
@@ -244,6 +300,26 @@ def main():
             print('[forecast] %s: %d 点 %s~%s' % (code, len(pts), pts[0][0], pts[-1][0]), flush=True)
     except Exception as e:  # noqa: BLE001
         warnings.append('MDI: %r' % e)
+
+    # 氯化钾(盐湖股份核心产品:盐湖直销出厂价/进口62%粉参照/国产混采)
+    try:
+        kcl = fetch_kcl_mprice()
+        klabels = {'KCL_SALT_LAKE': ('氯化钾(盐湖直销60%粉)', '钾肥'),
+                   'KCL_IMPORT': ('氯化钾(进口62%粉)', '钾肥'),
+                   'KCL_DOMESTIC': ('氯化钾(国产混采)', '钾肥')}
+        for i, (code, pts) in enumerate(sorted(kcl.items())):
+            if not pts:
+                continue
+            series.append({
+                'code': code, 'idx': 20 + i, 'name': klabels[code][0],
+                'label': klabels[code][0], 'cat': '化工品', 'group': klabels[code][1],
+                'unit': '元/吨', 'freq': '日',
+                'source': '生意社报价中心(mprice %d,按产地分组日中位数;挂单不日日有,历史从2026-10-28累积)' % KCL_MPRICE_ID,
+                'points': pts,
+            })
+            print('[forecast] %s: %d 点 %s~%s' % (code, len(pts), pts[0][0], pts[-1][0]), flush=True)
+    except Exception as e:  # noqa: BLE001
+        warnings.append('KCL: %r' % e)
 
     # 铜精矿 TC/RC(SMM 指数页,增量累积;历史锚点在 targets.json manual_series)
     auto_tc = {}
