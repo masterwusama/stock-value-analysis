@@ -842,7 +842,8 @@
       {
        "type": "agro",
        "id": "thiophanate-methyl",
-       "name": "甲基硫菌灵"
+       "name": "甲基硫菌灵",
+       "freq": "week"
       },
       {
        "type": "agro",
@@ -852,12 +853,14 @@
       {
        "type": "agro",
        "id": "indoxacarb",
-       "name": "茚虫威(折百)"
+       "name": "茚虫威(折百)",
+       "freq": "week"
       },
       {
        "type": "agro",
        "id": "oxadiazon",
-       "name": "噁草酮"
+       "name": "噁草酮",
+       "freq": "week"
       }
      ],
      "cost_links": [
@@ -986,7 +989,8 @@
       {
        "type": "agro",
        "id": "glyphosate",
-       "name": "草甘膦95%"
+       "name": "草甘膦95%",
+       "freq": "week"
       }
      ],
      "cost_links": [

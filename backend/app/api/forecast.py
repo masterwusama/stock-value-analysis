@@ -405,6 +405,7 @@ def _target_detail(db, t, cmd_cache, agro_cache):
             prices.append(
                 {"name": lk.get("name") or lk.get("code") or lk["id"],
                  "code": lk.get("code") or lk["id"], "unit": unit,
+                 "freq": lk.get("freq"),
                  "stats": _qtd_stats(pts), "points": pts})
         for lk in seg.get("cost_links") or []:
             pts = _load_series_for_link(db, lk, cmd_cache, agro_cache)

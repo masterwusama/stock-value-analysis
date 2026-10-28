@@ -234,7 +234,7 @@ watch(() => allPrices.value.length, (n) => {
             <tr v-for="p in seg.prices" :key="p.code" :class="{ on: curCode === p.code }" @click="pickPrice(p)">
               <td class="stick">{{ p.name }}</td>
               <td>{{ p.unit }}</td>
-              <td>{{ num(p.stats.latest, p.unit === '元/克' ? 1 : 0) }} <i class="dim">({{ p.stats.latest_date }})</i></td>
+              <td>{{ num(p.stats.latest, p.unit === '元/克' ? 1 : 0) }} <i class="dim">({{ p.stats.latest_date }}<template v-if="p.freq === 'week'">·周频</template>)</i></td>
               <td>{{ num(p.stats.qtd, 0) }} <i class="dim">{{ p.stats.quarter }}</i></td>
               <td>{{ num(p.stats.prev_q, 0) }}</td>
               <td :class="cls(p.stats.qoq)">{{ pct(p.stats.qoq) }}</td>
