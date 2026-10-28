@@ -149,6 +149,38 @@ def fetch_mdi_mprice():
     return out
 
 
+SMM_TC_URL = 'https://www.smm.cn/mpdb/1705462337105_price'
+
+
+def fetch_cu_tc():
+    """SMM 铜精矿价格页 → 进口铜精矿指数(周)/(月) 最新值。
+
+    页面表格渲染层是「请登录」假墙,但内嵌 JSON 的 average 字段是免费真实值
+    (2026-10-28 实测:周 -241.43@10-23、月 -217.62@09-30,与外部转载互证)。
+    页面只给最新一期——增量累积(周度每周五四发,日任务抓到同值幂等),历史
+    由 targets.json manual_series 的人工锚点打底(2025/2026 长单+7月两点)。
+    注意 SMM 强制 gzip:需 Accept-Encoding+手动解压。
+    """
+    import gzip as _gz
+    import json as _json
+    req = urllib.request.Request(SMM_TC_URL, headers={
+        'User-Agent': UA['User-Agent'], 'Accept-Encoding': 'gzip'})
+    raw = urllib.request.urlopen(req, timeout=25, context=ctx).read()
+    if raw[:2] == b'\x1f\x8b':
+        raw = _gz.decompress(raw)
+    html = raw.decode('utf-8', 'ignore')
+    out = {}
+    for m in re.finditer(
+            r'\{"product_id":"[\d]+","product_name":"(进口铜精矿指数\((周|月)\))"'
+            r'[^}]*?"average":(-?[\d.]+)[^}]*?"unit":"([^"]+)","renew_date":"(\d{4}-\d{2}-\d{2})"', html):
+        name, freq, val, unit, date = m.groups()
+        key = 'CU_TC_SPOT' if freq == '周' else 'CU_TC_MONTH'
+        out[key] = (date, float(val), unit)
+    if not out:
+        raise ValueError('SMM TC 页未解析出指数(JSON 结构可能变化)')
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--dry-run', action='store_true')
@@ -193,18 +225,50 @@ def main():
     except Exception as e:  # noqa: BLE001
         warnings.append('MDI: %r' % e)
 
-    # manual_series 原样并入(人工维护,不发包)
+    # 铜精矿 TC/RC(SMM 指数页,增量累积;历史锚点在 targets.json manual_series)
+    auto_tc = {}
+    try:
+        tc = fetch_cu_tc()
+        for code, (date, val, unit) in tc.items():
+            auto_tc[code] = (date, val, unit)
+            print('[forecast] SMM %s: %s @ %s' % (code, val, date), flush=True)
+    except Exception as e:  # noqa: BLE001
+        warnings.append('CU_TC: %r' % e)
+        print('[forecast] SMM TC 失败: %r' % e, flush=True)
+
+    # manual_series 并入(人工维护,不发包);与自动采集同 code 时合并:
+    # 自动点(最新一期)优先同日,人工锚点补历史
     try:
         tj = json.loads(TARGETS.read_text(encoding='utf-8'))
         for i, ms in enumerate(tj.get('manual_series', [])):
+            pts = {d: v for d, v, *_ in ms.get('points', [])}
+            src = '人工维护(' + ms.get('note', '')[:40] + ')'
+            if ms['code'] in auto_tc:
+                d, v, unit = auto_tc[ms['code']]
+                pts[d] = v
+                src = ('SMM价格页内嵌JSON自动(增量累积)+人工锚点打底'
+                       '(页面只给最新一期,同日自动优先)')
             series.append({
                 'code': ms['code'], 'idx': 1 + i, 'name': ms['name'],
-                'label': ms['name'], 'cat': 'manual', 'group': '人工维护',
+                'label': ms['name'], 'cat': 'manual', 'group': '铜精矿',
                 'unit': ms.get('unit', ''), 'freq': ms.get('freq', '月'),
-                'source': '人工维护(' + ms.get('note', '')[:40] + ')',
-                'points': [[d, v] for d, v, *_ in ms.get('points', [])],
+                'source': src,
+                'points': [[d, pts[d]] for d in sorted(pts)],
             })
-            print('[forecast] manual %s: %d 点' % (ms['code'], len(ms.get('points', []))), flush=True)
+            print('[forecast] manual %s: %d 点' % (ms['code'], len(pts)), flush=True)
+        # 自动采到但无人工锚点的(如月度指数)独立成序列
+        tc_labels = {'CU_TC_SPOT': '铜精矿现货TC(SMM周度)', 'CU_TC_MONTH': '铜精矿月度TC(SMM)'}
+        for j, (code, (d, v, unit)) in enumerate(sorted(auto_tc.items())):
+            if any(s2['code'] == code for s2 in series):
+                continue
+            series.append({
+                'code': code, 'idx': 20 + j, 'name': tc_labels.get(code, code),
+                'label': tc_labels.get(code, code), 'cat': 'manual', 'group': '铜精矿',
+                'unit': unit, 'freq': '月' if code.endswith('MONTH') else '周',
+                'source': 'SMM价格页内嵌JSON自动(增量累积,始于2026-10-28)',
+                'points': [[d, v]],
+            })
+            print('[forecast] auto-new %s: 1 点' % code, flush=True)
     except Exception as e:  # noqa: BLE001
         warnings.append('manual_series: %r' % e)
 
