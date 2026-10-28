@@ -16,6 +16,7 @@
 """
 import datetime as dt
 from collections import defaultdict
+from statistics import median
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -83,8 +84,9 @@ def _load_agro_series(db, product_ids):
     for pid, d, v in rows:
         by_day[pid][d.isoformat()].append(float(v))
     for pid, days in by_day.items():
-        vals = sorted((sum(vs) / len(vs), d) for d, vs in days.items())
-        out[pid] = [[d, round(v, 2)] for v, d in vals]
+        # 按日期升序返回——曾误用 sorted((价,日期)) 按价格排序,导致 points[-1]
+        # 落在历史最高价(对硝"最新"显示 2021 年 15,300 的真凶);同日多交易商取中位数
+        out[pid] = [[d, round(median(vs), 2)] for d, vs in sorted(days.items())]
     return out
 
 
