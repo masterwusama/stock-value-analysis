@@ -295,10 +295,17 @@ def _model_projection(t, cmd_cache, agro_cache=None):
                 pts = cmd_cache.get(pc["price_code"]) or []
                 stats = _qtd_stats(pts) if pts else {}
                 p = stats.get("latest")
-                c27 = pc.get("q3_cost", 0) * (1 + (f27.get("cost_escalation") or 0))
+                # unit_margin 优先(宏桥式成本联动标的无披露成本,q3_cost空会导致
+                # 量增按全价计贡献——2026-10-28 自检发现的 bug);其次披露成本
+                if s.get("unit_margin") is not None:
+                    um = s["unit_margin"]
+                elif pc.get("q3_cost"):
+                    um = p - pc["q3_cost"] * (1 + (f27.get("cost_escalation") or 0))
+                else:
+                    um = 0
                 mult = pc.get("mult", 1)
                 for i in range(3):
-                    growth[i] += ((v27[i] - v26) * (p - c27) * mult * conduit / 1e8
+                    growth[i] += ((v27[i] - v26) * um * mult * conduit / 1e8
                                   + v26 * (p * (f27.get("price_scenario_pct") or [0, 0, 0])[i]) * mult * conduit / 1e8)
             elif s.get("delta_margin_yi"):
                 growth = [g + x * conduit for g, x in zip(growth, s["delta_margin_yi"])]

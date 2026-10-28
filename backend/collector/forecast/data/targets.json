@@ -1,459 +1,1232 @@
 {
-  "updated_at": "2026-10-28T10:00:00+08:00",
-  "note": "业绩预测模块·标的专属数据(人工结构化,每季随公告更新)。数据来源逐项标注;置信度 flagged 的数字只做参考不做锚。量=公司披露,价=本库序列(cmd_/agro_),成本=年报/半年报/三季报点评。",
-  "targets": [
-    {
-      "sid": "601899",
-      "name": "紫金矿业",
-      "market": "A+H",
-      "thesis": "量价成本三因子:产量季度披露+价格库全覆盖+单位成本半年披露——框架数据齐度最高的标的",
-      "period_note": "2026Q1-3 归母 575亿+(H1 391.7亿,+68.2%);Q3 金成本 313元/克(环比+2%)、铜成本 ~2.9万元/吨(环比+4%)",
-      "guidance_2026": {
-        "矿产金": {"qty": 105, "unit": "吨", "q1_3": 70, "yoy_q1_3": "+8%"},
-        "矿产铜": {"qty": 120, "unit": "万吨", "q1_3": 82, "note": "剔除卡莫阿 73万吨,同口径+6%"},
-        "当量碳酸锂": {"qty": 12, "unit": "万吨", "q1_3": 7.9},
-        "矿产银": {"qty": 520, "unit": "吨"},
-        "矿产锌(当量)": {"qty": 40, "unit": "万吨"}
-      },
-      "guidance_source": "2026-02-09 三年(2026-2028)规划公告;产量=2026Q3 季报(2026-10-24)",
-      "segments": [
-        {
-          "product": "矿产金",
-          "volume_unit": "吨",
-          "price_link": {"type": "cmd", "code": "SGE_AU9999", "unit": "元/克", "note": "矿产金国内销售,实现价≈SGE均价"},
-          "volume": [
-            {"period": "2026H1", "qty": 46.7, "yoy": "+13%"},
-            {"period": "2026Q1-3", "qty": 70, "yoy": "+8%"}
-          ],
-          "unit_cost": [
-            {"period": "2026H1", "cost": 291, "unit": "元/克", "yoy": "+11%"},
-            {"period": "2026Q3", "cost": 313, "unit": "元/克", "qoq": "+2%"}
-          ],
-          "sensitivity": "±1元/克 → 年化毛利 ±~1.0亿(105吨×1元/克;权益简化100%,少数股东另列)",
-          "source": "半年报(2026-08-21)/三季报点评"
-        },
-        {
-          "product": "矿产铜",
-          "volume_unit": "万吨",
-          "price_link": {"type": "cmd", "code": "CU0_CLOSE", "unit": "元/吨", "note": "沪铜主力;矿产铜实现价=铜价−TC−计价系数"},
-          "volume": [
-            {"period": "2026H1", "qty": 53.4},
-            {"period": "2026Q1-3", "qty": 82, "note": "剔除卡莫阿 73万吨 +6%"}
-          ],
-          "unit_cost": [
-            {"period": "2026Q3", "cost": 29000, "unit": "元/吨", "qoq": "+4%", "flag": "三季报点评口径约值"}
-          ],
-          "spread_extra": [
-            {"name": "铜精矿现货TC(SMM)", "code": "CU_TC_SPOT", "unit": "美元/干吨", "note": "2026长单0美元(12-21 Antofagasta);现货深度负值=冶炼吨亏+精矿实现价承压"}
-          ],
-          "sensitivity": "±1000元/吨 → 年化毛利 ±~12亿(120万吨口径)",
-          "source": "半年报/三季报"
-        },
-        {
-          "product": "矿产锌",
-          "volume_unit": "万吨",
-          "price_link": {"type": "cmd", "code": "ZN0_CLOSE", "unit": "元/吨", "note": "沪锌主力(序列在silver商品组下)"},
-          "volume": [{"period": "2026E", "qty": 40, "flag": "指引口径(锌当量含铅)"}],
-          "sensitivity": "±500元/吨 → 年化毛利 ±~2亿"
-        },
-        {
-          "product": "矿产银",
-          "volume_unit": "吨",
-          "price_link": {"type": "cmd", "code": "AG0_CLOSE", "unit": "元/千克"},
-          "volume": [{"period": "2026E", "qty": 520, "flag": "指引"}]
-        },
-        {
-          "product": "当量碳酸锂",
-          "volume_unit": "万吨",
-          "price_link": {"type": "cmd", "code": "LC0_CLOSE", "unit": "元/吨", "note": "广期所碳酸锂主力"},
-          "volume": [
-            {"period": "2026H1", "qty": 4.4},
-            {"period": "2026Q1-3", "qty": 7.9},
-            {"period": "2026E", "qty": 12, "flag": "指引"}
-          ],
-          "note": "3Q盐湖+拉果错放量;赤峰并表后更多"
-        }
-      ],
-      "equity_notes": "卡莫阿=联营权益法(投资收益,非并表);巨龙并表~50.1%;少数股东损益在利润表,分矿山拆分待年报结构化",
-      "model": {
-        "method": "增量桥:Q4E=Q3实际+Σ分部毛利变动×传导系数+非经营项;预估价=QTD已实现均值×已过天数权重+最新价×剩余天数权重(每日动态滚动)",
-        "conduit": 0.6,
-        "conduit_note": "毛利变动→归母的传导=税率15%+少数股东~25%综合折扣(粗估,年报结构化后校准)",
-        "q4_2026": {
-          "baseline": {"revenue_yi": 892.74, "attributable_yi": 183.56, "non_gaap_yi": 178.08, "ytd_revenue_yi": 2834.53, "ytd_attributable_yi": 575.26, "ytd_non_gaap_yi": 558.42, "source": "三季报(2026-10-23,营收与库fin表一致✓)"},
-          "segments": [
-            {"product": "矿产金", "price_code": "SGE_AU9999", "price_unit": "元/克", "vol_unit": "吨", "mult": 1e6,
-             "q3_cost": 313, "cost_qoq": 0.02, "equity": 1.0,
-             "vol_scenarios": {"low": 23.3, "base": 26.5, "high": 30.0, "guide": 35.0},
-             "vol_note": "low=Q3持平;base=Q3×1.1+赤峰并表2个月(~2.5吨,年产15吨级);guide=指引隐含(105-70,含赤峰贡献假设)"},
-            {"product": "矿产铜", "price_code": "CU0_CLOSE", "price_unit": "元/吨", "vol_unit": "万吨", "mult": 1e4,
-             "q3_cost": 29000, "cost_qoq": 0.04, "equity": 1.0,
-             "vol_scenarios": {"low": 26.0, "base": 28.6, "high": 31.0, "guide": 38.0},
-             "vol_note": "low=环比降;base=Q3持平;guide=指引隐含(120-82,需卡莫阿满产+朱诺贡献,偏乐观)"},
-            {"product": "当量碳酸锂", "price_code": "LC0_CLOSE", "price_unit": "元/吨", "vol_unit": "万吨", "mult": 1e4,
-             "q3_cost": 60000, "cost_qoq": 0.0, "equity": 1.0,
-             "vol_scenarios": {"low": 3.5, "base": 4.1, "high": 4.5},
-             "vol_note": "base=指引隐含(12-7.9);成本为一揽子假设(盐湖+矿石混合,粗)"},
-            {"product": "矿产锌+银+其他", "price_code": null, "static_margin_change_yi": [0, 1, 2],
-             "vol_note": "价量占比小,按持平~微增处理"}
-          ],
-          "other_lines": {
-            "impairment_yi": [-30, -15, -5],
-            "impairment_note": "Q4减值季节性(紫金历史Q4常态计提10-30亿)",
-            "smelting_note": "冶炼板块TC负值Q3已体现,假设Q4持平(若TC继续恶化每-10美元/干吨≈-2-3亿)"
-          },
-          "price_scenario_pct": [-0.1, 0.0, 0.05]
-        },
-        "fy_2027": {
-          "method": "FY27E = FY26E + Σ(Δ量×当前单位毛利×传导) ± 价格情景",
-          "segments": [
-            {"product": "矿产金", "vol_2026e": 96, "vol_2027": [110, 115, 120], "note": "2026E=Q1-3+Q4基准;2027=三年规划2028(130-140)插值"},
-            {"product": "矿产铜", "vol_2026e": 111, "vol_2027": [130, 135, 140]},
-            {"product": "当量碳酸锂", "vol_2026e": 12, "vol_2027": [16, 18, 20]},
-            {"product": "矿产锌+银+其他", "delta_margin_yi": [0, 5, 10]}
-          ],
-          "price_scenario_pct": [-0.1, 0.0, 0.05],
-          "cost_escalation": 0.05,
-          "note": "朱诺/雄村/马诺诺增量已含在量情景;赤峰全年并表贡献在金量"
-        }
-      },
-      "watchlist": [
-        "赤峰黄金并表(2026-10-22 完成控制权收购)",
-        "朱诺铜矿 2026 年底投产/雄村 2028",
-        "TC 负值持续度(冶炼板块亏损)",
-        "Q4 减值季节性(历史常态化)",
-        "卡莫阿复产节奏(Q1-3 已拖累矿产铜)"
-      ]
+ "updated_at": "2026-10-28T10:00:00+08:00",
+ "note": "业绩预测模块·标的专属数据(人工结构化,每季随公告更新)。数据来源逐项标注;置信度 flagged 的数字只做参考不做锚。量=公司披露,价=本库序列(cmd_/agro_),成本=年报/半年报/三季报点评。",
+ "targets": [
+  {
+   "sid": "601899",
+   "name": "紫金矿业",
+   "market": "A+H",
+   "thesis": "量价成本三因子:产量季度披露+价格库全覆盖+单位成本半年披露——框架数据齐度最高的标的",
+   "period_note": "2026Q1-3 归母 575亿+(H1 391.7亿,+68.2%);Q3 金成本 313元/克(环比+2%)、铜成本 ~2.9万元/吨(环比+4%)",
+   "guidance_2026": {
+    "矿产金": {
+     "qty": 105,
+     "unit": "吨",
+     "q1_3": 70,
+     "yoy_q1_3": "+8%"
     },
-    {
-      "sid": "01378",
-      "name": "中国宏桥",
-      "market": "HK",
-      "thesis": "电解铝全球产能第一(646万吨)×氧化铝自给(1,950万吨)×自备电+几内亚铝土矿一体化——库内三价齐备(沪铝/氧化铝/动力煤),成本链全联动模型;港股半年报制,做 H2E+FY26E",
-      "period_note": "H1'26 净利 172亿(+39%,盈喜口径,铝价驱动);氧化铝 2,560 低位=自用红利/外售承压并存(自给率>150%,净效应为正)",
-      "capacity": {
-        "电解铝": "646万吨(山东497+云南149,全球第一)",
-        "氧化铝": "1,950万吨(国内1,750+印尼200)",
-        "电力": "自备燃电+云南水电铝,几内亚铝土矿自营"
-      },
-      "guidance_2026": {
-        "电解铝(含合金)销量": {"qty": 587, "unit": "万吨", "q1_3": null, "note": "2025实际587.1,产能满产平稳"},
-        "氧化铝外售": {"qty": 1270, "unit": "万吨", "note": "2025实际口径(2024为1,092)"}
-      },
-      "guidance_source": "2025年报(2026-03-20)+2026中报盈喜(2026-07)+中银国际点评(2026-09-01)",
-      "segments": [
-        {
-          "product": "电解铝(含铝合金)",
-          "volume_unit": "万吨",
-          "price_link": {"type": "cmd", "code": "AL0_CLOSE", "unit": "元/吨", "note": "沪铝主力"},
-          "cost_links": [
-            {"type": "cmd", "code": "AO0_CLOSE", "name": "氧化铝(单耗1.93吨/吨铝)", "unit": "元/吨"},
-            {"type": "cmd", "code": "COAL_BENCH", "name": "动力煤(自备电折算系数~1.75元吨铝/元煤价)", "unit": "元/吨"}
-          ],
-          "spreads": [
-            {"name": "沪铝-1.93×氧化铝 有效价差", "a": {"type": "cmd", "code": "AL0_CLOSE"}, "b": {"type": "cmd", "code": "AO0_CLOSE"}, "b_mult": 1.93}
-          ],
-          "volume": [
-            {"period": "2025FY", "qty": 587.1, "yoy": "+0.2%", "source": "2025年报"},
-            {"period": "2026H1", "qty": 292, "flag": "H1'25为290.6,假设同比+0.5%(中报分部量未单独核实)"}
-          ],
-          "unit_cost_model": "完全成本≈1.93×氧化铝+电力(13,500度×~0.35元)+阳极~2,000+其他~1,500;氧化铝与动力煤价格联动,阳极/其他静态",
-          "note": "山东自备煤电+云南水电(枯水期限电风险);阳极价格随石油焦波动未入库,按静态2,000元/吨处理(±500元→±8亿/年毛利)"
-        },
-        {
-          "product": "氧化铝(外售部分)",
-          "volume_unit": "万吨",
-          "price_link": {"type": "cmd", "code": "AO0_CLOSE", "unit": "元/吨"},
-          "volume": [
-            {"period": "2024FY", "qty": 1092, "source": "2024年报(收入373.5亿/GM35.4%/成本~2,210)"},
-            {"period": "2025FY", "qty": 1270, "flag": "H1'25 636.8×2估"},
-            {"period": "2026H1", "qty": 318, "flag": "H1'25口径×~1估"}
-          ],
-          "unit_cost": [{"period": "2024FY", "cost": 2210, "unit": "元/吨", "note": "几内亚铝土矿长协+烧碱,成本刚性"}],
-          "note": "氧化铝自给率>150%:产量大头自用,外售~1/3;价格下跌对分部收入是压力、对电解铝成本是红利,净效应为正(自用量≈外售2倍)"
-        },
-        {
-          "product": "深加工+其他",
-          "price_links": [{"type": "cmd", "code": "AHD_MAIN", "name": "LME铝(出口参照)", "unit": "美元/吨"}],
-          "volume": [{"period": "2025FY", "qty": 71.6, "unit": "万吨", "avg_price": 20874, "source": "2025年报"}],
-          "note": "深加工量小利稳,不单独建模"
-        }
-      ],
-      "equity_notes": "H股口径无扣非披露(前端显示-);少数股东主要为云南宏泰等;2025全年归母~263亿(H1 123.61+H2估139)",
-      "model": {
-        "method": "增量桥(半年制):H2E=H1实际+Σ分部毛利变动×传导;价格基准=H1均价(库内Q1+Q2桶) vs H2E动态(Q3桶+Q4动态各半);成本端氧化铝/动力煤联动库内价格",
-        "period_mode": "h2",
-        "period_label": "H2'26E(半年报制,年报2027-03披露)",
-        "conduit": 0.72,
-        "conduit_note": "毛利变动→归母=税~25%+少数股东~5%综合折扣(宏桥低费用率,无广信式现金池)",
-        "q4_2026": {
-          "baseline": {"label": "H1'26 归母172亿(无扣非口径)", "attributable_yi": 172.0, "revenue_yi": null, "non_gaap_yi": null, "ytd_attributable_yi": 172.0, "source": "2026中报盈喜(+39%)+中银国际点评;H1'25=123.61亿互洽✓"},
-          "segments": [
-            {"product": "电解铝(含合金)", "price_code": "AL0_CLOSE", "vol_unit": "万吨", "mult": 1e4,
-             "cost_links": [{"code": "AO0_CLOSE", "mult": 1.93}, {"code": "COAL_BENCH", "mult": 1.75}],
-             "vol_scenarios": {"low": 285, "base": 292, "high": 296},
-             "vol_note": "产能满产,量波动±2%;云南枯水期限电是low情景来源"},
-            {"product": "氧化铝(外售)", "price_code": "AO0_CLOSE", "vol_unit": "万吨", "mult": 1e4,
-             "q3_cost": 2210, "cost_qoq": 0,
-             "vol_scenarios": {"low": 300, "base": 318, "high": 335},
-             "vol_note": "成本刚性(铝土矿长协),价格变动全额传导毛利"},
-            {"product": "深加工+其他", "price_code": null, "static_margin_change_yi": [0, 3, 6]}
-          ],
-          "other_lines": {
-            "impairment_yi": [-8, -3, 0],
-            "impairment_note": "港股年末减值幅度小于A股矿企;云南搬迁尾部支出已近尾声"
-          },
-          "price_scenario_pct": [-0.08, 0.0, 0.04]
-        },
-        "fy_2027": {
-          "method": "FY27E = FY26E + 量价情景(宏桥量平稳,价是主变量;铝供需紧平衡/氧化铝宽松延续是基准)",
-          "segments": [
-            {"product": "电解铝(含合金)", "vol_2026e": 584, "vol_2027": [580, 587, 595]},
-            {"product": "氧化铝(外售)", "vol_2026e": 1265, "vol_2027": [1250, 1280, 1320]},
-            {"product": "深加工+其他", "delta_margin_yi": [0, 3, 6]}
-          ],
-          "price_scenario_pct": [-0.12, 0.0, 0.06],
-          "cost_escalation": 0.02,
-          "note": "基准假设:沪铝2.3万平台震荡/氧化铝2,500-2,700;悲观=铝-8%/氧化铝+5%;乐观=铝+4%/氧化铝再跌"
-        }
-      },
-      "watchlist": [
-        "氧化铝价格拐点(2,560低位:反弹则外售分部利润修复,但电解铝成本红利消退——净效应看方向)",
-        "云南枯水期限电(Q4-Q1 季节性)",
-        "2026年报分部量价披露(2027-03)校准模型",
-        "几内亚铝土矿供应/海运费扰动",
-        "阳极(石油焦)价格波动(未入库,静态2,000元/吨假设)"
-      ]
+    "矿产铜": {
+     "qty": 120,
+     "unit": "万吨",
+     "q1_3": 82,
+     "note": "剔除卡莫阿 73万吨,同口径+6%"
     },
-    {
-      "sid": "600309",
-      "name": "万华化学",
-      "market": "A",
-      "thesis": "MDI 全球绝对龙头(~450万吨,全球第一)——聚氨酯板块贡献 70%+ 毛利,MDI 市场价×纯苯成本价差是利润第一驱动;成本端纯苯/液氯/烧碱/原油库内全有,MDI 价格新接入生意社(2026-09-28 起累积)",
-      "period_note": "Q3'26 单季归母 55.95亿(+84%),营收 665.51亿创单季历史新高;Q1-3 归母 156.58亿(+71%)已超 2025 全年(125.27亿归母口径);聚氨酯收入+27.6%/石化+26.9%/精细新材料+45.4%",
-      "guidance_2026": {
-        "MDI产能": {"qty": 450, "unit": "万吨", "note": "全球第一;年销量口径~380万吨"},
-        "聚氨酯销量(季)": {"qty": 100, "unit": "万吨", "note": "MDI+TDI+聚醚合计口径(假设)"}
-      },
-      "guidance_source": "2026三季报(2026-10-26/27 披露)+新浪/网易/东财三源",
-      "segments": [
-        {
-          "product": "聚氨酯(MDI/TDI/聚醚)",
-          "volume_unit": "万吨",
-          "price_links": [
-            {"type": "cmd", "code": "MDI_POLY", "name": "聚合MDI(PM200市场价)", "unit": "元/吨"},
-            {"type": "cmd", "code": "MDI_PURE", "name": "纯MDI(PM100市场价)", "unit": "元/吨"}
-          ],
-          "cost_links": [
-            {"type": "agro", "id": "benzene", "name": "纯苯(单耗~1.05吨/吨MDI)", "unit": "元/吨", "prev": 7300, "prev_note": "Q3纯苯均价口径(生意社基准价9月约7,000-7,500中值,flag——序列10月起无Q3历史);Q4纯苯随油价暴涨至10,400(+42%)是万华重大成本冲击"}
-          ],
-          "spreads": [
-            {"name": "聚合MDI-1.05×纯苯 价差", "a": {"type": "cmd", "code": "MDI_POLY"}, "b": {"type": "agro", "id": "benzene"}, "b_mult": 1.05},
-            {"name": "纯MDI-聚合MDI 价差(规格溢价)", "a": {"type": "cmd", "code": "MDI_PURE"}, "b": {"type": "cmd", "code": "MDI_POLY"}}
-          ],
-          "volume": [
-            {"period": "2026Q3", "qty": 100, "unit": "万吨", "flag": "假设口径:MDI ~95+TDI/聚醚;万华不披露分品销量"}
-          ],
-          "unit_cost_model": "MDI完全成本≈1.05×纯苯+苯胺加工~3,000+氯气/烧碱(自产)+甲醛+折旧人工~2,500;聚合MDI成本~12,000-13,000 vs 现价15,000-19,000",
-          "note": "挂牌价(万华官方旬度)与市场价并行,模型用市场价;纯MDI现价21,200(10月下旬) vs 聚合15,000——规格溢价6,200"
-        },
-        {
-          "product": "石化(C2/C3/C4,PDH+乙烯)",
-          "price_link": {"type": "cmd", "code": "BRENT_WTI", "unit": "美元/桶", "note": "原料LPG与产品烯烃的油价传导链"},
-          "volume": [{"period": "2026Q3", "qty": null}],
-          "note": "收入占比~40%但毛利占比~10%(PDH 微利);丙烷CP价未入库(油价代理);板块弹性小,static处理"
-        },
-        {
-          "product": "精细化学品+新材料(ADI/TPU/PC/柠檬醛/电池材料)",
-          "price_link": null,
-          "volume": [{"period": "2026Q1-3", "note": "收入+45.4%(三季报口径)"}],
-          "note": "高增长板块但不跟踪单品价格,static处理"
-        }
-      ],
-      "equity_notes": "万华少数股东损益占比小(烟台/宁波全资为主);所得税~18%(高新)",
-      "model": {
-        "method": "增量桥:Q4E=Q3实际+Σ分部毛利变动×传导;MDI价格=新采集序列QTD动态(2026-09-28起) vs Q3均价(override,新闻口径flag);纯苯成本联动(agro序列)",
-        "conduit": 0.75,
-        "conduit_note": "毛利变动→归母=税~18%+少数股东~7%(万华综合口径估)",
-        "q4_2026": {
-          "baseline": {"label": "Q3'26 归母55.95亿/营收665.51亿", "revenue_yi": 665.51, "attributable_yi": 55.95, "non_gaap_yi": 54.4, "ytd_revenue_yi": 1858.67, "ytd_attributable_yi": 156.58, "ytd_non_gaap_yi": 152.5, "source": "2026三季报;扣非=归母-约1.5亿非经/季(估,flag);Q1-3营收/归母与库fin表H1互洽✓"},
-          "segments": [
-            {"product": "聚氨酯(MDI口径)", "price_code": "MDI_POLY", "vol_unit": "万吨", "mult": 1e4,
-             "p_prev_override": 15500,
-             "p_prev_note": "Q3聚合MDI市场均价口径(新闻/研报综合,flag——序列2026-09-28起无Q3历史)",
-             "cost_links": [{"type": "agro", "id": "benzene", "mult": 1.05, "prev": 7300}],
-             "vol_scenarios": {"low": 92, "base": 100, "high": 106},
-             "vol_note": "Q4检修季(烟台/宁波轮检)+出口淡季:量环比微降是常态;high=检修推迟"},
-            {"product": "石化(PDH+乙烯)", "price_code": null, "static_margin_change_yi": [-6, 0, 4],
-             "vol_note": "油价10月暴涨(PDH原料丙烷跟涨):low=价差进一步压缩;板块毛利占比小"},
-            {"product": "精细+新材料", "price_code": null, "static_margin_change_yi": [2, 4, 6],
-             "vol_note": "高增长延续(+45%收入)叠加新产能"}
-          ],
-          "other_lines": {
-            "impairment_yi": [-3, -1, 0],
-            "impairment_note": "年末计提惯例(存货跌价+固定资产),幅度小于矿企"
-          },
-          "price_scenario_pct": [-0.06, 0.0, 0.04]
-        },
-        "fy_2027": {
-          "method": "FY27E = FY26E + 量价情景(MDI 新产能(福建40万吨满产)+新材料放量 vs MDI周期回落风险)",
-          "segments": [
-            {"product": "聚氨酯(MDI口径)", "vol_2026e": 395, "vol_2027": [390, 405, 420]},
-            {"product": "石化+精细+新材料", "delta_margin_yi": [-10, 5, 20]}
-          ],
-          "price_scenario_pct": [-0.12, 0.0, 0.06],
-          "cost_escalation": 0.02,
-          "note": "基准=MDI 价格平台震荡(纯MDI溢价维持);悲观=MDI 周期回落12%(2021-2025 曾从 25,000 跌至 15,000);乐观=地产链修复+出口共振"
-        }
-      },
-      "watchlist": [
-        "MDI 挂牌价(万华旬度公告)与市场价背离度",
-        "纯MDI-聚合MDI 规格溢价(现 6,200,高溢价=高端需求强)",
-        "Q4 烟台/宁波基地检修安排",
-        "油价→丙烷CP→PDH 价差(石化板块弹性)",
-        "福建 40 万吨新 MDI 产能爬坡(2027 满产)"
-      ]
+    "当量碳酸锂": {
+     "qty": 12,
+     "unit": "万吨",
+     "q1_3": 7.9
     },
-    {
-      "sid": "603599",
-      "name": "广信股份",
-      "market": "A",
-      "thesis": "价格敏感性推演标的:分产品量价季度公告有,但品种细分的量/新线爬坡披露弱——不做绝对利润预测,做价格弹性表+现金池线",
-      "period_note": "2026Q3 单季归母 1.78亿(阈值59%)/扣非-20.7%连续两季下滑/Q2毛利率49%→Q3环比-12pct;Q3理财收益1.46亿撑表观",
-      "segments": [
-        {
-          "product": "原药(多菌灵/甲基硫菌灵/敌草隆/茚虫威/噁草酮)",
-          "price_links": [
-            {"type": "agro", "id": "carbendazim", "name": "多菌灵"},
-            {"type": "agro", "id": "thiophanate-methyl", "name": "甲基硫菌灵"},
-            {"type": "agro", "id": "diuron", "name": "敌草隆"},
-            {"type": "agro", "id": "indoxacarb", "name": "茚虫威(折百)"},
-            {"type": "agro", "id": "oxadiazon", "name": "噁草酮"}
-          ],
-          "cost_links": [
-            {"type": "agro", "id": "o-phenylenediamine", "name": "邻苯二胺(多菌灵/甲硫直接原料)"},
-            {"type": "agro", "id": "o-nitrochlorobenzene", "name": "邻硝基氯化苯(邻苯二胺上游)"},
-            {"type": "cmd", "code": "COAL_BENCH", "name": "动力煤(自备热电能源)", "unit": "元/吨"}
-          ],
-          "spreads": [
-            {"name": "多菌灵-邻苯二胺 价差", "a": {"type": "agro", "id": "carbendazim"}, "b": {"type": "agro", "id": "o-phenylenediamine"}},
-            {"name": "邻苯二胺-邻硝基氯化苯 价差(中间体环节)", "a": {"type": "agro", "id": "o-phenylenediamine"}, "b": {"type": "agro", "id": "o-nitrochlorobenzene"}}
-          ],
-          "volume": [
-            {"period": "2026Q3", "qty": 6604, "unit": "吨", "avg_price": 37446, "yoy": "+12.75%", "source": "Q3分产品经营数据公告(10-28)"}
-          ],
-          "cost_drivers": [
-            {"name": "3,4-二氯苯胺", "change": "+59.04%", "note": "对硝涨价的镜像:广信外采它产敌草隆,双向都有份(无公开报价序列,只跟踪涨幅公告)"},
-            {"name": "硫磺", "change": "+43%"},
-            {"name": "石蜡油", "change": "+48%"}
-          ],
-          "note": "茚虫威/噁草酮新线 2026H1 转固但爬坡量未披露(公司侧10月无报价;本库中农立华周报有市场价:茚虫威36-38万/噁草酮14.6万——差异化数据源);价差为简单差(单耗未披露,看趋势不看绝对)"
-        },
-        {
-          "product": "中间体(对/邻硝基氯化苯)",
-          "price_links": [
-            {"type": "agro", "id": "p-nitrochlorobenzene", "name": "对硝基氯化苯"},
-            {"type": "agro", "id": "o-nitrochlorobenzene", "name": "邻硝基氯化苯"}
-          ],
-          "cost_links": [
-            {"type": "agro", "id": "benzene", "name": "纯苯(硝化链源头原料)"},
-            {"type": "agro", "id": "caustic-soda", "name": "烧碱(氯碱配套,氯气之源)"}
-          ],
-          "spreads": [
-            {"name": "对硝基氯化苯-纯苯 价差(硝化加价)", "a": {"type": "agro", "id": "p-nitrochlorobenzene"}, "b": {"type": "agro", "id": "benzene"}}
-          ],
-          "volume": [
-            {"period": "2026Q3", "qty": 183600, "unit": "吨", "avg_price": 2621, "yoy": "+63.3%", "source": "Q3公告"}
-          ],
-          "note": "Q3 是对硝红利最后的盛宴(存货-67%高位兑现);10月对硝8,800横盘+加工费1,700元/吨未修复,Q4中间体红利归零(研报裁决版口径)"
-        },
-        {
-          "product": "草甘膦(技改复产期权)",
-          "price_links": [{"type": "agro", "id": "glyphosate", "name": "草甘膦95%"}],
-          "cost_links": [
-            {"type": "agro", "id": "glycine", "name": "甘氨酸(核心外购原料)"},
-            {"type": "agro", "id": "yellow-phosphorus", "name": "黄磷(磷源)"}
-          ],
-          "spreads": [
-            {"name": "草甘膦-甘氨酸 价差", "a": {"type": "agro", "id": "glyphosate"}, "b": {"type": "agro", "id": "glycine"}},
-            {"name": "草甘膦-黄磷 价差", "a": {"type": "agro", "id": "glyphosate"}, "b": {"type": "agro", "id": "yellow-phosphorus"}}
-          ],
-          "note": "3万吨技改 2025 停产、外购原药维持供货;若 2027 在 2.9万+ 复产=恢复性 5-8亿收入弹性;11-6 业绩说明会是时间表窗口;价差是复产盈利性的实时温度计"
-        },
-        {
-          "product": "现金池(利润第一大项)",
-          "price_links": [{"type": "cmd", "code": "US10Y", "name": "10Y美债(折价参照)"},
-                          {"type": "cmd", "code": "DFII10", "name": "10Y实际利率"}],
-          "params": {"quasi_cash_yi": 32.6, "q3_wealth_income_yi": 1.46, "share_of_pretax": "金融类收益≈利润总额49%(2025)"},
-          "note": "利息收入随利率下行-16%(2025H1 1.15亿→2026H1 0.96亿);理财收益率区间已降至1.3-3.6%;汇兑敞口=出口31%"
-        }
-      ],
-      "model": {
-        "method": "增量桥:Q4E=Q3实际+Σ分部毛利变动×传导系数+非经营项;预估价=QTD已实现×已过权重+现价×剩余(动态);中间体按对硝-纯苯价差倒挂的实时读数驱动",
-        "conduit": 0.85,
-        "conduit_note": "广信所得税~15%(高新)+无少数股东,传导高于紫金",
-        "q4_2026": {
-          "baseline": {"revenue_yi": 8.59, "attributable_yi": 1.78, "non_gaap_yi": 1.39, "gross_margin_pct": 37.29, "ytd_revenue_yi": 24.76, "ytd_attributable_yi": 5.35, "ytd_non_gaap_yi": 3.89, "source": "三季报+Q3经营数据公告(研报裁决版交叉校验:H1归母3.57+Q3 1.78=5.35✓;ytd营收=H1 16.17(库fin表)+Q3 8.59)"},
-          "segments": [
-            {"product": "中间体(对/邻硝基氯化苯)",
-             "q3_rev_yi": 4.81, "q3_gm_pct": 47,
-             "q4_gm_scenarios_pct": [10, 15, 22],
-             "q4_rev_scenarios_yi": [2.6, 3.1, 3.6],
-             "note": "对硝-纯苯价差QTD为-1,416(倒挂):纯苯10月随油价暴涨而对硝8,800横盘;毛利率情景=倒挂但氯碱自供抵扣;收入情景=存货-67%后出货放缓(量-30%~-50%)"},
-            {"product": "原药(多菌灵等)",
-             "q3_rev_yi": 2.47, "q3_gm_pct": 30,
-             "q4_gm_scenarios_pct": [26, 29, 31],
-             "q4_rev_scenarios_yi": [2.3, 2.45, 2.6],
-             "note": "多菌灵QTD+1.6%平稳;茚虫威36万贴警戒线35万;价格QTD动态进GM情景"},
-            {"product": "其他+贸易", "q3_rev_yi": 1.31, "q3_gm_pct": 15, "q4_gm_scenarios_pct": [12, 15, 15], "q4_rev_scenarios_yi": [1.2, 1.3, 1.4]}
-          ],
-          "opex_q4_yi": [-1.55, -1.45, -1.35],
-          "opex_note": "三费+研发单季约1.4-1.55亿(Q3财务费用已含汇兑损失;Q4汇兑假设随人民币企稳减半→费用端略改善)",
-          "non_op": {
-            "wealth_yi": [1.3, 1.4, 1.5],
-            "compensation_yi": [0, 1.29, 2.58],
-            "compensation_note": "拆迁补偿2.58亿大部分未确认——落地时点假设:low=Q4不确认/high=全额;这是Q4归母的最大摆动项",
-            "subsidy_yi": [0.05, 0.1, 0.15]
-          },
-          "price_scenario_pct": [-0.05, 0.0, 0.03]
-        },
-        "fy_2027": {
-          "method": "FY27E = FY26E + 增量项(草甘膦复产/新线爬坡/汇兑正常化),研报口径为锚、价差动态校准",
-          "items": [
-            {"name": "草甘膦3万吨技改复产", "contrib_yi": [0.5, 0.75, 1.0],
-             "driver": "草甘膦-甘氨酸价差QTD 14,083(+9.1%)——价差维持1.4万+则0.5-1亿贡献成立(研报中性假设2027H1投产)"},
-            {"name": "茚虫威/噁草酮爬坡", "contrib_yi": [0.1, 0.2, 0.3],
-             "driver": "茚虫威现价36万 vs 研报降档警戒35万——爬坡量未知,谨慎给"},
-            {"name": "对硝均衡", "contrib_yi": [0, 0, 0], "driver": "价差倒挂回归均衡,零贡献(研报口径)"},
-            {"name": "多菌灵/敌草隆平稳", "contrib_yi": [0, 0, 0]},
-            {"name": "汇兑正常化", "contrib_yi": [0, 0.5, 1.0], "driver": "若人民币企稳,财务费用负向摆动回摆"}
-          ],
-          "crosscheck": "研报2027E扣非5.2-6.2(中性5.5);本模型FY26E扣非+增量项应落同一区间,偏离>1亿需查假设"
-        }
-      },
-      "watchlist": [
-        "11-6 业绩说明会(草甘膦投产时间表/茚虫威噁草酮爬坡)",
-        "Q4 计提风险(全年归母<6亿触发降档)",
-        "湖南海利宁夏 5,000吨甲基硫菌灵投产(直打主力品种)",
-        "对硝加工费修复与否(八一复产)",
-        "实控人行为(高位减持 vs 破净零增持)"
-      ]
+    "矿产银": {
+     "qty": 520,
+     "unit": "吨"
+    },
+    "矿产锌(当量)": {
+     "qty": 40,
+     "unit": "万吨"
     }
-  ],
-  "manual_series": [
+   },
+   "guidance_source": "2026-02-09 三年(2026-2028)规划公告;产量=2026Q3 季报(2026-10-24)",
+   "segments": [
     {
-      "code": "CU_TC_SPOT",
-      "name": "铜精矿现货TC(SMM周度,转载)",
-      "unit": "美元/干吨",
-      "freq": "周",
-      "points": [
-        ["2025-01-06", 21.25, "2025年长单基准"],
-        ["2026-01-05", 0.0, "2026年长单(2025-12-21 Antofagasta 敲定,历史首次归零)"],
-        ["2026-06-30", -44.3, "SMM转载(2026H1持续探底)"],
-        ["2026-07-11", -132.84, "新浪财经转载SMM周度"],
-        ["2026-07-17", -146.15, "新浪财经转载SMM周度"]
-      ],
-      "note": "人工维护:源=新浪/财联社周五转载SMM进口铜精矿指数(周);长单点为年度谈判结果非现货"
+     "product": "矿产金",
+     "volume_unit": "吨",
+     "price_link": {
+      "type": "cmd",
+      "code": "SGE_AU9999",
+      "unit": "元/克",
+      "note": "矿产金国内销售,实现价≈SGE均价"
+     },
+     "volume": [
+      {
+       "period": "2026H1",
+       "qty": 46.7,
+       "yoy": "+13%"
+      },
+      {
+       "period": "2026Q1-3",
+       "qty": 70,
+       "yoy": "+8%"
+      }
+     ],
+     "unit_cost": [
+      {
+       "period": "2026H1",
+       "cost": 291,
+       "unit": "元/克",
+       "yoy": "+11%"
+      },
+      {
+       "period": "2026Q3",
+       "cost": 313,
+       "unit": "元/克",
+       "qoq": "+2%"
+      }
+     ],
+     "sensitivity": "±1元/克 → 年化毛利 ±~1.0亿(105吨×1元/克;权益简化100%,少数股东另列)",
+     "source": "半年报(2026-08-21)/三季报点评"
+    },
+    {
+     "product": "矿产铜",
+     "volume_unit": "万吨",
+     "price_link": {
+      "type": "cmd",
+      "code": "CU0_CLOSE",
+      "unit": "元/吨",
+      "note": "沪铜主力;矿产铜实现价=铜价−TC−计价系数"
+     },
+     "volume": [
+      {
+       "period": "2026H1",
+       "qty": 53.4
+      },
+      {
+       "period": "2026Q1-3",
+       "qty": 82,
+       "note": "剔除卡莫阿 73万吨 +6%"
+      }
+     ],
+     "unit_cost": [
+      {
+       "period": "2026Q3",
+       "cost": 29000,
+       "unit": "元/吨",
+       "qoq": "+4%",
+       "flag": "三季报点评口径约值"
+      }
+     ],
+     "spread_extra": [
+      {
+       "name": "铜精矿现货TC(SMM)",
+       "code": "CU_TC_SPOT",
+       "unit": "美元/干吨",
+       "note": "2026长单0美元(12-21 Antofagasta);现货深度负值=冶炼吨亏+精矿实现价承压"
+      }
+     ],
+     "sensitivity": "±1000元/吨 → 年化毛利 ±~12亿(120万吨口径)",
+     "source": "半年报/三季报"
+    },
+    {
+     "product": "矿产锌",
+     "volume_unit": "万吨",
+     "price_link": {
+      "type": "cmd",
+      "code": "ZN0_CLOSE",
+      "unit": "元/吨",
+      "note": "沪锌主力(序列在silver商品组下)"
+     },
+     "volume": [
+      {
+       "period": "2026E",
+       "qty": 40,
+       "flag": "指引口径(锌当量含铅)"
+      }
+     ],
+     "sensitivity": "±500元/吨 → 年化毛利 ±~2亿"
+    },
+    {
+     "product": "矿产银",
+     "volume_unit": "吨",
+     "price_link": {
+      "type": "cmd",
+      "code": "AG0_CLOSE",
+      "unit": "元/千克"
+     },
+     "volume": [
+      {
+       "period": "2026E",
+       "qty": 520,
+       "flag": "指引"
+      }
+     ]
+    },
+    {
+     "product": "当量碳酸锂",
+     "volume_unit": "万吨",
+     "price_link": {
+      "type": "cmd",
+      "code": "LC0_CLOSE",
+      "unit": "元/吨",
+      "note": "广期所碳酸锂主力"
+     },
+     "volume": [
+      {
+       "period": "2026H1",
+       "qty": 4.4
+      },
+      {
+       "period": "2026Q1-3",
+       "qty": 7.9
+      },
+      {
+       "period": "2026E",
+       "qty": 12,
+       "flag": "指引"
+      }
+     ],
+     "note": "3Q盐湖+拉果错放量;赤峰并表后更多"
     }
-  ]
+   ],
+   "equity_notes": "卡莫阿=联营权益法(投资收益,非并表);巨龙并表~50.1%;少数股东损益在利润表,分矿山拆分待年报结构化",
+   "model": {
+    "method": "增量桥:Q4E=Q3实际+Σ分部毛利变动×传导系数+非经营项;预估价=QTD已实现均值×已过天数权重+最新价×剩余天数权重(每日动态滚动)",
+    "conduit": 0.6,
+    "conduit_note": "毛利变动→归母的传导=税率15%+少数股东~25%综合折扣(粗估,年报结构化后校准)",
+    "q4_2026": {
+     "baseline": {
+      "revenue_yi": 892.74,
+      "attributable_yi": 183.56,
+      "non_gaap_yi": 178.08,
+      "ytd_revenue_yi": 2834.53,
+      "ytd_attributable_yi": 575.26,
+      "ytd_non_gaap_yi": 558.42,
+      "source": "三季报(2026-10-23,营收与库fin表一致✓)"
+     },
+     "segments": [
+      {
+       "product": "矿产金",
+       "price_code": "SGE_AU9999",
+       "price_unit": "元/克",
+       "vol_unit": "吨",
+       "mult": 1000000.0,
+       "q3_cost": 313,
+       "cost_qoq": 0.02,
+       "equity": 1.0,
+       "vol_scenarios": {
+        "low": 23.3,
+        "base": 26.5,
+        "high": 30.0,
+        "guide": 35.0
+       },
+       "vol_note": "low=Q3持平;base=Q3×1.1+赤峰并表2个月(~2.5吨,年产15吨级);guide=指引隐含(105-70,含赤峰贡献假设)"
+      },
+      {
+       "product": "矿产铜",
+       "price_code": "CU0_CLOSE",
+       "price_unit": "元/吨",
+       "vol_unit": "万吨",
+       "mult": 10000.0,
+       "q3_cost": 29000,
+       "cost_qoq": 0.04,
+       "equity": 1.0,
+       "vol_scenarios": {
+        "low": 26.0,
+        "base": 28.6,
+        "high": 31.0,
+        "guide": 38.0
+       },
+       "vol_note": "low=环比降;base=Q3持平;guide=指引隐含(120-82,需卡莫阿满产+朱诺贡献,偏乐观)"
+      },
+      {
+       "product": "当量碳酸锂",
+       "price_code": "LC0_CLOSE",
+       "price_unit": "元/吨",
+       "vol_unit": "万吨",
+       "mult": 10000.0,
+       "q3_cost": 60000,
+       "cost_qoq": 0.0,
+       "equity": 1.0,
+       "vol_scenarios": {
+        "low": 3.5,
+        "base": 4.1,
+        "high": 4.5
+       },
+       "vol_note": "base=指引隐含(12-7.9);成本为一揽子假设(盐湖+矿石混合,粗)"
+      },
+      {
+       "product": "矿产锌+银+其他",
+       "price_code": null,
+       "static_margin_change_yi": [
+        0,
+        1,
+        2
+       ],
+       "vol_note": "价量占比小,按持平~微增处理"
+      }
+     ],
+     "other_lines": {
+      "impairment_yi": [
+       -30,
+       -15,
+       -5
+      ],
+      "impairment_note": "Q4减值季节性(紫金历史Q4常态计提10-30亿)",
+      "smelting_note": "冶炼板块TC负值Q3已体现,假设Q4持平(若TC继续恶化每-10美元/干吨≈-2-3亿)"
+     },
+     "price_scenario_pct": [
+      -0.1,
+      0.0,
+      0.05
+     ]
+    },
+    "fy_2027": {
+     "method": "FY27E = FY26E + Σ(Δ量×当前单位毛利×传导) ± 价格情景",
+     "segments": [
+      {
+       "product": "矿产金",
+       "vol_2026e": 96,
+       "vol_2027": [
+        110,
+        115,
+        120
+       ],
+       "unit_margin": 560,
+       "note": "2026E=Q1-3+Q4基准;2027=三年规划2028(130-140)插值"
+      },
+      {
+       "product": "矿产铜",
+       "vol_2026e": 111,
+       "vol_2027": [
+        130,
+        135,
+        140
+       ],
+       "unit_margin": 79000
+      },
+      {
+       "product": "当量碳酸锂",
+       "vol_2026e": 12,
+       "vol_2027": [
+        16,
+        18,
+        20
+       ],
+       "unit_margin": 38000
+      },
+      {
+       "product": "矿产锌+银+其他",
+       "delta_margin_yi": [
+        0,
+        5,
+        10
+       ]
+      }
+     ],
+     "price_scenario_pct": [
+      -0.1,
+      0.0,
+      0.05
+     ],
+     "cost_escalation": 0.05,
+     "note": "朱诺/雄村/马诺诺增量已含在量情景;赤峰全年并表贡献在金量",
+     "crosscheck": "2026一致预期对照:市场/券商800-1000亿(雪球2026-04测算冲千亿;Q1-3已575)vs 本模型FY26E 690-747——模型保守三源:①碳酸锂Q3→Q4暴跌40%(单季拖累-11亿,10月加速段市场报告或未充分计入)②金价QTD回调-35元/克(-10亿)③Q4减值-15亿假设;若金价回到Q3均价且减值减半,Q4E约+25亿→FY~750"
+    }
+   },
+   "watchlist": [
+    "赤峰黄金并表(2026-10-22 完成控制权收购)",
+    "朱诺铜矿 2026 年底投产/雄村 2028",
+    "TC 负值持续度(冶炼板块亏损)",
+    "Q4 减值季节性(历史常态化)",
+    "卡莫阿复产节奏(Q1-3 已拖累矿产铜)"
+   ]
+  },
+  {
+   "sid": "01378",
+   "name": "中国宏桥",
+   "market": "HK",
+   "thesis": "电解铝全球产能第一(646万吨)×氧化铝自给(1,950万吨)×自备电+几内亚铝土矿一体化——库内三价齐备(沪铝/氧化铝/动力煤),成本链全联动模型;港股半年报制,做 H2E+FY26E",
+   "period_note": "H1'26 净利 172亿(+39%,盈喜口径,铝价驱动);氧化铝 2,560 低位=自用红利/外售承压并存(自给率>150%,净效应为正)",
+   "capacity": {
+    "电解铝": "646万吨(山东497+云南149,全球第一)",
+    "氧化铝": "1,950万吨(国内1,750+印尼200)",
+    "电力": "自备燃电+云南水电铝,几内亚铝土矿自营"
+   },
+   "guidance_2026": {
+    "电解铝(含合金)销量": {
+     "qty": 587,
+     "unit": "万吨",
+     "q1_3": null,
+     "note": "2025实际587.1,产能满产平稳"
+    },
+    "氧化铝外售": {
+     "qty": 1270,
+     "unit": "万吨",
+     "note": "2025实际口径(2024为1,092)"
+    }
+   },
+   "guidance_source": "2025年报(2026-03-20)+2026中报盈喜(2026-07)+中银国际点评(2026-09-01)",
+   "segments": [
+    {
+     "product": "电解铝(含铝合金)",
+     "volume_unit": "万吨",
+     "price_link": {
+      "type": "cmd",
+      "code": "AL0_CLOSE",
+      "unit": "元/吨",
+      "note": "沪铝主力"
+     },
+     "cost_links": [
+      {
+       "type": "cmd",
+       "code": "AO0_CLOSE",
+       "name": "氧化铝(单耗1.93吨/吨铝)",
+       "unit": "元/吨"
+      },
+      {
+       "type": "cmd",
+       "code": "COAL_BENCH",
+       "name": "动力煤(自备电折算系数~1.75元吨铝/元煤价)",
+       "unit": "元/吨"
+      }
+     ],
+     "spreads": [
+      {
+       "name": "沪铝-1.93×氧化铝 有效价差",
+       "a": {
+        "type": "cmd",
+        "code": "AL0_CLOSE"
+       },
+       "b": {
+        "type": "cmd",
+        "code": "AO0_CLOSE"
+       },
+       "b_mult": 1.93
+      }
+     ],
+     "volume": [
+      {
+       "period": "2025FY",
+       "qty": 587.1,
+       "yoy": "+0.2%",
+       "source": "2025年报"
+      },
+      {
+       "period": "2026H1",
+       "qty": 292,
+       "flag": "H1'25为290.6,假设同比+0.5%(中报分部量未单独核实)"
+      }
+     ],
+     "unit_cost_model": "完全成本≈1.93×氧化铝+电力(13,500度×~0.35元)+阳极~2,000+其他~1,500;氧化铝与动力煤价格联动,阳极/其他静态",
+     "note": "山东自备煤电+云南水电(枯水期限电风险);阳极价格随石油焦波动未入库,按静态2,000元/吨处理(±500元→±8亿/年毛利)"
+    },
+    {
+     "product": "氧化铝(外售部分)",
+     "volume_unit": "万吨",
+     "price_link": {
+      "type": "cmd",
+      "code": "AO0_CLOSE",
+      "unit": "元/吨"
+     },
+     "volume": [
+      {
+       "period": "2024FY",
+       "qty": 1092,
+       "source": "2024年报(收入373.5亿/GM35.4%/成本~2,210)"
+      },
+      {
+       "period": "2025FY",
+       "qty": 1270,
+       "flag": "H1'25 636.8×2估"
+      },
+      {
+       "period": "2026H1",
+       "qty": 318,
+       "flag": "H1'25口径×~1估"
+      }
+     ],
+     "unit_cost": [
+      {
+       "period": "2024FY",
+       "cost": 2210,
+       "unit": "元/吨",
+       "note": "几内亚铝土矿长协+烧碱,成本刚性"
+      }
+     ],
+     "note": "氧化铝自给率>150%:产量大头自用,外售~1/3;价格下跌对分部收入是压力、对电解铝成本是红利,净效应为正(自用量≈外售2倍)"
+    },
+    {
+     "product": "深加工+其他",
+     "price_links": [
+      {
+       "type": "cmd",
+       "code": "AHD_MAIN",
+       "name": "LME铝(出口参照)",
+       "unit": "美元/吨"
+      }
+     ],
+     "volume": [
+      {
+       "period": "2025FY",
+       "qty": 71.6,
+       "unit": "万吨",
+       "avg_price": 20874,
+       "source": "2025年报"
+      }
+     ],
+     "note": "深加工量小利稳,不单独建模"
+    }
+   ],
+   "equity_notes": "H股口径无扣非披露(前端显示-);少数股东主要为云南宏泰等;2025全年归母~263亿(H1 123.61+H2估139)",
+   "model": {
+    "method": "增量桥(半年制):H2E=H1实际+Σ分部毛利变动×传导;价格基准=H1均价(库内Q1+Q2桶) vs H2E动态(Q3桶+Q4动态各半);成本端氧化铝/动力煤联动库内价格",
+    "period_mode": "h2",
+    "period_label": "H2'26E(半年报制,年报2027-03披露)",
+    "conduit": 0.72,
+    "conduit_note": "毛利变动→归母=税~25%+少数股东~5%综合折扣(宏桥低费用率,无广信式现金池)",
+    "q4_2026": {
+     "baseline": {
+      "label": "H1'26 归母172亿(无扣非口径)",
+      "attributable_yi": 172.0,
+      "revenue_yi": null,
+      "non_gaap_yi": null,
+      "ytd_attributable_yi": 172.0,
+      "source": "2026中报盈喜(+39%)+中银国际点评;H1'25=123.61亿互洽✓"
+     },
+     "segments": [
+      {
+       "product": "电解铝(含合金)",
+       "price_code": "AL0_CLOSE",
+       "vol_unit": "万吨",
+       "mult": 10000.0,
+       "cost_links": [
+        {
+         "code": "AO0_CLOSE",
+         "mult": 1.93
+        },
+        {
+         "code": "COAL_BENCH",
+         "mult": 1.75
+        }
+       ],
+       "vol_scenarios": {
+        "low": 285,
+        "base": 292,
+        "high": 296
+       },
+       "vol_note": "产能满产,量波动±2%;云南枯水期限电是low情景来源"
+      },
+      {
+       "product": "氧化铝(外售)",
+       "price_code": "AO0_CLOSE",
+       "vol_unit": "万吨",
+       "mult": 10000.0,
+       "q3_cost": 2210,
+       "cost_qoq": 0,
+       "vol_scenarios": {
+        "low": 300,
+        "base": 318,
+        "high": 335
+       },
+       "vol_note": "成本刚性(铝土矿长协),价格变动全额传导毛利"
+      },
+      {
+       "product": "深加工+其他",
+       "price_code": null,
+       "static_margin_change_yi": [
+        0,
+        3,
+        6
+       ]
+      }
+     ],
+     "other_lines": {
+      "impairment_yi": [
+       -8,
+       -3,
+       0
+      ],
+      "impairment_note": "港股年末减值幅度小于A股矿企;云南搬迁尾部支出已近尾声"
+     },
+     "price_scenario_pct": [
+      -0.08,
+      0.0,
+      0.04
+     ]
+    },
+    "fy_2027": {
+     "method": "FY27E = FY26E + 量价情景(宏桥量平稳,价是主变量;铝供需紧平衡/氧化铝宽松延续是基准)",
+     "segments": [
+      {
+       "product": "电解铝(含合金)",
+       "vol_2026e": 584,
+       "vol_2027": [
+        580,
+        587,
+        595
+       ],
+       "unit_margin": 10000
+      },
+      {
+       "product": "氧化铝(外售)",
+       "vol_2026e": 1265,
+       "vol_2027": [
+        1250,
+        1280,
+        1320
+       ]
+      },
+      {
+       "product": "深加工+其他",
+       "delta_margin_yi": [
+        0,
+        3,
+        6
+       ]
+      }
+     ],
+     "price_scenario_pct": [
+      -0.12,
+      0.0,
+      0.06
+     ],
+     "cost_escalation": 0.02,
+     "note": "基准假设:沪铝2.3万平台震荡/氧化铝2,500-2,700;悲观=铝-8%/氧化铝+5%;乐观=铝+4%/氧化铝再跌"
+    }
+   },
+   "watchlist": [
+    "氧化铝价格拐点(2,560低位:反弹则外售分部利润修复,但电解铝成本红利消退——净效应看方向)",
+    "云南枯水期限电(Q4-Q1 季节性)",
+    "2026年报分部量价披露(2027-03)校准模型",
+    "几内亚铝土矿供应/海运费扰动",
+    "阳极(石油焦)价格波动(未入库,静态2,000元/吨假设)"
+   ]
+  },
+  {
+   "sid": "600309",
+   "name": "万华化学",
+   "market": "A",
+   "thesis": "MDI 全球绝对龙头(~450万吨,全球第一)——聚氨酯板块贡献 70%+ 毛利,MDI 市场价×纯苯成本价差是利润第一驱动;成本端纯苯/液氯/烧碱/原油库内全有,MDI 价格新接入生意社(2026-09-28 起累积)",
+   "period_note": "Q3'26 单季归母 55.95亿(+84%),营收 665.51亿创单季历史新高;Q1-3 归母 156.58亿(+71%)已超 2025 全年(125.27亿归母口径);聚氨酯收入+27.6%/石化+26.9%/精细新材料+45.4%",
+   "guidance_2026": {
+    "MDI产能": {
+     "qty": 450,
+     "unit": "万吨",
+     "note": "全球第一;年销量口径~380万吨"
+    },
+    "聚氨酯销量(季)": {
+     "qty": 100,
+     "unit": "万吨",
+     "note": "MDI+TDI+聚醚合计口径(假设)"
+    }
+   },
+   "guidance_source": "2026三季报(2026-10-26/27 披露)+新浪/网易/东财三源",
+   "segments": [
+    {
+     "product": "聚氨酯(MDI/TDI/聚醚)",
+     "volume_unit": "万吨",
+     "price_links": [
+      {
+       "type": "cmd",
+       "code": "MDI_POLY",
+       "name": "聚合MDI(PM200市场价)",
+       "unit": "元/吨"
+      },
+      {
+       "type": "cmd",
+       "code": "MDI_PURE",
+       "name": "纯MDI(PM100市场价)",
+       "unit": "元/吨"
+      }
+     ],
+     "cost_links": [
+      {
+       "type": "agro",
+       "id": "benzene",
+       "name": "纯苯(单耗~1.05吨/吨MDI)",
+       "unit": "元/吨",
+       "prev": 7300,
+       "prev_note": "Q3纯苯均价口径(生意社基准价9月约7,000-7,500中值,flag——序列10月起无Q3历史);Q4纯苯随油价暴涨至10,400(+42%)是万华重大成本冲击"
+      }
+     ],
+     "spreads": [
+      {
+       "name": "聚合MDI-1.05×纯苯 价差",
+       "a": {
+        "type": "cmd",
+        "code": "MDI_POLY"
+       },
+       "b": {
+        "type": "agro",
+        "id": "benzene"
+       },
+       "b_mult": 1.05
+      },
+      {
+       "name": "纯MDI-聚合MDI 价差(规格溢价)",
+       "a": {
+        "type": "cmd",
+        "code": "MDI_PURE"
+       },
+       "b": {
+        "type": "cmd",
+        "code": "MDI_POLY"
+       }
+      }
+     ],
+     "volume": [
+      {
+       "period": "2026Q3",
+       "qty": 100,
+       "unit": "万吨",
+       "flag": "假设口径:MDI ~95+TDI/聚醚;万华不披露分品销量"
+      }
+     ],
+     "unit_cost_model": "MDI完全成本≈1.05×纯苯+苯胺加工~3,000+氯气/烧碱(自产)+甲醛+折旧人工~2,500;聚合MDI成本~12,000-13,000 vs 现价15,000-19,000",
+     "note": "挂牌价(万华官方旬度)与市场价并行,模型用市场价;纯MDI现价21,200(10月下旬) vs 聚合15,000——规格溢价6,200"
+    },
+    {
+     "product": "石化(C2/C3/C4,PDH+乙烯)",
+     "price_link": {
+      "type": "cmd",
+      "code": "BRENT_WTI",
+      "unit": "美元/桶",
+      "note": "原料LPG与产品烯烃的油价传导链"
+     },
+     "volume": [
+      {
+       "period": "2026Q3",
+       "qty": null
+      }
+     ],
+     "note": "收入占比~40%但毛利占比~10%(PDH 微利);丙烷CP价未入库(油价代理);板块弹性小,static处理"
+    },
+    {
+     "product": "精细化学品+新材料(ADI/TPU/PC/柠檬醛/电池材料)",
+     "price_link": null,
+     "volume": [
+      {
+       "period": "2026Q1-3",
+       "note": "收入+45.4%(三季报口径)"
+      }
+     ],
+     "note": "高增长板块但不跟踪单品价格,static处理"
+    }
+   ],
+   "equity_notes": "万华少数股东损益占比小(烟台/宁波全资为主);所得税~18%(高新)",
+   "model": {
+    "method": "增量桥:Q4E=Q3实际+Σ分部毛利变动×传导;MDI价格=新采集序列QTD动态(2026-09-28起) vs Q3均价(override,新闻口径flag);纯苯成本联动(agro序列)",
+    "conduit": 0.72,
+    "conduit_note": "毛利变动→归母=税~18%+少数股东~12%(2026H1实测:净利115.61→归母100.63,库fin表与三季报互证)",
+    "q4_2026": {
+     "baseline": {
+      "label": "Q3'26 归母55.95亿/营收665.51亿",
+      "revenue_yi": 665.51,
+      "attributable_yi": 55.95,
+      "non_gaap_yi": 54.4,
+      "ytd_revenue_yi": 1858.67,
+      "ytd_attributable_yi": 156.58,
+      "ytd_non_gaap_yi": 152.5,
+      "source": "2026三季报;扣非=归母-约1.5亿非经/季(估,flag);Q1-3营收/归母与库fin表H1互洽✓"
+     },
+     "segments": [
+      {
+       "product": "聚氨酯(MDI口径)",
+       "price_code": "MDI_POLY",
+       "vol_unit": "万吨",
+       "mult": 10000.0,
+       "p_prev_override": 16000,
+       "p_prev_note": "Q3聚合MDI均价锚=16,000(新闻市场价口径15,500与生意社挂单口径~16,500的折中;锚差±500→Q4E±3.7亿,flag)",
+       "cost_links": [
+        {
+         "type": "agro",
+         "id": "benzene",
+         "mult": 1.05,
+         "prev": 7300
+        }
+       ],
+       "vol_scenarios": {
+        "low": 92,
+        "base": 100,
+        "high": 106
+       },
+       "vol_note": "Q4检修季(烟台/宁波轮检)+出口淡季:量环比微降是常态;high=检修推迟"
+      },
+      {
+       "product": "石化(PDH+乙烯)",
+       "price_code": null,
+       "static_margin_change_yi": [
+        -6,
+        0,
+        4
+       ],
+       "vol_note": "油价10月暴涨(PDH原料丙烷跟涨):low=价差进一步压缩;板块毛利占比小"
+      },
+      {
+       "product": "精细+新材料",
+       "price_code": null,
+       "static_margin_change_yi": [
+        2,
+        4,
+        6
+       ],
+       "vol_note": "高增长延续(+45%收入)叠加新产能"
+      }
+     ],
+     "other_lines": {
+      "impairment_yi": [
+       -3,
+       -1,
+       0
+      ],
+      "impairment_note": "年末计提惯例(存货跌价+固定资产),幅度小于矿企"
+     },
+     "price_scenario_pct": [
+      -0.06,
+      0.0,
+      0.04
+     ]
+    },
+    "fy_2027": {
+     "method": "FY27E = FY26E + 量价情景(MDI 新产能(福建40万吨满产)+新材料放量 vs MDI周期回落风险)",
+     "segments": [
+      {
+       "product": "聚氨酯(MDI口径)",
+       "vol_2026e": 395,
+       "vol_2027": [
+        390,
+        405,
+        420
+       ]
+      },
+      {
+       "product": "石化+精细+新材料",
+       "delta_margin_yi": [
+        -10,
+        5,
+        20
+       ]
+      }
+     ],
+     "price_scenario_pct": [
+      -0.12,
+      0.0,
+      0.06
+     ],
+     "cost_escalation": 0.02,
+     "note": "基准=MDI 价格平台震荡(纯MDI溢价维持);悲观=MDI 周期回落12%(2021-2025 曾从 25,000 跌至 15,000);乐观=地产链修复+出口共振"
+    }
+   },
+   "watchlist": [
+    "MDI 挂牌价(万华旬度公告)与市场价背离度",
+    "纯MDI-聚合MDI 规格溢价(现 6,200,高溢价=高端需求强)",
+    "Q4 烟台/宁波基地检修安排",
+    "油价→丙烷CP→PDH 价差(石化板块弹性)",
+    "福建 40 万吨新 MDI 产能爬坡(2027 满产)"
+   ]
+  },
+  {
+   "sid": "603599",
+   "name": "广信股份",
+   "market": "A",
+   "thesis": "价格敏感性推演标的:分产品量价季度公告有,但品种细分的量/新线爬坡披露弱——不做绝对利润预测,做价格弹性表+现金池线",
+   "period_note": "2026Q3 单季归母 1.78亿(阈值59%)/扣非-20.7%连续两季下滑/Q2毛利率49%→Q3环比-12pct;Q3理财收益1.46亿撑表观",
+   "segments": [
+    {
+     "product": "原药(多菌灵/甲基硫菌灵/敌草隆/茚虫威/噁草酮)",
+     "price_links": [
+      {
+       "type": "agro",
+       "id": "carbendazim",
+       "name": "多菌灵"
+      },
+      {
+       "type": "agro",
+       "id": "thiophanate-methyl",
+       "name": "甲基硫菌灵"
+      },
+      {
+       "type": "agro",
+       "id": "diuron",
+       "name": "敌草隆"
+      },
+      {
+       "type": "agro",
+       "id": "indoxacarb",
+       "name": "茚虫威(折百)"
+      },
+      {
+       "type": "agro",
+       "id": "oxadiazon",
+       "name": "噁草酮"
+      }
+     ],
+     "cost_links": [
+      {
+       "type": "agro",
+       "id": "o-phenylenediamine",
+       "name": "邻苯二胺(多菌灵/甲硫直接原料)"
+      },
+      {
+       "type": "agro",
+       "id": "o-nitrochlorobenzene",
+       "name": "邻硝基氯化苯(邻苯二胺上游)"
+      },
+      {
+       "type": "cmd",
+       "code": "COAL_BENCH",
+       "name": "动力煤(自备热电能源)",
+       "unit": "元/吨"
+      }
+     ],
+     "spreads": [
+      {
+       "name": "多菌灵-邻苯二胺 价差",
+       "a": {
+        "type": "agro",
+        "id": "carbendazim"
+       },
+       "b": {
+        "type": "agro",
+        "id": "o-phenylenediamine"
+       }
+      },
+      {
+       "name": "邻苯二胺-邻硝基氯化苯 价差(中间体环节)",
+       "a": {
+        "type": "agro",
+        "id": "o-phenylenediamine"
+       },
+       "b": {
+        "type": "agro",
+        "id": "o-nitrochlorobenzene"
+       }
+      }
+     ],
+     "volume": [
+      {
+       "period": "2026Q3",
+       "qty": 6604,
+       "unit": "吨",
+       "avg_price": 37446,
+       "yoy": "+12.75%",
+       "source": "Q3分产品经营数据公告(10-28)"
+      }
+     ],
+     "cost_drivers": [
+      {
+       "name": "3,4-二氯苯胺",
+       "change": "+59.04%",
+       "note": "对硝涨价的镜像:广信外采它产敌草隆,双向都有份(无公开报价序列,只跟踪涨幅公告)"
+      },
+      {
+       "name": "硫磺",
+       "change": "+43%"
+      },
+      {
+       "name": "石蜡油",
+       "change": "+48%"
+      }
+     ],
+     "note": "茚虫威/噁草酮新线 2026H1 转固但爬坡量未披露(公司侧10月无报价;本库中农立华周报有市场价:茚虫威36-38万/噁草酮14.6万——差异化数据源);价差为简单差(单耗未披露,看趋势不看绝对)"
+    },
+    {
+     "product": "中间体(对/邻硝基氯化苯)",
+     "price_links": [
+      {
+       "type": "agro",
+       "id": "p-nitrochlorobenzene",
+       "name": "对硝基氯化苯"
+      },
+      {
+       "type": "agro",
+       "id": "o-nitrochlorobenzene",
+       "name": "邻硝基氯化苯"
+      }
+     ],
+     "cost_links": [
+      {
+       "type": "agro",
+       "id": "benzene",
+       "name": "纯苯(硝化链源头原料)"
+      },
+      {
+       "type": "agro",
+       "id": "caustic-soda",
+       "name": "烧碱(氯碱配套,氯气之源)"
+      }
+     ],
+     "spreads": [
+      {
+       "name": "对硝基氯化苯-纯苯 价差(硝化加价)",
+       "a": {
+        "type": "agro",
+        "id": "p-nitrochlorobenzene"
+       },
+       "b": {
+        "type": "agro",
+        "id": "benzene"
+       }
+      }
+     ],
+     "volume": [
+      {
+       "period": "2026Q3",
+       "qty": 183600,
+       "unit": "吨",
+       "avg_price": 2621,
+       "yoy": "+63.3%",
+       "source": "Q3公告"
+      }
+     ],
+     "note": "Q3 是对硝红利最后的盛宴(存货-67%高位兑现);10月对硝8,800横盘+加工费1,700元/吨未修复,Q4中间体红利归零(研报裁决版口径)"
+    },
+    {
+     "product": "草甘膦(技改复产期权)",
+     "price_links": [
+      {
+       "type": "agro",
+       "id": "glyphosate",
+       "name": "草甘膦95%"
+      }
+     ],
+     "cost_links": [
+      {
+       "type": "agro",
+       "id": "glycine",
+       "name": "甘氨酸(核心外购原料)"
+      },
+      {
+       "type": "agro",
+       "id": "yellow-phosphorus",
+       "name": "黄磷(磷源)"
+      }
+     ],
+     "spreads": [
+      {
+       "name": "草甘膦-甘氨酸 价差",
+       "a": {
+        "type": "agro",
+        "id": "glyphosate"
+       },
+       "b": {
+        "type": "agro",
+        "id": "glycine"
+       }
+      },
+      {
+       "name": "草甘膦-黄磷 价差",
+       "a": {
+        "type": "agro",
+        "id": "glyphosate"
+       },
+       "b": {
+        "type": "agro",
+        "id": "yellow-phosphorus"
+       }
+      }
+     ],
+     "note": "3万吨技改 2025 停产、外购原药维持供货;若 2027 在 2.9万+ 复产=恢复性 5-8亿收入弹性;11-6 业绩说明会是时间表窗口;价差是复产盈利性的实时温度计"
+    },
+    {
+     "product": "现金池(利润第一大项)",
+     "price_links": [
+      {
+       "type": "cmd",
+       "code": "US10Y",
+       "name": "10Y美债(折价参照)"
+      },
+      {
+       "type": "cmd",
+       "code": "DFII10",
+       "name": "10Y实际利率"
+      }
+     ],
+     "params": {
+      "quasi_cash_yi": 32.6,
+      "q3_wealth_income_yi": 1.46,
+      "share_of_pretax": "金融类收益≈利润总额49%(2025)"
+     },
+     "note": "利息收入随利率下行-16%(2025H1 1.15亿→2026H1 0.96亿);理财收益率区间已降至1.3-3.6%;汇兑敞口=出口31%"
+    }
+   ],
+   "model": {
+    "method": "增量桥:Q4E=Q3实际+Σ分部毛利变动×传导系数+非经营项;预估价=QTD已实现×已过权重+现价×剩余(动态);中间体按对硝-纯苯价差倒挂的实时读数驱动",
+    "conduit": 0.85,
+    "conduit_note": "广信所得税~15%(高新)+无少数股东,传导高于紫金",
+    "q4_2026": {
+     "baseline": {
+      "revenue_yi": 8.59,
+      "attributable_yi": 1.78,
+      "non_gaap_yi": 1.39,
+      "gross_margin_pct": 37.29,
+      "ytd_revenue_yi": 24.76,
+      "ytd_attributable_yi": 5.35,
+      "ytd_non_gaap_yi": 3.89,
+      "source": "三季报+Q3经营数据公告(研报裁决版交叉校验:H1归母3.57+Q3 1.78=5.35✓;ytd营收=H1 16.17(库fin表)+Q3 8.59)"
+     },
+     "segments": [
+      {
+       "product": "中间体(对/邻硝基氯化苯)",
+       "q3_rev_yi": 4.81,
+       "q3_gm_pct": 47,
+       "q4_gm_scenarios_pct": [
+        10,
+        15,
+        22
+       ],
+       "q4_rev_scenarios_yi": [
+        2.6,
+        3.1,
+        3.6
+       ],
+       "note": "对硝-纯苯价差QTD为-1,416(倒挂):纯苯10月随油价暴涨而对硝8,800横盘;毛利率情景=倒挂但氯碱自供抵扣;收入情景=存货-67%后出货放缓(量-30%~-50%)"
+      },
+      {
+       "product": "原药(多菌灵等)",
+       "q3_rev_yi": 2.47,
+       "q3_gm_pct": 30,
+       "q4_gm_scenarios_pct": [
+        26,
+        29,
+        31
+       ],
+       "q4_rev_scenarios_yi": [
+        2.3,
+        2.45,
+        2.6
+       ],
+       "note": "多菌灵QTD+1.6%平稳;茚虫威36万贴警戒线35万;价格QTD动态进GM情景"
+      },
+      {
+       "product": "其他+贸易",
+       "q3_rev_yi": 1.31,
+       "q3_gm_pct": 15,
+       "q4_gm_scenarios_pct": [
+        12,
+        15,
+        15
+       ],
+       "q4_rev_scenarios_yi": [
+        1.2,
+        1.3,
+        1.4
+       ]
+      }
+     ],
+     "opex_q4_yi": [
+      -1.55,
+      -1.45,
+      -1.35
+     ],
+     "opex_note": "三费+研发单季约1.4-1.55亿(Q3财务费用已含汇兑损失;Q4汇兑假设随人民币企稳减半→费用端略改善)",
+     "non_op": {
+      "wealth_yi": [
+       1.3,
+       1.4,
+       1.5
+      ],
+      "compensation_yi": [
+       0,
+       1.29,
+       2.58
+      ],
+      "compensation_note": "拆迁补偿2.58亿大部分未确认——落地时点假设:low=Q4不确认/high=全额;这是Q4归母的最大摆动项",
+      "subsidy_yi": [
+       0.05,
+       0.1,
+       0.15
+      ]
+     },
+     "price_scenario_pct": [
+      -0.05,
+      0.0,
+      0.03
+     ]
+    },
+    "fy_2027": {
+     "method": "FY27E = FY26E + 增量项(草甘膦复产/新线爬坡/汇兑正常化),研报口径为锚、价差动态校准",
+     "items": [
+      {
+       "name": "草甘膦3万吨技改复产",
+       "contrib_yi": [
+        0.5,
+        0.75,
+        1.0
+       ],
+       "driver": "草甘膦-甘氨酸价差QTD 14,083(+9.1%)——价差维持1.4万+则0.5-1亿贡献成立(研报中性假设2027H1投产)"
+      },
+      {
+       "name": "茚虫威/噁草酮爬坡",
+       "contrib_yi": [
+        0.1,
+        0.2,
+        0.3
+       ],
+       "driver": "茚虫威现价36万 vs 研报降档警戒35万——爬坡量未知,谨慎给"
+      },
+      {
+       "name": "对硝均衡",
+       "contrib_yi": [
+        0,
+        0,
+        0
+       ],
+       "driver": "价差倒挂回归均衡,零贡献(研报口径)"
+      },
+      {
+       "name": "多菌灵/敌草隆平稳",
+       "contrib_yi": [
+        0,
+        0,
+        0
+       ]
+      },
+      {
+       "name": "汇兑正常化",
+       "contrib_yi": [
+        0,
+        0.5,
+        1.0
+       ],
+       "driver": "若人民币企稳,财务费用负向摆动回摆"
+      }
+     ],
+     "crosscheck": "研报2027E扣非5.2-6.2(中性5.5);本模型FY26E扣非+增量项应落同一区间,偏离>1亿需查假设",
+     "crosscheck_fy26": "FY26对照:研报6.2-6.9亿 vs 模型6.2-10.0亿——上沿差异全部来自拆迁补偿Q4落地假设(0/1.29/2.58亿三情景);研报口径大概率按部分/不落地计,剔除补偿后模型base=6.78亿与研报区间吻合"
+    }
+   },
+   "watchlist": [
+    "11-6 业绩说明会(草甘膦投产时间表/茚虫威噁草酮爬坡)",
+    "Q4 计提风险(全年归母<6亿触发降档)",
+    "湖南海利宁夏 5,000吨甲基硫菌灵投产(直打主力品种)",
+    "对硝加工费修复与否(八一复产)",
+    "实控人行为(高位减持 vs 破净零增持)"
+   ]
+  }
+ ],
+ "manual_series": [
+  {
+   "code": "CU_TC_SPOT",
+   "name": "铜精矿现货TC(SMM周度,转载)",
+   "unit": "美元/干吨",
+   "freq": "周",
+   "points": [
+    [
+     "2025-01-06",
+     21.25,
+     "2025年长单基准"
+    ],
+    [
+     "2026-01-05",
+     0.0,
+     "2026年长单(2025-12-21 Antofagasta 敲定,历史首次归零)"
+    ],
+    [
+     "2026-06-30",
+     -44.3,
+     "SMM转载(2026H1持续探底)"
+    ],
+    [
+     "2026-07-11",
+     -132.84,
+     "新浪财经转载SMM周度"
+    ],
+    [
+     "2026-07-17",
+     -146.15,
+     "新浪财经转载SMM周度"
+    ]
+   ],
+   "note": "人工维护:源=新浪/财联社周五转载SMM进口铜精矿指数(周);长单点为年度谈判结果非现货"
+  }
+ ]
 }

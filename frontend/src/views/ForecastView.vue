@@ -254,6 +254,7 @@ watch(() => allPrices.value.length, (n) => {
             <li v-for="a in target.model.assumptions" :key="a.name">{{ a.name }}: {{ a.contrib_yi.join('/') }} 亿 —— {{ a.driver }}</li>
           </ul>
           <p v-if="target.model.fy27.crosscheck" class="dim">交叉校验: {{ target.model.fy27.crosscheck }}</p>
+          <p v-if="target.model.fy27.crosscheck_fy26" class="dim">FY26 对照: {{ target.model.fy27.crosscheck_fy26 }}</p>
           <p v-if="target.model.fy27.note" class="dim">{{ target.model.fy27.note }}</p>
         </div>
       </section>
