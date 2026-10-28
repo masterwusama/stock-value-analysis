@@ -70,7 +70,9 @@ const q4Baseline = computed(() => {
 })
 const periodShort = computed(() => {
   const lbl = target.value?.model?.period_label || ''
-  return lbl.includes('H2') ? 'H2' : 'Q4'
+  if (lbl.includes('H2')) return 'H2'
+  if (lbl.includes('Q3')) return 'Q3'   // 三季报未披露标的:预测目标=Q3(下一份未出财报)
+  return 'Q4'
 })
 // A/H 市场标准化:徽标 + 口径条(H股=半年报制/无扣非;A股=季报制/归母+扣非)
 const mktLabel = (m) => (m === 'HK' ? 'H' : m === 'A+H' ? 'A+H' : 'A')
@@ -140,7 +142,7 @@ watch(() => allPrices.value.length, (n) => {
         <div class="thesis">{{ target.thesis }}</div>
         <p class="dim note-line">{{ target.period_note }}</p>
         <div v-if="target.guidance_2026" class="guide">
-          <div class="guide-title">2026 指引完成度({{ periodShort === 'H2' ? 'H1 实际' : 'Q1-3 实际' }} / 全年指引)</div>
+          <div class="guide-title">2026 指引完成度({{ periodShort === 'Q4' ? 'Q1-3 实际' : 'H1 实际' }} / 全年指引)</div>
           <div class="guide-grid">
             <div v-for="(g, prod) in target.guidance_2026" :key="prod" class="g-item" :class="{ fact: g.fact }">
               <div class="g-name">{{ prod }}<i v-if="g.note" class="g-note">{{ g.note }}</i></div>
@@ -151,7 +153,7 @@ watch(() => allPrices.value.length, (n) => {
                 <div class="g-bar" :class="{ pending: g.q1_3 == null }"><b :style="{ width: Math.min(100, (g.q1_3 || 0) / g.qty * 100).toFixed(0) + '%' }" /></div>
                 <div class="g-vals">
                   <span class="g-q">{{ g.q1_3 != null ? g.q1_3 : '—' }} / {{ g.qty }} {{ g.unit }}</span>
-                  <span v-if="g.q1_3 != null" :class="cls((g.q1_3 / g.qty) - (periodShort === 'H2' ? 0.5 : 0.75))">{{ num((g.q1_3 / g.qty) * 100, 0) }}%</span>
+                  <span v-if="g.q1_3 != null" :class="cls((g.q1_3 / g.qty) - (periodShort === 'Q4' ? 0.75 : 0.5))">{{ num((g.q1_3 / g.qty) * 100, 0) }}%</span>
                   <span v-else class="g-wait">待披露</span>
                 </div>
               </template>
@@ -165,8 +167,8 @@ watch(() => allPrices.value.length, (n) => {
       <section v-if="target.model && target.model.q4" class="card proj">
         <div class="proj-head">
           <h3>动态预估</h3>
-          <span class="sub">{{ target.model.period_label || '2026Q4E' }} · 三情景 · 每日随价格滚动</span>
-          <span class="sub proj-clock">Q4 已过 {{ target.model.q4_window.days_gone }}/{{ target.model.q4_window.days_total }} 天 · 传导 {{ target.model.conduit }}</span>
+          <span class="sub">{{ target.model.period_label || '2026Q4E' }} · 三情景 · {{ periodShort === 'Q3' ? '价格已实现' : '每日随价格滚动' }}</span>
+          <span class="sub proj-clock">{{ periodShort === 'Q3' ? 'Q3 已收官 · 价格全部已实现' : `Q4 已过 ${target.model.q4_window.days_gone}/${target.model.q4_window.days_total} 天` }} · 传导 {{ target.model.conduit }}</span>
         </div>
 
         <div class="scn-cards">
@@ -189,9 +191,10 @@ watch(() => allPrices.value.length, (n) => {
 
         <div class="fy-grid">
           <div class="fy-item" v-if="target.model.fy26">
-            <div class="fy-name">FY2026E · 归母</div>
+            <div class="fy-name">{{ target.model.fy26.label || 'FY2026E' }} · 归母</div>
             <div class="fy-val">{{ fmtRange(target.model.fy26.attributable_yi) }}<em>亿</em></div>
             <div class="fy-cmp" v-if="fy26Yoy">同比 <span :class="cls(fy26Yoy[1])">{{ pct(fy26Yoy[1]) }}</span><span class="dim">(基准档)</span></div>
+            <div class="fy-cmp dim" v-else-if="target.model.fy26_note" style="font-size:11px">{{ target.model.fy26_note }}</div>
           </div>
           <div class="fy-item" v-if="fy27Vals">
             <div class="fy-name">FY2027E · {{ fy27IsNonGaap ? '扣非' : '归母' }}</div>

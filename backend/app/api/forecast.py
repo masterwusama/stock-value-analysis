@@ -191,14 +191,17 @@ def _model_projection(t, cmd_cache, agro_cache=None):
     if not m:
         return None
     conduit = m.get("conduit", 0.7)
-    days_gone, days_total = _q4_window()
+    q4m = m.get("q4_2026") or {}
+    # 盐湖式:三季报未披露时预测目标=Q3(下一份未出财报),基线 Q2 单季实际;
+    # Q3 季度已收官,价格全部已实现——p4 用 Q3 桶均,情景只做微调,无动态混合
+    tgt_q3 = q4m.get("target_quarter") == 3
+    days_gone, days_total = (92, 92) if tgt_q3 else _q4_window()
     out = {"method": m.get("method"), "conduit": conduit,
            "conduit_note": m.get("conduit_note"),
            "period_label": m.get("period_label"),
            "baseline_label": None,
            "q4_window": {"days_gone": days_gone, "days_total": days_total},
            "q4": None, "fy26": None, "fy27": None, "assumptions": []}
-    q4m = m.get("q4_2026") or {}
     base = q4m.get("baseline") or {}
     out["baseline_label"] = base.get("label")
     out["yoy_note"] = base.get("yoy_note")
@@ -221,7 +224,13 @@ def _model_projection(t, cmd_cache, agro_cache=None):
                 continue
             pts = cmd_cache.get(s["price_code"]) or []
             stats = _qtd_stats(pts) if pts else {}
-            if s.get("p_prev_override") is not None:
+            p4_override = None
+            if s.get("p3_override") is not None:
+                # 新接入序列两头都缺桶历史(如氯化钾 10 月起采):两期都显式给锚
+                p3 = s["p3_override"]
+                p4_override = s.get("p4_override")
+                p4_pair = None
+            elif s.get("p_prev_override") is not None:
                 p3 = s["p_prev_override"]
                 p4_pair = None
             elif semi:
@@ -230,6 +239,10 @@ def _model_projection(t, cmd_cache, agro_cache=None):
                 q3 = _bucket_avg(pts, year, 3)
                 p3 = (q1 + q2) / 2 if q1 is not None and q2 is not None else None
                 p4_pair = (q3, None)
+            elif tgt_q3:
+                p3 = _bucket_avg(pts, year, 2)
+                p4_override = _bucket_avg(pts, year, 3)
+                p4_pair = None
             else:
                 p3 = stats.get("prev_q")
                 p4_pair = None
@@ -248,7 +261,10 @@ def _model_projection(t, cmd_cache, agro_cache=None):
                     v = vols["low"]
                 elif scn == "high" and vols.get("high"):
                     v = vols["high"]
-                if semi:
+                if p4_override is not None:
+                    # Q3 已收官型(target_q3)或双锚序列:预估价=锚/Q3桶均×情景微调
+                    p4 = p4_override * (1 + price_scn[i])
+                elif semi:
                     p4 = None
                     if p4_pair[0] is not None:
                         d4 = _dyn_price(stats, days_gone, days_total, price_scn[i])
@@ -317,6 +333,8 @@ def _model_projection(t, cmd_cache, agro_cache=None):
             prior_fy = base.get("prior_year_fy_yi")
             atts = [round(base["ytd_attributable_yi"] + p["attributable_yi"], 0) for p in proj]
             out["fy26"] = {"scenario": SCN,
+                           "label": m.get("fy26_label"),
+                           "note": m.get("fy26_note"),
                            "attributable_yi": atts,
                            "non_gaap_yi": [round(base.get("ytd_non_gaap_yi", 0) + p["non_gaap_yi"], 0)
                                            if p["non_gaap_yi"] is not None and base.get("ytd_non_gaap_yi") is not None
@@ -349,7 +367,7 @@ def _model_projection(t, cmd_cache, agro_cache=None):
             elif s.get("delta_margin_yi"):
                 growth = [g + x * conduit for g, x in zip(growth, s["delta_margin_yi"])]
         fy26_mid = out["fy26"]["attributable_yi"][1] if out.get("fy26") else None
-        if fy26_mid:
+        if fy26_mid and segs27:  # 无 fy_2027 定义(如三季报未披露标的)则不输出该槽
             fy27_atts = [round(fy26_mid + g, 0) for g in growth]
             out["fy27"] = {"attributable_yi": fy27_atts,
                            "growth_yi": [round(g, 0) for g in growth],
