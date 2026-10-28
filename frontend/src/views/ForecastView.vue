@@ -72,7 +72,16 @@ const periodShort = computed(() => {
   const lbl = target.value?.model?.period_label || ''
   return lbl.includes('H2') ? 'H2' : 'Q4'
 })
-const fmtRange = (arr) => (arr || []).join(' / ')
+// A/H 市场标准化:徽标 + 口径条(H股=半年报制/无扣非;A股=季报制/归母+扣非)
+const mktLabel = (m) => (m === 'HK' ? 'H' : m === 'A+H' ? 'A+H' : 'A')
+const mktCls = (m) => (m === 'HK' ? 'hk' : m === 'A+H' ? 'ah' : 'a')
+const mktStrip = computed(() => {
+  const m = target.value?.market
+  if (m === 'HK') return '港股上市 · 半年报制(无季报,年报次年3月) · 人民币 · 仅归母——H股不披露扣非'
+  if (m === 'A+H') return 'A+H两地上市 · 预测走A股季报口径 · 人民币 · 归母+扣非'
+  return 'A股上市 · 季报制 · 人民币 · 归母+扣非'
+})
+const fmtRange = (arr) => (arr || []).map(v => num(v)).join(' / ')
 const fy26Yoy = computed(() => target.value?.model?.fy26?.yoy_pct || null)
 const fy27Vals = computed(() => {
   const f = target.value?.model?.fy27
@@ -120,13 +129,14 @@ watch(() => allPrices.value.length, (n) => {
       <div class="toolbar tabs">
         <button v-for="t in data.targets" :key="t.sid" type="button" class="tab"
                 :class="{ on: t.sid === curSid }" @click="curSid = t.sid">
-          {{ t.name }}<span class="code">{{ t.sid }}</span>
+          <i class="mkt" :class="mktCls(t.market)">{{ mktLabel(t.market) }}</i>{{ t.name }}<span class="code">{{ t.sid }}</span>
         </button>
         <span class="sub head-sub">业绩预测 · 研究工具非投资建议 · 量/成本为披露值,价格为库内最新</span>
       </div>
 
-      <!-- 头卡:论点+期间速览+指引完成度 -->
+      <!-- 头卡:市场口径条+论点+期间速览+指引完成度 -->
       <section class="card">
+        <div class="mkt-strip"><i class="mkt" :class="mktCls(target.market)">{{ mktLabel(target.market) }}</i><span>{{ mktStrip }}</span></div>
         <div class="thesis">{{ target.thesis }}</div>
         <p class="dim note-line">{{ target.period_note }}</p>
         <div v-if="target.guidance_2026" class="guide">
@@ -162,16 +172,16 @@ watch(() => allPrices.value.length, (n) => {
         <div class="scn-cards">
           <div v-for="p in target.model.q4.proj" :key="p.scenario" class="scn-card" :class="p.scenario">
             <div class="scn-name">{{ scnCN[p.scenario] || p.scenario }}</div>
-            <div class="scn-val">{{ p.attributable_yi }}<em>亿</em></div>
+            <div class="scn-val">{{ num(p.attributable_yi) }}<em>亿</em></div>
             <div class="scn-cap">归母净利({{ periodShort }}'26E)</div>
             <div class="scn-cmp">
               <span :class="cls(p.qoq_pct)" title="对比上一报告期实际(基线)">环比 {{ pct(p.qoq_pct) }}</span>
               <span v-if="p.yoy_pct != null" :class="cls(p.yoy_pct)" :title="target.model.yoy_note || ''">同比 {{ pct(p.yoy_pct) }}</span>
             </div>
             <div class="scn-extra">
-              <span v-if="p.revenue_yi != null">营收 {{ p.revenue_yi }}亿</span>
-              <span v-if="p.gross_margin_pct != null">毛利 {{ p.gross_margin_pct }}%</span>
-              <span>{{ p.non_gaap_yi != null ? '扣非 ' + p.non_gaap_yi + '亿' : '扣非 —(H股无口径)' }}</span>
+              <span v-if="p.revenue_yi != null">营收 {{ num(p.revenue_yi) }}亿</span>
+              <span v-if="p.gross_margin_pct != null">毛利 {{ num(p.gross_margin_pct) }}%</span>
+              <span v-if="p.non_gaap_yi != null">扣非 {{ num(p.non_gaap_yi) }}亿</span>
             </div>
           </div>
         </div>
@@ -193,12 +203,12 @@ watch(() => allPrices.value.length, (n) => {
         <div class="proj-detail">
           <div v-if="target.model.q4.mode === '增量桥'" class="dim">
             分部毛利变动(亿): <span v-for="s in target.model.q4.segments" :key="s.product" class="chip">
-              {{ s.product.slice(0,8) }} {{ s.delta_yi ? s.delta_yi.join('/') : (s.vol_note||'').slice(0,20) }}</span>
+              {{ s.product.slice(0,12) }} {{ s.delta_yi ? s.delta_yi.join('/') : (s.vol_note||'').slice(0,20) }}</span>
             <span v-if="target.model.q4.impairment_yi" class="chip bad">减值 {{ target.model.q4.impairment_yi.join('/') }}亿</span>
           </div>
           <div v-else class="dim">
             <span v-for="s in target.model.q4.segments" :key="s.product" class="chip">
-              {{ s.product.slice(0,10) }} GM {{ s.q3_gm_pct }}%→{{ s.q4_gm_pct.join('/') }}%</span>
+              {{ s.product.slice(0,12) }} GM {{ s.q3_gm_pct }}%→{{ s.q4_gm_pct.join('/') }}%</span>
             <span class="chip bad">非经:补偿 {{ (target.model.q4.non_op||{}).compensation_yi || [] }}亿 + 理财 {{ (target.model.q4.non_op||{}).wealth_yi || [] }}亿</span>
           </div>
           <p v-if="target.model.q4.note" class="dim">{{ target.model.q4.note }}</p>
@@ -353,6 +363,14 @@ tbody tr.on { background: var(--accent-soft, #eaf1fe); }
 .chip.warn { background: #fffbeb; color: #92400e; }
 .chip.bad { background: #fef2f2; color: #991b1b; }
 .chart { width: 100%; }
+
+/* A/H 市场徽标与口径条(H股琥珀/A股蓝/A+H紫,标准化区分) */
+.mkt { display: inline-block; font-size: 10px; font-weight: 700; line-height: 1; padding: 3px 5px; border-radius: 4px; margin-right: 6px; vertical-align: 1px; font-style: normal; }
+.mkt.hk { background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }
+.mkt.a { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.mkt.ah { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+.mkt-strip { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--sub, #6b7280); margin-bottom: 8px; }
+.mkt-strip .mkt { margin-right: 0; font-size: 11px; padding: 3px 6px; }
 .tip { margin: 6px 2px 0; }
 .proj-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .proj-head h3 { margin: 0; font-size: 15px; }

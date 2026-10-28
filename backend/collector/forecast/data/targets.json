@@ -730,7 +730,7 @@
      },
      "segments": [
       {
-       "product": "聚氨酯(MDI口径)",
+       "product": "聚氨酯",
        "price_code": "MDI_POLY",
        "vol_unit": "万吨",
        "mult": 10000.0,
@@ -752,7 +752,7 @@
        "vol_note": "Q4检修季(烟台/宁波轮检)+出口淡季:量环比微降是常态;high=检修推迟"
       },
       {
-       "product": "石化(PDH+乙烯)",
+       "product": "石化",
        "price_code": null,
        "static_margin_change_yi": [
         -6,
@@ -790,7 +790,7 @@
      "method": "FY27E = FY26E + 量价情景(MDI 新产能(福建40万吨满产)+新材料放量 vs MDI周期回落风险)",
      "segments": [
       {
-       "product": "聚氨酯(MDI口径)",
+       "product": "聚氨酯",
        "vol_2026e": 395,
        "vol_2027": [
         390,
