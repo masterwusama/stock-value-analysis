@@ -59,6 +59,7 @@ const num = (v, d = 1) => (v == null ? '-' : (+v).toFixed(d))
 const cls = (v) => (v == null ? '' : v >= 0 ? 'up' : 'down')
 const pct = (v) => (v == null ? '-' : (v >= 0 ? '+' : '') + (+v).toFixed(1) + '%')
 const scnCN = { low: '悲观', base: '基准', high: '乐观' }
+const scnTag = { low: 'fa-arrow-down', base: 'fa-circle', high: 'fa-arrow-up' }
 const projKeys = ['revenue_yi', 'gross_margin_pct', 'non_gaap_yi', 'attributable_yi']
 const projHead = { revenue_yi: '营收(亿)', gross_margin_pct: '毛利率%', non_gaap_yi: '扣非(亿)', attributable_yi: '归母(亿)' }
 const q4Baseline = computed(() => {
@@ -66,6 +67,21 @@ const q4Baseline = computed(() => {
   if (!m || !m.q4) return ''
   if (m.baseline_label) return m.baseline_label
   return m.q4.mode === '增量桥' ? 'Q3归母/扣非' : 'Q3营收8.59亿/GM37.29%'
+})
+const periodShort = computed(() => {
+  const lbl = target.value?.model?.period_label || ''
+  return lbl.includes('H2') ? 'H2' : 'Q4'
+})
+const fmtRange = (arr) => (arr || []).join(' / ')
+const fy26Yoy = computed(() => target.value?.model?.fy26?.yoy_pct || null)
+const fy27Vals = computed(() => {
+  const f = target.value?.model?.fy27
+  return f ? (f.attributable_yi || f.non_gaap_yi) : null
+})
+const fy27Yoy = computed(() => target.value?.model?.fy27?.yoy_pct || null)
+const fy27IsNonGaap = computed(() => {
+  const f = target.value?.model?.fy27
+  return !!f && !f.attributable_yi && !!f.non_gaap_yi
 })
 
 function pickPrice(p) { curCode.value = p.code }
@@ -126,6 +142,67 @@ watch(() => allPrices.value.length, (n) => {
             </div>
           </div>
           <p class="dim" v-if="target.guidance_source">{{ target.guidance_source }}</p>
+        </div>
+      </section>
+
+      <!-- 动态预估(置顶) -->
+      <section v-if="target.model && target.model.q4" class="card proj">
+        <div class="proj-head">
+          <h3>动态预估</h3>
+          <span class="sub">{{ target.model.period_label || '2026Q4E' }} · 三情景 · 每日随价格滚动</span>
+          <span class="sub proj-clock">Q4 已过 {{ target.model.q4_window.days_gone }}/{{ target.model.q4_window.days_total }} 天 · 传导 {{ target.model.conduit }}</span>
+        </div>
+
+        <div class="scn-cards">
+          <div v-for="p in target.model.q4.proj" :key="p.scenario" class="scn-card" :class="p.scenario">
+            <div class="scn-name">{{ scnCN[p.scenario] || p.scenario }}</div>
+            <div class="scn-val">{{ p.attributable_yi }}<em>亿</em></div>
+            <div class="scn-cap">归母净利({{ periodShort }}'26E)</div>
+            <div class="scn-cmp">
+              <span :class="cls(p.qoq_pct)" title="对比上一报告期实际(基线)">环比 {{ pct(p.qoq_pct) }}</span>
+              <span v-if="p.yoy_pct != null" :class="cls(p.yoy_pct)" :title="target.model.yoy_note || ''">同比 {{ pct(p.yoy_pct) }}</span>
+            </div>
+            <div class="scn-extra">
+              <span v-if="p.revenue_yi != null">营收 {{ p.revenue_yi }}亿</span>
+              <span v-if="p.gross_margin_pct != null">毛利 {{ p.gross_margin_pct }}%</span>
+              <span>{{ p.non_gaap_yi != null ? '扣非 ' + p.non_gaap_yi + '亿' : '扣非 —(H股无口径)' }}</span>
+            </div>
+          </div>
+        </div>
+        <p class="dim scn-note">基线 {{ q4Baseline }}<template v-if="target.model.yoy_note"> · 同比基数:{{ target.model.yoy_note }}</template></p>
+
+        <div class="fy-grid">
+          <div class="fy-item" v-if="target.model.fy26">
+            <div class="fy-name">FY2026E · 归母</div>
+            <div class="fy-val">{{ fmtRange(target.model.fy26.attributable_yi) }}<em>亿</em></div>
+            <div class="fy-cmp" v-if="fy26Yoy">同比 <span :class="cls(fy26Yoy[1])">{{ pct(fy26Yoy[1]) }}</span><span class="dim">(基准档)</span></div>
+          </div>
+          <div class="fy-item" v-if="fy27Vals">
+            <div class="fy-name">FY2027E · {{ fy27IsNonGaap ? '扣非' : '归母' }}</div>
+            <div class="fy-val">{{ fmtRange(fy27Vals) }}<em>亿</em></div>
+            <div class="fy-cmp" v-if="fy27Yoy">同比 <span :class="cls(fy27Yoy[1])">{{ pct(fy27Yoy[1]) }}</span><span class="dim">(基准档)</span></div>
+          </div>
+        </div>
+
+        <div class="proj-detail">
+          <div v-if="target.model.q4.mode === '增量桥'" class="dim">
+            分部毛利变动(亿): <span v-for="s in target.model.q4.segments" :key="s.product" class="chip">
+              {{ s.product.slice(0,8) }} {{ s.delta_yi ? s.delta_yi.join('/') : (s.vol_note||'').slice(0,20) }}</span>
+            <span v-if="target.model.q4.impairment_yi" class="chip bad">减值 {{ target.model.q4.impairment_yi.join('/') }}亿</span>
+          </div>
+          <div v-else class="dim">
+            <span v-for="s in target.model.q4.segments" :key="s.product" class="chip">
+              {{ s.product.slice(0,10) }} GM {{ s.q3_gm_pct }}%→{{ s.q4_gm_pct.join('/') }}%</span>
+            <span class="chip bad">非经:补偿 {{ (target.model.q4.non_op||{}).compensation_yi || [] }}亿 + 理财 {{ (target.model.q4.non_op||{}).wealth_yi || [] }}亿</span>
+          </div>
+          <p v-if="target.model.q4.note" class="dim">{{ target.model.q4.note }}</p>
+          <p v-if="target.model.q4.opex_note" class="dim">{{ target.model.q4.opex_note }}</p>
+          <ul v-if="target.model.assumptions && target.model.assumptions.length" class="watch compact">
+            <li v-for="a in target.model.assumptions" :key="a.name">{{ a.name }}: {{ a.contrib_yi.join('/') }} 亿 —— {{ a.driver }}</li>
+          </ul>
+          <p v-if="target.model.fy27 && target.model.fy27.crosscheck" class="dim">交叉校验: {{ target.model.fy27.crosscheck }}</p>
+          <p v-if="target.model.fy27 && target.model.fy27.crosscheck_fy26" class="dim">FY26 对照: {{ target.model.fy27.crosscheck_fy26 }}</p>
+          <p v-if="target.model.fy27 && target.model.fy27.note" class="dim">{{ target.model.fy27.note }}</p>
         </div>
       </section>
 
@@ -207,58 +284,6 @@ watch(() => allPrices.value.length, (n) => {
         <p v-if="seg.sensitivity_note" class="dim">{{ seg.sensitivity_note }}</p>
       </section>
 
-      <!-- 动态预估(Q4E/FY26E/FY27E) -->
-      <section v-if="target.model" class="card proj">
-        <h3>动态预估 <span class="sub">Q4'26E / FY26E / FY27E · 三情景 · 每日随价格滚动</span></h3>
-        <p class="dim">{{ target.model.method }}</p>
-        <p class="dim">传导系数 {{ target.model.conduit }}({{ target.model.conduit_note }});Q4 已过 {{ target.model.q4_window.days_gone }}/{{ target.model.q4_window.days_total }} 天——预估价=QTD已实现×已过权重+现价×剩余权重</p>
-        <div v-if="target.model.q4" class="proj-block">
-          <div class="proj-title">{{ target.model.period_label || '2026Q4E' }}(基线 {{ q4Baseline }})</div>
-          <table class="grid">
-            <thead><tr><th class="stick">情景</th><th v-for="k in projKeys" :key="k">{{ projHead[k] }}</th></tr></thead>
-            <tbody>
-              <tr v-for="p in target.model.q4.proj" :key="p.scenario" :class="p.scenario">
-                <td class="stick"><b>{{ scnCN[p.scenario] || p.scenario }}</b></td>
-                <td v-for="k in projKeys" :key="k">{{ p[k] != null ? p[k] : '-' }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <div v-if="target.model.q4.mode === '增量桥'" class="dim">
-            分部毛利变动(亿): <span v-for="s in target.model.q4.segments" :key="s.product" class="chip">
-              {{ s.product.slice(0,8) }} {{ s.delta_yi ? s.delta_yi.join('/') : (s.vol_note||'').slice(0,20) }}</span>
-            <span v-if="target.model.q4.impairment_yi" class="chip bad">减值 {{ target.model.q4.impairment_yi.join('/') }}亿</span>
-          </div>
-          <div v-else class="dim">
-            <span v-for="s in target.model.q4.segments" :key="s.product" class="chip">
-              {{ s.product.slice(0,10) }} GM {{ s.q3_gm_pct }}%→{{ s.q4_gm_pct.join('/') }}%</span>
-            <span class="chip bad">非经:补偿 {{ (target.model.q4.non_op||{}).compensation_yi || [] }}亿 + 理财 {{ (target.model.q4.non_op||{}).wealth_yi || [] }}亿</span>
-          </div>
-          <p v-if="target.model.q4.note" class="dim">{{ target.model.q4.note }}</p>
-          <p v-if="target.model.q4.opex_note" class="dim">{{ target.model.q4.opex_note }}</p>
-        </div>
-        <div v-if="target.model.fy26" class="proj-block">
-          <div class="proj-title">FY2026E(Q1-3 实际 + Q4E)</div>
-          <div class="fy-row">
-            <span>归母 <b>{{ target.model.fy26.attributable_yi.join(' / ') }}</b> 亿</span>
-            <span>扣非 <b>{{ target.model.fy26.non_gaap_yi.join(' / ') }}</b> 亿</span>
-            <span v-if="target.model.fy26.revenue_yi">营收 <b>{{ target.model.fy26.revenue_yi.join(' / ') }}</b> 亿(低/基/高)</span>
-          </div>
-        </div>
-        <div v-if="target.model.fy27" class="proj-block">
-          <div class="proj-title">FY2027E</div>
-          <div class="fy-row">
-            <span v-if="target.model.fy27.attributable_yi">归母 <b>{{ target.model.fy27.attributable_yi.join(' / ') }}</b> 亿(增量 {{ (target.model.fy27.growth_yi||[]).join('/') }})</span>
-            <span v-if="target.model.fy27.non_gaap_yi">扣非 <b>{{ target.model.fy27.non_gaap_yi.join(' / ') }}</b> 亿</span>
-          </div>
-          <ul v-if="target.model.assumptions && target.model.assumptions.length" class="watch compact">
-            <li v-for="a in target.model.assumptions" :key="a.name">{{ a.name }}: {{ a.contrib_yi.join('/') }} 亿 —— {{ a.driver }}</li>
-          </ul>
-          <p v-if="target.model.fy27.crosscheck" class="dim">交叉校验: {{ target.model.fy27.crosscheck }}</p>
-          <p v-if="target.model.fy27.crosscheck_fy26" class="dim">FY26 对照: {{ target.model.fy27.crosscheck_fy26 }}</p>
-          <p v-if="target.model.fy27.note" class="dim">{{ target.model.fy27.note }}</p>
-        </div>
-      </section>
-
       <!-- 主图 -->
       <section class="card" v-if="curCode">
         <div ref="chartEl" class="chart" :style="{ height: isMobile ? '280px' : '380px' }"></div>
@@ -320,6 +345,33 @@ tbody tr.on { background: var(--accent-soft, #eaf1fe); }
 .chip.bad { background: #fef2f2; color: #991b1b; }
 .chart { width: 100%; }
 .tip { margin: 6px 2px 0; }
+.proj-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.proj-head h3 { margin: 0; font-size: 15px; }
+.proj-clock { margin-left: auto; }
+.scn-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+.scn-card { border: 1px solid var(--line, #e5e9f2); border-radius: 12px; padding: 12px 10px 10px; text-align: center; }
+.scn-card.base { border-color: var(--accent, #2d6cdf); background: var(--accent-soft, #eaf1fe); box-shadow: 0 2px 10px rgba(45,108,223,.12); }
+.scn-card.low { border-color: rgba(22,163,74,.4); }
+.scn-card.high { border-color: rgba(220,38,38,.4); }
+.scn-name { font-size: 12px; color: var(--sub, #6b7280); letter-spacing: 3px; }
+.scn-val { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; line-height: 1.15; }
+.scn-val em { font-style: normal; font-size: 13px; color: var(--sub); margin-left: 2px; font-weight: normal; }
+.scn-cap { font-size: 11px; color: var(--sub); }
+.scn-cmp { display: flex; justify-content: center; gap: 14px; font-size: 12.5px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+.scn-extra { font-size: 11.5px; color: var(--sub); margin-top: 5px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.scn-note { margin: 8px 2px 0; }
+.fy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 10px; margin-top: 12px; }
+.fy-item { border: 1px dashed var(--accent-line, #c4d7f6); border-radius: 10px; padding: 9px 12px; }
+.fy-name { font-size: 12px; color: var(--sub); }
+.fy-val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+.fy-val em { font-style: normal; font-size: 12px; color: var(--sub); font-weight: normal; }
+.fy-cmp { font-size: 12px; }
+.proj-detail { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line, #e5e9f2); }
+@media (max-width: 640px) {
+  .scn-cards { grid-template-columns: 1fr; }
+  .scn-card.base { order: -1; }
+  .scn-val { font-size: 26px; }
+}
 .watch { margin: 4px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.9; }
 .watch.compact { font-size: 12px; line-height: 1.7; }
 .proj-block { margin-top: 12px; }

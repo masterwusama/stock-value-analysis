@@ -176,6 +176,7 @@ def _model_projection(t, cmd_cache, agro_cache=None):
     q4m = m.get("q4_2026") or {}
     base = q4m.get("baseline") or {}
     out["baseline_label"] = base.get("label")
+    out["yoy_note"] = base.get("yoy_note")
     price_scn = q4m.get("price_scenario_pct") or [-0.05, 0.0, 0.03]
 
     # —— 紫金式:增量桥(分部 Δ毛利 = (Δ价−Δ成本)×情景量) ——
@@ -268,22 +269,30 @@ def _model_projection(t, cmd_cache, agro_cache=None):
         imp = (q4m.get("other_lines") or {}).get("impairment_yi") or [0, 0, 0]
         nonrec_q = ((base.get("attributable_yi") or 0) - base["non_gaap_yi"]
                     if base.get("non_gaap_yi") is not None else None)
+        prior_same = base.get("prior_year_same_period_yi")
         proj = []
         for i, scn in enumerate(SCN):
             att = base["attributable_yi"] + deltas[i] + imp[i]
             proj.append({"scenario": scn,
                          "attributable_yi": round(att, 1),
-                         "non_gaap_yi": round(att - nonrec_q, 1) if nonrec_q is not None else None})
+                         "non_gaap_yi": round(att - nonrec_q, 1) if nonrec_q is not None else None,
+                         "qoq_pct": round((att / base["attributable_yi"] - 1) * 100, 1),
+                         "yoy_pct": (round((att / prior_same - 1) * 100, 1)
+                                     if prior_same else None)})
         out["q4"] = {"mode": "增量桥", "segments": rows,
                      "impairment_yi": imp,
                      "note": (q4m.get("other_lines") or {}).get("impairment_note"),
                      "proj": proj}
         if base.get("ytd_attributable_yi"):
+            prior_fy = base.get("prior_year_fy_yi")
+            atts = [round(base["ytd_attributable_yi"] + p["attributable_yi"], 0) for p in proj]
             out["fy26"] = {"scenario": SCN,
-                           "attributable_yi": [round(base["ytd_attributable_yi"] + p["attributable_yi"], 0) for p in proj],
+                           "attributable_yi": atts,
                            "non_gaap_yi": [round(base.get("ytd_non_gaap_yi", 0) + p["non_gaap_yi"], 0)
                                            if p["non_gaap_yi"] is not None and base.get("ytd_non_gaap_yi") is not None
-                                           else None for p in proj]}
+                                           else None for p in proj],
+                           "yoy_pct": ([round((a / prior_fy - 1) * 100, 1) for a in atts]
+                                       if prior_fy else None)}
         # FY27: 量增×当前单位毛利×传导 ± 价格情景
         f27 = m.get("fy_2027") or {}
         segs27, growth = f27.get("segments", []), [0.0, 0.0, 0.0]
@@ -311,8 +320,10 @@ def _model_projection(t, cmd_cache, agro_cache=None):
                 growth = [g + x * conduit for g, x in zip(growth, s["delta_margin_yi"])]
         fy26_mid = out["fy26"]["attributable_yi"][1] if out.get("fy26") else None
         if fy26_mid:
-            out["fy27"] = {"attributable_yi": [round(fy26_mid + g, 0) for g in growth],
+            fy27_atts = [round(fy26_mid + g, 0) for g in growth]
+            out["fy27"] = {"attributable_yi": fy27_atts,
                            "growth_yi": [round(g, 0) for g in growth],
+                           "yoy_pct": [round((a / fy26_mid - 1) * 100, 1) for a in fy27_atts],
                            "note": f27.get("note")}
         return out
 
@@ -332,6 +343,7 @@ def _model_projection(t, cmd_cache, agro_cache=None):
     wealth = nop.get("wealth_yi") or [1.4, 1.4, 1.4]
     comp = nop.get("compensation_yi") or [0, 0, 0]
     subs = nop.get("subsidy_yi") or [0.1, 0.1, 0.1]
+    prior_same = base.get("prior_year_same_period_yi")
     proj = []
     for i, scn in enumerate(SCN):
         op = gross_all[i] + opex[i]
@@ -341,15 +353,21 @@ def _model_projection(t, cmd_cache, agro_cache=None):
                      "revenue_yi": round(rev_all[i], 2),
                      "gross_margin_pct": round(gross_all[i] / rev_all[i] * 100, 1) if rev_all[i] else None,
                      "non_gaap_yi": round(non_gaap, 2),
-                     "attributable_yi": round(att, 2)})
+                     "attributable_yi": round(att, 2),
+                     "qoq_pct": round((att / base["attributable_yi"] - 1) * 100, 1),
+                     "yoy_pct": (round((att / prior_same - 1) * 100, 1)
+                                 if prior_same else None)})
     out["q4"] = {"mode": "分部重构", "segments": seg_rows,
                  "opex_yi": opex, "opex_note": q4m.get("opex_note"),
                  "non_op": nop, "proj": proj}
     if base.get("ytd_attributable_yi") is not None:
+        prior_fy = base.get("prior_year_fy_yi")
+        atts = [round(base["ytd_attributable_yi"] + p["attributable_yi"], 2) for p in proj]
         out["fy26"] = {
-            "attributable_yi": [round(base["ytd_attributable_yi"] + p["attributable_yi"], 2) for p in proj],
+            "attributable_yi": atts,
             "non_gaap_yi": [round(base.get("ytd_non_gaap_yi", 0) + p["non_gaap_yi"], 2) for p in proj],
-            "revenue_yi": [round(base.get("ytd_revenue_yi", 0) + p["revenue_yi"], 1) for p in proj]}
+            "revenue_yi": [round(base.get("ytd_revenue_yi", 0) + p["revenue_yi"], 1) for p in proj],
+            "yoy_pct": ([round((a / prior_fy - 1) * 100, 1) for a in atts] if prior_fy else None)}
     f27 = m.get("fy_2027") or {}
     if f27.get("items"):
         adds = [0.0, 0.0, 0.0]
@@ -358,7 +376,10 @@ def _model_projection(t, cmd_cache, agro_cache=None):
             adds = [a + x for a, x in zip(adds, c)]
             out["assumptions"].append({"name": it["name"], "contrib_yi": c, "driver": it.get("driver")})
         fy26_mid = out["fy26"]["non_gaap_yi"][1] if out.get("fy26") else 0
-        out["fy27"] = {"non_gaap_yi": [round(fy26_mid + a, 2) for a in adds],
+        fy27_ng = [round(fy26_mid + a, 2) for a in adds]
+        out["fy27"] = {"non_gaap_yi": fy27_ng,
+                       "yoy_pct": [round((a / fy26_mid - 1) * 100, 1) if fy26_mid else None
+                                   for a in fy27_ng],
                        "crosscheck": f27.get("crosscheck")}
     return out
 

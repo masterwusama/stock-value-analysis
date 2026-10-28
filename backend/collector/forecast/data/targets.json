@@ -189,7 +189,10 @@
       "ytd_revenue_yi": 2834.53,
       "ytd_attributable_yi": 575.26,
       "ytd_non_gaap_yi": 558.42,
-      "source": "三季报(2026-10-23,营收与库fin表一致✓)"
+      "source": "三季报(2026-10-23,营收与库fin表一致✓)",
+      "prior_year_same_period_yi": 139.1,
+      "prior_year_fy_yi": 517.8,
+      "yoy_note": "2025Q4=全年517.8−Q1-3 378.7(由2026Q1-3 575.26与+51.93%反推);源:2025年报+2026三季报"
      },
      "segments": [
       {
@@ -479,7 +482,10 @@
       "revenue_yi": null,
       "non_gaap_yi": null,
       "ytd_attributable_yi": 172.0,
-      "source": "2026中报盈喜(+39%)+中银国际点评;H1'25=123.61亿互洽✓"
+      "source": "2026中报盈喜(+39%)+中银国际点评;H1'25=123.61亿互洽✓",
+      "prior_year_same_period_yi": 139.4,
+      "prior_year_fy_yi": 263.0,
+      "yoy_note": "H2'25=全年估263−H1实数123.61;2025全年为估算口径(flag)"
      },
      "segments": [
       {
@@ -715,7 +721,10 @@
       "ytd_revenue_yi": 1858.67,
       "ytd_attributable_yi": 156.58,
       "ytd_non_gaap_yi": 152.5,
-      "source": "2026三季报;扣非=归母-约1.5亿非经/季(估,flag);Q1-3营收/归母与库fin表H1互洽✓"
+      "source": "2026三季报;扣非=归母-约1.5亿非经/季(估,flag);Q1-3营收/归母与库fin表H1互洽✓",
+      "prior_year_same_period_yi": 30.6,
+      "prior_year_fy_yi": 122.1,
+      "yoy_note": "2025Q4归母=全年估122.1(库净利140.4×归母比0.870,2026H1实测)−Q1-3归母91.57;flag口径链较长"
      },
      "segments": [
       {
@@ -1051,7 +1060,10 @@
       "ytd_revenue_yi": 24.76,
       "ytd_attributable_yi": 5.35,
       "ytd_non_gaap_yi": 3.89,
-      "source": "三季报+Q3经营数据公告(研报裁决版交叉校验:H1归母3.57+Q3 1.78=5.35✓;ytd营收=H1 16.17(库fin表)+Q3 8.59)"
+      "source": "三季报+Q3经营数据公告(研报裁决版交叉校验:H1归母3.57+Q3 1.78=5.35✓;ytd营收=H1 16.17(库fin表)+Q3 8.59)",
+      "prior_year_same_period_yi": 1.47,
+      "prior_year_fy_yi": 6.57,
+      "yoy_note": "2025Q4=全年6.57−Q1-3 5.10(前三季归母+5%反推,研报裁决版口径)"
      },
      "segments": [
       {
