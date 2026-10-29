@@ -180,6 +180,10 @@ watch(() => allPrices.value.length, (n) => {
         <div class="proj-head">
           <h3>动态预估</h3>
           <span class="sub">{{ target.model.period_label || '2026Q4E' }} · 三情景 · {{ periodShort === 'Q3' ? '价格已实现' : '每日随价格滚动' }}</span>
+          <span v-if="target.model.confidence" class="conf" :class="'conf-' + (target.model.confidence.level || '')"
+                :title="'依据:\n· ' + (target.model.confidence.drivers || []).join('\n· ') + '\n\n疑点:\n· ' + (target.model.confidence.doubts || []).join('\n· ')">
+            把握 {{ target.model.confidence.score }}<em>/100·{{ target.model.confidence.level }}</em>
+          </span>
           <span class="sub proj-clock">{{ periodShort === 'Q3' ? 'Q3 已收官 · 价格全部已实现' : `Q4 已过 ${target.model.q4_window.days_gone}/${target.model.q4_window.days_total} 天` }} · 传导 {{ target.model.conduit }}</span>
         </div>
 
@@ -409,6 +413,13 @@ tbody tr.on { background: var(--accent-soft, #eaf1fe); }
 .proj-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .proj-head h3 { margin: 0; font-size: 15px; }
 .proj-clock { margin-left: auto; }
+/* 精确度自评徽标:高=绿/中高=蓝/中=琥珀/低=红灰,hover title 展示依据与疑点 */
+.conf { font-size: 13px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: help; }
+.conf em { font-style: normal; font-size: 11px; font-weight: normal; opacity: .75; }
+.conf-高 { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+.conf-中高 { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+.conf-中 { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+.conf-低 { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
 .scn-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
 .scn-card { border: 1px solid var(--line, #e5e9f2); border-radius: 12px; padding: 12px 10px 10px; text-align: center; }
 .scn-card.base { border-color: var(--accent, #2d6cdf); background: var(--accent-soft, #eaf1fe); box-shadow: 0 2px 10px rgba(45,108,223,.12); }

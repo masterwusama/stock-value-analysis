@@ -258,7 +258,7 @@ def main():
     warnings = []
     series = []
 
-    bench = fetch_bench(['动力煤', '聚合MDI'])
+    bench = fetch_bench(['动力煤', '聚合MDI', 'LLDPE'])
     coal = bench.get('动力煤') or []
     if coal:
         series.append({
@@ -273,6 +273,16 @@ def main():
     mdi_bench = dict(bench.get('聚合MDI') or [])
     if mdi_bench:
         print('[forecast] 聚合MDI基准价: %d 点(同日将覆盖挂单中位)' % len(mdi_bench), flush=True)
+    ll_bench = bench.get('LLDPE') or []
+    if ll_bench:
+        series.append({
+            'code': 'PE_LLDPE_BENCH', 'idx': 30, 'name': 'LLDPE(聚乙烯,生意社基准价)',
+            'label': 'LLDPE', 'cat': '化工品', 'group': '聚烯烃',
+            'unit': '元/吨', 'freq': '日',
+            'source': '生意社基准价日报(增量累积,始于2026-10-29);东宏/管道系成本锚',
+            'points': [[d, v] for d, v in ll_bench],
+        })
+        print('[forecast] LLDPE基准价: %d 点 %s~%s' % (len(ll_bench), ll_bench[0][0], ll_bench[-1][0]), flush=True)
 
     # MDI(万华核心产品,聚合PM200/纯PM100)
     try:

@@ -198,6 +198,7 @@ def _model_projection(t, cmd_cache, agro_cache=None):
     days_gone, days_total = (92, 92) if tgt_q3 else _q4_window()
     out = {"method": m.get("method"), "conduit": conduit,
            "conduit_note": m.get("conduit_note"),
+           "confidence": m.get("confidence"),
            "period_label": m.get("period_label"),
            "baseline_label": None,
            "q4_window": {"days_gone": days_gone, "days_total": days_total},
