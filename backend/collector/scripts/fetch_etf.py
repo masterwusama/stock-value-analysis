@@ -434,26 +434,38 @@ def fetch_csi_closeweight(csi_code):
 def fetch_csi_perf(csi_code):
     """中证官网 index-perf → 指数收盘全史 + 官方滚动 PE 全史。
 
-    close 作估值图底衬;官方 PE 与自算市值口径(Σ市值/Σ盈利)同口径、贴合度
-    实测 ~98.5%(932000 36.89 vs 37.50;399986 7.40 vs 7.51),用于 pe_mcap 列
-    的历史回填与当日优先值——中证系 ETF 的 Wind口径分位即刻可用,免 30 日冷启动。
-    官方 PB 无公开文件,PB 两列恒自算。"""
-    r = _get(CSI_INDEX_PERF, params={"indexCode": csi_code, "startDate": "20150101",
-                                     "endDate": dt.date.today().isoformat()},
-             headers={**UA, "Referer": "https://www.csindex.com.cn/"}, timeout=25)
-    data = r.json().get("data") or []
-    close, pe = [], []
-    for row in sorted(data, key=lambda x: str(x.get("tradeDate") or "")):
+    接口对大日期窗的返回量不稳定(同参数实测有时给 5 年、有时只给近几日,
+    512800/513070 都踩过)——按年分段拉取合并去重,保证完整。
+    close 作估值图底衬;官方 PE 与自算市值口径同口径、贴合度实测 ~98.5%
+    (无亏损股的池子;含亏损池子如港股通消费官方含亏损会系统性高 ~50%,
+    所以 pe_mcap 列只收官方值不混自算)。官方 PB 无公开文件,PB 两列恒自算。"""
+    close, pe = {}, {}
+    this_year = dt.date.today().year
+    for year in range(this_year - 11, this_year + 1):
         try:
-            d = str(row["tradeDate"])
-            iso = f"{d[:4]}-{d[4:6]}-{d[6:]}"
-            close.append([iso, round(float(row["close"]), 4)])
-            peg = _num(row.get("peg"))
-            if peg and peg > 0:
-                pe.append([iso, peg])
-        except (TypeError, ValueError, KeyError):
+            r = _get(CSI_INDEX_PERF, params={"indexCode": csi_code,
+                                             "startDate": f"{year}0101",
+                                             "endDate": f"{year}1231"},
+                     headers={**UA, "Referer": "https://www.csindex.com.cn/"}, timeout=25)
+            data = r.json().get("data") or []
+        except Exception:  # noqa: BLE001 单年失败不拖垮整段,下轮补
             continue
-    return {"close": close, "pe": pe}
+        for row in data:
+            d = str(row.get("tradeDate") or "")
+            if len(d) != 8:
+                continue
+            iso = f"{d[:4]}-{d[4:6]}-{d[6:]}"
+            try:
+                if row.get("close") is not None:
+                    close[iso] = round(float(row["close"]), 4)
+                peg = _num(row.get("peg"))
+                if peg and peg > 0:
+                    pe[iso] = peg
+            except (TypeError, ValueError):
+                continue
+        time.sleep(0.3)
+    return {"close": [[d, close[d]] for d in sorted(close)],
+            "pe": [[d, pe[d]] for d in sorted(pe)]}
 
 
 # ---------------------------------------------------------------------------
@@ -604,13 +616,12 @@ def append_index_val(meta, day_row, ohlc=None):
     dates = doc.get("dates") or []
     cols = {k: doc.get(k) or [] for k in ("pe", "pb", "dv", "pe_mcap", "pb_mcap")}
     d = day_row["d"]
-    if d in dates:  # 同日覆盖(旧档新列可能缺数组,先垫长)
+    if d in dates:  # 同日重跑=以本轮结果为准,全键覆盖(含置 None,如官方值未出)
         i = dates.index(d)
         for k in cols:
             while len(cols[k]) <= i:
                 cols[k].append(None)
-            if day_row.get(k) is not None:
-                cols[k][i] = day_row[k]
+            cols[k][i] = day_row.get(k)
     else:
         dates.append(d)
         for k in cols:
@@ -735,6 +746,19 @@ def fetch_one(code, meta, catalog, force=False, today=None):
         ohlc = fetch_cni_ohlc(idx["cni_code"])
         time.sleep(SLEEP)
 
+    # 恒生系/其他走 PCF 的 ETF 可选挂中证官方 PE 源(meta.csi_perf=中证指数代码):
+    # 持仓仍走 PCF/官网快照,官方 PE 历史回填 pe_mcap 列+指数点位底衬(如 513070
+    # 跟踪的中证港股通消费 931454)——csi 家族自己的 perf 在上面分支已取
+    if official_pe == [] and not ohlc:
+        csi_perf_code = (meta or {}).get("csi_perf")
+        if csi_perf_code:
+            try:
+                perf = fetch_csi_perf(csi_perf_code)
+                ohlc = perf["close"]
+                official_pe = perf["pe"]
+            except Exception as e:  # noqa: BLE001
+                print(f"  [{code}] 中证官方PE挂载失败({csi_perf_code}): {e!r}", flush=True)
+
     # PCF 全量篮子(meta.pcf='cmfchina' 招商加密接口 / 'efunds' 易方达 HTML 直读)
     pcf = None
     pcf_src = (meta or {}).get("pcf")
@@ -771,7 +795,11 @@ def fetch_one(code, meta, catalog, force=False, today=None):
         # 官方历史由 backfill_official_pe 补,分位即刻可用
         row = {"d": today.isoformat(), "pe": calc["pe"], "pb": calc["pb"],
                "dv": calc["dv"],
-               "pe_mcap": official_pe_map.get(today.isoformat()) or calc["pe_mcap"],
+               # 官方序列存在时 pe_mcap 只收官方值(没有就 None 等下轮)——官方
+               # 与自算在含亏损股的池子上差可达 ~50%(513070 实测 18.89 vs 12.85),
+               # 混列会让分位拿自算值对官方历史算,系统性失真
+               "pe_mcap": (official_pe_map.get(today.isoformat())
+                           if official_pe_map else calc["pe_mcap"]),
                "pb_mcap": calc["pb_mcap"]}
         series_days = append_index_val({**idx, "basis": val_basis}, row, ohlc=ohlc)
         if official_pe:
@@ -829,12 +857,13 @@ def main():
     args = ap.parse_args()
 
     DATA.mkdir(parents=True, exist_ok=True)
-    seed = {"codes": ["159263", "159545", "159915", "563300", "512800"], "meta": {
+    seed = {"codes": ["159263", "159545", "159915", "563300", "512800", "513070"], "meta": {
         "159263": {"index_code": "980081"},       # 国证价值100(定制指数,名录查不到)
         "159545": {"pcf": "efunds"},              # 易方达→官网申赎清单 HTML 直读(全量)
         "159915": {"index_code": "399006", "family": "cni"},   # 创业板指(国证官方快照)
         "563300": {"index_code": "932000", "family": "csi"},  # 中证2000(官网权重快照)
         "512800": {"index_code": "399986", "family": "csi"},  # 中证银行(官网权重快照)
+        "513070": {"pcf": "efunds", "csi_perf": "931454"},    # 中证港股通消费(PCF 全量+官方PE)
     }}
     if LIST_JSON.exists():
         try:

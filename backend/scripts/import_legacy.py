@@ -1389,7 +1389,9 @@ def import_etf(db, stats):
     w_spot = _Writer(db, stats, EtfSpot, mode="upsert", upd_coalesce=True)
     w_hold = _Writer(db, stats, EtfHolding, mode="upsert", upd_coalesce=True)
     w_ann = _Writer(db, stats, EtfAnn, mode="upsert", upd_coalesce=True)
-    w_val = _Writer(db, stats, EtfIndexVal, mode="upsert", upd_coalesce=True)
+    # 序列行走「权威文件全覆盖」而非 coalesce:同日重跑时 JSON 里的 None
+    # (如官方 PE 当日未出)必须能覆盖库里上一轮的自算残留,否则 DB 旧行永生
+    w_val = _Writer(db, stats, EtfIndexVal, mode="upsert")
     w_close = _Writer(db, stats, EtfIndexClose, mode="upsert")
 
     def _mkt(code):

@@ -249,13 +249,14 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
             "pb_mcap_series": m_pbs, "dv_series": dvs,
         })
         if len(val_series) >= PCTILE_MIN_DAYS:
-            for name, arr, v in (("pe", pes, last.pe), ("pb", pbs, last.pb),
-                                 ("pe_mcap", m_pes, last.pe_mcap),
-                                 ("pb_mcap", m_pbs, last.pb_mcap),
-                                 ("dv", dvs, last.dv)):
-                got = _pct(arr, v)
+            def _last_valid(arr):
+                return next((x for x in reversed(arr) if x is not None and x > 0), None)
+            for name, arr in (("pe", pes), ("pb", pbs), ("pe_mcap", m_pes),
+                              ("pb_mcap", m_pbs), ("dv", dvs)):
+                got = _pct(arr, _last_valid(arr))
                 # 门槛作用于「该列自己的有效样本数」而非序列行数:官方 PE 回填后
-                # 行数虚高,但 pe(持仓口径)可能仍只有 1 个样本,单样本分位是假分位
+                # 行数虚高,但 pe(持仓口径)可能仍只有 1 个样本,单样本分位是假分位。
+                # 取值也用列内最后有效值——官方序列的当日值未出时 pe_mcap 为 None
                 if got and got[1] >= PCTILE_MIN_DAYS:
                     val_out["pctile"][name] = {"pct": got[0], "days": got[1]}
     val_out["close_series"] = [[r.trade_date.isoformat(), r.close] for r in close_series]
