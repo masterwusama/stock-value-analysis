@@ -449,6 +449,7 @@ def fetch_csi_perf(csi_code):
                      headers={**UA, "Referer": "https://www.csindex.com.cn/"}, timeout=25)
             data = r.json().get("data") or []
         except Exception:  # noqa: BLE001 单年失败不拖垮整段,下轮补
+            time.sleep(2)
             continue
         for row in data:
             d = str(row.get("tradeDate") or "")
@@ -463,7 +464,8 @@ def fetch_csi_perf(csi_code):
                     pe[iso] = peg
             except (TypeError, ValueError):
                 continue
-        time.sleep(0.3)
+        # 按年连发会被中证按 IP 限流(云端实测只成功一两段),间隔放大
+        time.sleep(1.0)
     return {"close": [[d, close[d]] for d in sorted(close)],
             "pe": [[d, pe[d]] for d in sorted(pe)]}
 
