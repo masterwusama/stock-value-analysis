@@ -817,10 +817,14 @@ def fetch_one(code, meta, catalog, force=False, today=None):
         changes = {"kind": "quarter", "from": b, "to": a,
                    **diff_holdings(f10_h["rows"][b], f10_h["rows"][a])}
 
-    # 降级旗:期望全量源(pcf/官方快照)没拿到而落回 f10 前十时标记,页面挂黄条
-    expected = ("pcf" if pcf_src else
-                "official" if (idx.get("cni_code") or idx.get("csi_code")) else None)
-    degraded = bool(expected and val_basis != expected)
+    # 降级旗:期望全量源集合(官方快照/PCF 任一拿到即不算降级;f10 前十永远是降级态)。
+    # 双源配置(如 159361 closeweight 主+PCF 备)不会因"用了集合内另一源"误报
+    expected_set = set()
+    if idx.get("cni_code") or idx.get("csi_code"):
+        expected_set.add("official")
+    if pcf_src:
+        expected_set.add("pcf")
+    degraded = bool(expected_set and val_basis not in expected_set)
 
     hist = fetch_etf_hist(code, (spot or {}).get("nav_series"))
 
@@ -857,13 +861,14 @@ def main():
     args = ap.parse_args()
 
     DATA.mkdir(parents=True, exist_ok=True)
-    seed = {"codes": ["159263", "159545", "159915", "563300", "512800", "513070"], "meta": {
+    seed = {"codes": ["159263", "159545", "159915", "563300", "512800", "513070", "159361"], "meta": {
         "159263": {"index_code": "980081"},       # 国证价值100(定制指数,名录查不到)
         "159545": {"pcf": "efunds"},              # 易方达→官网申赎清单 HTML 直读(全量)
         "159915": {"index_code": "399006", "family": "cni"},   # 创业板指(国证官方快照)
         "563300": {"index_code": "932000", "family": "csi"},  # 中证2000(官网权重快照)
         "512800": {"index_code": "399986", "family": "csi"},  # 中证银行(官网权重快照)
         "513070": {"pcf": "efunds", "csi_perf": "931454"},    # 中证港股通消费(PCF 全量+官方PE)
+        "159361": {"index_code": "000510", "family": "csi", "pcf": "efunds"},  # A500(官方权重主+PCF备)
     }}
     if LIST_JSON.exists():
         try:
