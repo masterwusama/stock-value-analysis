@@ -109,7 +109,12 @@ function segTables(seg) {
 function render() {
   if (!chartEl.value || !echarts || !curCode.value) return
   const p = byCode.value[curCode.value]
-  if (!p) return
+  if (!p) {
+    // 切标的后 curCode 可能还指着上一标的的序列——不清理的话 canvas 会
+    // 一直残留旧图(曾表现为"每个标的最底部都挂着盐湖直销图")
+    chart?.clear()
+    return
+  }
   if (!chart) chart = echarts.init(chartEl.value)
   const pts = p.points || []
   const m = isMobile.value
@@ -128,6 +133,8 @@ function render() {
   }, true)
 }
 watch([curSid, curCode], () => nextTick(render))
+// 切标的时主图重置到新标的第一个序列(否则旧 curCode 会让主图定格在上一标的)
+watch(curSid, () => { curCode.value = '' })
 watch(() => allPrices.value.length, (n) => {
   if (n && !curCode.value) curCode.value = allPrices.value[0]?.code || ''
 })
@@ -344,7 +351,7 @@ watch(() => allPrices.value.length, (n) => {
       <section class="card">
         <h3>观察哨</h3>
         <ul class="watch">
-          <li v-for="(w, i) in target.watchlist" :key="i">{{ w }}</li>
+          <li v-for="(w, i) in (target.watchlist || target.watch)" :key="i">{{ w }}</li>
         </ul>
         <p v-if="target.equity_notes" class="dim">{{ target.equity_notes }}</p>
       </section>
