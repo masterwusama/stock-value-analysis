@@ -38,6 +38,10 @@ class ReportMeta(BaseModel):
     date: str
     status: str = "final"
     conclusion: str = ""
+    # 评价体系 v2(2026-11,docs/设计-研报评价体系202611.md):推荐细分档/实控人/高管
+    grade: str = ""      # 增持-强..回避-强 九档,旧 conclusion 的细分
+    ctrl: str = ""       # 实控人 9 级:典范-1..风险-9
+    mgmt: str = ""       # 主要高管 9 级:卓越-1..风险-9
     price_ref: float | None = None
     val_low: float | None = None
     val_high: float | None = None
