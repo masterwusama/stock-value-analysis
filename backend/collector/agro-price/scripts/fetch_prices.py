@@ -621,7 +621,13 @@ def fetch_3456(product_names):
     prices_by_name = {n: [] for n in product_names}
     article_links = set()
     for page in T3456_PAGES:
-        html = fetch(page, encoding='gbk')
+        try:
+            html = fetch(page, encoding='gbk')
+        except Exception as e:  # noqa: BLE001 聚合页失败不终止——3456.tv 仅历史回填源
+            # （2022~2025 已停更），超时/502 丢的只是历史文章链接；2026-11-02 实测
+            # 聚合页 TimeoutError 曾一路 raise 把整轮 agro 打成 failed（文章级早已 warn 降级）
+            print('  [warn] 3456 聚合页失败 %s: %r' % (page, e))
+            continue
         for m in re.finditer(
                 r'href="(http://www\.3456\.tv/jiage/(?:shajunji|chucaoji|shachongji|nongyaoyuanyao)/\d+\.html)"',
                 html):
