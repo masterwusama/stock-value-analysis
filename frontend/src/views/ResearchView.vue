@@ -35,7 +35,7 @@ const CONC_TONE = {
   买入: 'buy', 增持: 'buy', 观察: 'hold', 回避: 'sell', 卖出: 'sell',
 }
 const concTone = (c) => CONC_TONE[c] || 'hold'
-// 实控人/高管九级着色:1-3 绿(利益一致/专业可信)、4-5 灰(中性/观望)、6-9 红(侵害/风险)
+// 实控人/高管九级着色:与主标签同语义(红=好绿=差)——1-3 红(利益一致/专业可信)、4-5 灰、6-9 绿(侵害/风险)
 // 取值如「良好-3」,取尾缀数字判档;无级别的裸文本按 4 中性处理
 const govTone = (v) => {
   const n = parseInt(String(v || '').split('-').pop(), 10)
@@ -169,9 +169,9 @@ section.card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(20, 30, 
 .rate.c-sell { background: #fff; }
 .rate.c-hold { background: #fff; }
 .mini { font-size: 11px; border-radius: 999px; padding: 0 8px; border-width: 1px; border-style: solid; }
-.g-good { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+.g-good { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
 .g-mid { background: #f9fafb; color: #6b7280; border-color: #e5e7eb; }
-.g-bad { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.g-bad { background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; }
 .date { color: #9ca3af; font-size: 12px; margin-left: auto; }
 .row2 { display: flex; align-items: baseline; gap: 12px; margin-top: 6px; flex-wrap: wrap; }
 .row2 h3 { margin: 0; font-size: 16px; }
