@@ -35,6 +35,12 @@ const CONC_TONE = {
   买入: 'buy', 增持: 'buy', 观察: 'hold', 回避: 'sell', 卖出: 'sell',
 }
 const concTone = (c) => CONC_TONE[c] || 'hold'
+// 实控人/高管九级着色:1-3 绿(利益一致/专业可信)、4-5 灰(中性/观望)、6-9 红(侵害/风险)
+// 取值如「良好-3」,取尾缀数字判档;无级别的裸文本按 4 中性处理
+const govTone = (v) => {
+  const n = parseInt(String(v || '').split('-').pop(), 10)
+  return Number.isFinite(n) && n <= 3 ? 'g-good' : Number.isFinite(n) && n >= 6 ? 'g-bad' : 'g-mid'
+}
 // 列表徽章一句话:结论 + 现价落在估值区间的哪一档
 const valNote = (m) => {
   if (m.val_low == null || m.val_high == null || !m.price_ref) return ''
@@ -79,6 +85,9 @@ const tocGroups = computed(() => {
         <div class="row1">
           <router-link :to="'/stock/' + m.code" class="code-link" @click.stop>{{ m.code }} {{ m.name }}</router-link>
           <span class="conc" :class="'c-' + concTone(m.conclusion)">{{ m.conclusion || '未定' }}</span>
+          <span v-if="m.grade" class="rate" :class="'c-' + concTone(m.conclusion)" title="推荐细分档(评价体系v2)">{{ m.grade }}</span>
+          <span v-if="m.ctrl" class="mini" :class="govTone(m.ctrl)" title="实际控制人评价(九级)">实控 {{ m.ctrl }}</span>
+          <span v-if="m.mgmt" class="mini" :class="govTone(m.mgmt)" title="主要高管评价(九级)">高管 {{ m.mgmt }}</span>
           <span class="date">{{ m.date }}</span>
         </div>
         <div class="row2">
@@ -98,6 +107,9 @@ const tocGroups = computed(() => {
         <div class="row1">
           <router-link :to="'/stock/' + report.meta.code" class="code-link">{{ report.meta.code }} {{ report.meta.name }}</router-link>
           <span class="conc" :class="'c-' + concTone(report.meta.conclusion)">{{ report.meta.conclusion || '未定' }}</span>
+          <span v-if="report.meta.grade" class="rate" :class="'c-' + concTone(report.meta.conclusion)" title="推荐细分档(评价体系v2)">{{ report.meta.grade }}</span>
+          <span v-if="report.meta.ctrl" class="mini" :class="govTone(report.meta.ctrl)" title="实际控制人评价(九级)">实控 {{ report.meta.ctrl }}</span>
+          <span v-if="report.meta.mgmt" class="mini" :class="govTone(report.meta.mgmt)" title="主要高管评价(九级)">高管 {{ report.meta.mgmt }}</span>
           <span class="date">{{ report.meta.date }}</span>
           <button type="button" class="back" @click="$router.push('/research')">← 返回列表</button>
         </div>
@@ -151,6 +163,15 @@ section.card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(20, 30, 
 .c-buy { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
 .c-sell { background: #f0fdf4; color: #16a34a; border: 1px solid #bbf7d0; }
 .c-hold { background: #f9fafb; color: #6b7280; border: 1px solid #e5e7eb; }
+/* 评价体系 v2 三徽章:细分档沿用结论色但更小更细;实控/高管按九级分绿/灰/红 */
+.rate { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 0 8px; border-width: 1px; border-style: solid; }
+.rate.c-buy { background: #fff; }
+.rate.c-sell { background: #fff; }
+.rate.c-hold { background: #fff; }
+.mini { font-size: 11px; border-radius: 999px; padding: 0 8px; border-width: 1px; border-style: solid; }
+.g-good { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+.g-mid { background: #f9fafb; color: #6b7280; border-color: #e5e7eb; }
+.g-bad { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
 .date { color: #9ca3af; font-size: 12px; margin-left: auto; }
 .row2 { display: flex; align-items: baseline; gap: 12px; margin-top: 6px; flex-wrap: wrap; }
 .row2 h3 { margin: 0; font-size: 16px; }
