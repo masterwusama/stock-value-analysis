@@ -863,7 +863,8 @@ def main():
     args = ap.parse_args()
 
     DATA.mkdir(parents=True, exist_ok=True)
-    seed = {"codes": ["159263", "159545", "159915", "563300", "512800", "513070", "159361"], "meta": {
+    seed = {"codes": ["159263", "159545", "159915", "563300", "512800", "513070",
+                      "159361", "588830", "516160"], "meta": {
         "159263": {"index_code": "980081"},       # 国证价值100(定制指数,名录查不到)
         "159545": {"pcf": "efunds"},              # 易方达→官网申赎清单 HTML 直读(全量)
         "159915": {"index_code": "399006", "family": "cni"},   # 创业板指(国证官方快照)
@@ -871,6 +872,8 @@ def main():
         "512800": {"index_code": "399986", "family": "csi"},  # 中证银行(官网权重快照)
         "513070": {"pcf": "efunds", "csi_perf": "931454"},    # 中证港股通消费(PCF 全量+官方PE)
         "159361": {"index_code": "000510", "family": "csi", "pcf": "efunds"},  # A500(官方权重主+PCF备)
+        "588830": {"index_code": "000692", "family": "csi"},  # 科创板新能源(官方权重快照)
+        "516160": {"index_code": "399808", "family": "csi"},  # 中证新能源(官方权重快照)
     }}
     if LIST_JSON.exists():
         try:
