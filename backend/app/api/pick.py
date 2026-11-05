@@ -17,6 +17,12 @@ R 之上叠加「当下值不值得下手」——价格相对两派买点的安
 ST 关注旗、年报基准滞后)逐项扣分。两把尺子都不改采集侧任何分数,只做
 决策合成。
 
+研报裁决层(2026-11-05):量化口径与深度研报冲突时(典型:中远海控量化
+buy vs 研报回避-轻),有深度覆盖处以研报结论为准对 tier 收紧——回避→
+不进买入区、观察→不进强推,增持不设限。只降不升:正向结论不做升档,
+「研报增持×量化 watch」式错杀靠研报徽章展示(错过的风险与亏钱的风险
+不对称,先堵亏钱侧)。pick 分数保留量化的分数,分歧亮在风险旗。
+
 分层(一票回避优先):
 - avoid  硬门槛命中(gate)/ ST 高危 / 造假分>40 —— 不该进买入区;
 - strong 强推:pick≥78 且安全边际/PB分位/股息至少一项过硬,且无关注旗、
@@ -38,7 +44,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.db import get_session
-from app.api.research import coverage as _research_cov
+from app.api.research import coverage as _research_cov, coverage_stamp as _research_stamp
 from app.api.securities import RECENT_DATES, _age_months
 from app.models import QuoteDaily, ScoreDaily, Security, SentimentDaily, ValuationPctile
 from collector.scripts import sentiment_score
@@ -104,6 +110,14 @@ STUB_CAP = 65.0           # 烟蒂封顶:到不了强推
 STUB_BUY_MIN = 55.0       # 烟蒂通道的 buy 线
 STRONG_CAP_FLOOR = 30e8   # 强推的市值下限(人民币当量;格防规模门槛最低档)
 STRONG_STALE = 3          # 强推不允许年报基准落后
+
+# ---- 研报裁决层:深度结论对 tier 的收紧上限,只降不升 ----
+# 研报结论绑定写报时点的产业判断(供给/治理/非经结构)而非价格锚,价格
+# 上穿/下穿估值区间都不解除 cap(回避 12~24 跌破 12 不改变 2027 供给论据);
+# 唯一解除条件是结论超龄,或有更新研报/event 接力(coverage 取同 code 最新)。
+VERDICT_STALE_MONTHS = 6  # 结论时效(整月):超龄整体失效,回量化口径
+VERDICT_CAP = {"回避": "watch", "观察": "buy"}  # grade 主档 → tier 上限(增持不设限)
+_TIER_ORDER = ("strong", "buy", "watch", "na", "avoid")
 
 # gate 旗 → 中文(与 import_legacy.GATE_FLAGS 的取值一一对应)
 GATE_LABELS = {
@@ -374,6 +388,44 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late) -> dic
             "reasons": reasons[:5], "risks": risks[:4]}
 
 
+def _apply_research_verdict(it: PickItem, rv: dict | None, today: date) -> None:
+    """研报裁决层:it 原地修正。tier 不越过研报结论档位上限,pick 分数保留——
+    分数还是量化的分数,分歧本身亮在风险旗;被压出强推的标的在 buy/watch 里
+    仍按 pick 排序可见,不是从板上消失。
+
+    grade 主档取「-」前首词(增持-中/观察-偏多/回避-轻);旧研报无 grade 时
+    回退 conclusion(增持/观察/回避),两代口径同一张 VERDICT_CAP 表。回避类
+    无论是否降档都置顶亮旗——watch 60 分的回避股(招商轮船式)与 buy 75 分的
+    回避股(中远海控式)同样需要这行字;观察类只在真的被压出强推时亮旗,
+    对本就 ≤buy 的标的加旗没有信息增量。
+    """
+    if not rv:
+        return
+    d = rv.get("date") or ""
+    try:
+        stale = _age_months(date.fromisoformat(d), today) if d else VERDICT_STALE_MONTHS + 1
+    except ValueError:  # date 坏值(契约必填,防御):按超龄失效,不误伤
+        stale = VERDICT_STALE_MONTHS + 1
+    if stale > VERDICT_STALE_MONTHS:
+        return
+    grade = (rv.get("grade") or rv.get("conclusion") or "").strip()
+    main = grade.split("-", 1)[0].strip()
+    cap = VERDICT_CAP.get(main)
+    if cap is None:  # 增持/无法解析的主档:不设限
+        return
+    lo, hi = rv.get("val_low"), rv.get("val_high")
+    band = f"{lo:g}~{hi:g}" if lo and hi else None
+    capped = _TIER_ORDER.index(it.tier) < _TIER_ORDER.index(cap)
+    if main == "回避":
+        why = f"研报回避({d})" + (f",估值区间 {band}" if band else "")
+        it.risks.insert(0, why)
+    elif capped:
+        it.risks.insert(0, f"研报{grade}({d}):未达增持,不入强推")
+    if capped:
+        it.tier = cap
+    it.risks = it.risks[:4]
+
+
 def _to_item(s, sec, q, val_row, cov, today) -> PickItem:
     price = float(q.price) if q.price is not None else None
     mcap_cny = float(q.market_cap) * (HK_TO_CNY if sec.market == "HK" else 1.0) if q.market_cap else None
@@ -381,7 +433,7 @@ def _to_item(s, sec, q, val_row, cov, today) -> PickItem:
     pb, pb_days = _fresh_pctile(val_row, s.trade_date)
     late = _report_late(s.report_date, today)
     core = _synth(s, price, mcap_cny, disc, anchor, pb, late)
-    return PickItem(
+    it = PickItem(
         sid=sec.sid, code=sec.code, name=sec.name, market=sec.market,
         currency=sec.currency, industry=sec.industry,
         price=price,
@@ -401,6 +453,8 @@ def _to_item(s, sec, q, val_row, cov, today) -> PickItem:
         reasons=core["reasons"], risks=core["risks"],
         research=cov.get(sec.code),
     )
+    _apply_research_verdict(it, cov.get(sec.code), today)
+    return it
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +514,7 @@ def _load_base(db: Session, fresh: bool = False):
     key = (td.isoformat() if td else None,
            db.execute(select(func.count()).select_from(ScoreDaily)
                       .where(ScoreDaily.trade_date == td)).scalar_one() if td else None,
+           *_research_stamp(),   # 研报落盘即失效:裁决层读的是研报目录,不能等 TTL
            qd_max.isoformat() if qd_max else None,
            db.execute(select(func.count()).select_from(QuoteDaily)
                       .where(QuoteDaily.trade_date == qd_max)).scalar_one() if qd_max else None)

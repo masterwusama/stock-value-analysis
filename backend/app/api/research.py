@@ -120,18 +120,25 @@ def list_reports():
 _cov_cache: tuple[tuple, dict] = ((0, 0.0), {})
 
 
+def coverage_stamp() -> tuple:
+    """目录变化戳 (文件数, 最大 mtime):调用方(掘金台)并入合成缓存键,
+    研报一落盘强推名单即刷新,不必等 TTL。只看 mtime 时删除「非最新」的
+    文件不会失效,所以文件数也在戳里。"""
+    try:
+        return (len(list(RESEARCH_DIR.glob("*.md"))),
+                max(p.stat().st_mtime for p in RESEARCH_DIR.glob("*.md")))
+    except ValueError:  # 空目录
+        return (0, 0.0)
+
+
 def coverage() -> dict:
-    """{code: {slug, title, conclusion, date}};目录无变化时直接返回缓存。
-    stamp 用 (文件数, 最大 mtime):只看 mtime 时删除「非最新」的文件不会
-    失效缓存,已删研报的「有研报」徽章会残留。"""
+    """{code: {slug, title, conclusion, grade, val_low, val_high, date}};
+    目录无变化时直接返回缓存。grade/估值区间给掘金台裁决层用(旧研报
+    无 grade 时为空串,由调用方回退 conclusion 首词)。"""
     global _cov_cache
     if not RESEARCH_DIR.is_dir():
         return {}
-    try:
-        stamp = (len(list(RESEARCH_DIR.glob("*.md"))),
-                 max(p.stat().st_mtime for p in RESEARCH_DIR.glob("*.md")))
-    except ValueError:  # 空目录
-        return {}
+    stamp = coverage_stamp()
     if stamp != _cov_cache[0]:
         cov = {}
         for m in list_reports():
@@ -140,7 +147,9 @@ def coverage() -> dict:
             old = cov.get(m.code)
             if old is None or (m.date or "") >= (old.get("date") or ""):
                 cov[m.code] = {"slug": m.slug, "title": m.title,
-                               "conclusion": m.conclusion, "date": m.date}
+                               "conclusion": m.conclusion, "grade": m.grade,
+                               "val_low": m.val_low, "val_high": m.val_high,
+                               "date": m.date}
         _cov_cache = (stamp, cov)
     return _cov_cache[1]
 
