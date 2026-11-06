@@ -209,7 +209,10 @@ def _model_projection(t, cmd_cache, agro_cache=None):
     price_scn = q4m.get("price_scenario_pct") or [-0.05, 0.0, 0.03]
 
     # —— 紫金式:增量桥(分部 Δ毛利 = (Δ价−Δ成本)×情景量) ——
-    if any(s.get("price_code") for s in q4m.get("segments", [])):
+    # 增量桥:任一分部带价格序列或静态情景量(纯静态标的如招商南油——BCTI 点数
+    # 不入引擎量纲,全 static 按归母口径直给——也走此分支,不能掉进分部重构)
+    if any(s.get("price_code") or s.get("static_margin_change_yi")
+           for s in q4m.get("segments", [])):
         semi = m.get("period_mode") == "h2"  # 港股半年报:基准=H1实际,预估=H2
         rows, deltas = [], [0.0, 0.0, 0.0]
         year = dt.date.today().year

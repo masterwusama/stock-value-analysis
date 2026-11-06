@@ -159,6 +159,22 @@ def fetch_mdi_mprice():
 
 SMM_TC_URL = 'https://www.smm.cn/mpdb/1705462337105_price'
 
+def fetch_bcti():
+    """东财宏观-运价指数表 → BCTI(成品油轮)日频序列,近~3年。
+
+    与 EDB 的 BDI/BDTI 同源同接口(macro_china_freight_index 全表一次返回
+    2006 年以来),但 EDB 是周频折周+周日任务;forecast 需要日频做 QTD 分桶
+    ——招商南油(601975)外贸即期运价温度计。20 年全量太重,取近 800 交易日。
+    """
+    import akshare as ak
+    df = ak.macro_china_freight_index()
+    col = '油轮运价指数成品油运价指数BCTI'
+    s_ = df[['截止日期', col]].dropna()
+    pts = [(str(d)[:10], float(v)) for d, v in zip(s_['截止日期'], s_[col])]
+    pts.sort()
+    return pts[-800:]
+
+
 KCL_MPRICE_ID = 927  # 生意社氯化钾报价中心(工业级/60%粉/62%粉/进口混排)
 KCL_PAGES = 5
 
@@ -330,6 +346,21 @@ def main():
             print('[forecast] %s: %d 点 %s~%s' % (code, len(pts), pts[0][0], pts[-1][0]), flush=True)
     except Exception as e:  # noqa: BLE001
         warnings.append('KCL: %r' % e)
+
+    # BCTI 成品油轮运价指数(招商南油外贸即期温度计,东财日频)
+    try:
+        bcti = fetch_bcti()
+        if bcti:
+            series.append({
+                'code': 'BCTI_FORE', 'idx': 40, 'name': 'BCTI(成品油轮运价指数)',
+                'label': 'BCTI', 'cat': '航运', 'group': '油轮',
+                'unit': '点', 'freq': '日',
+                'source': '东方财富-波罗的海系运价指数(与EDB的BDI/BDTI同接口;日频近3年,2026-11-06起采)',
+                'points': [[d, v] for d, v in bcti],
+            })
+            print('[forecast] BCTI: %d 点 %s~%s' % (len(bcti), bcti[0][0], bcti[-1][0]), flush=True)
+    except Exception as e:  # noqa: BLE001
+        warnings.append('BCTI: %r' % e)
 
     # 铜精矿 TC/RC(SMM 指数页,增量累积;历史锚点在 targets.json manual_series)
     auto_tc = {}
