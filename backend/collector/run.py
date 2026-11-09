@@ -140,6 +140,11 @@ JOBS = {
     # 布伦特-WTI价差/取暖油比价(炼制利润)/天然气/CFTC商业持仓(1986→)。
     # EIA 库存与贝克休斯钻机数的 akshare 免费源已停更(2025-09/2024-02)不采,记 P2
     "crudeoil": [(COLLECTOR / "commodity-crudeoil" / "scripts", "fetch_crudeoil.py")],
+    # aviation：大宗商品供需模块第九期(民航景气度,首个行业模块)。行业全口径
+    # 量价(民航局:客运量/RPK/总周转量/客座率/载运率)+成本锚(美湾航煤36年/
+    # 航煤原油比价/美债10Y/美元人民币)。上市 7 家压力表走读时合成不在此采集。
+    # 航煤出厂价(发改委月度)/航司月报/波音交付记 P1
+    "aviation": [(COLLECTOR / "commodity-aviation" / "scripts", "fetch_aviation.py")],
     # ferrous：大宗商品供需模块第七期(黑色系)。铁矿/螺纹/焦煤/热卷四期货量仓
     # +钢厂盘面利润(自算)+卷螺差。普氏指数与港口库存无免费源记 P2
     "ferrous": [(COLLECTOR / "commodity-ferrous" / "scripts", "fetch_ferrous.py")],
@@ -189,6 +194,8 @@ IMPORT_DEFAULTS = {
     "aluminum": ["--only-aluminum"],
     "lithium": ["--only-lithium"],
     "crudeoil": ["--only-crudeoil"],
+    # 民航两表(同 cmd_*,commodity='aviation';共码序列 AV_ 前缀)
+    "aviation": ["--only-aviation"],
     "ferrous": ["--only-ferrous"],
     "agri": ["--only-agri"],
 }

@@ -90,6 +90,7 @@ COPPER_DIR = LEGACY_DATA_DIR / "commodity-copper" / "data"
 ALUMINUM_DIR = LEGACY_DATA_DIR / "commodity-aluminum" / "data"
 LITHIUM_DIR = LEGACY_DATA_DIR / "commodity-lithium" / "data"
 CRUDEOIL_DIR = LEGACY_DATA_DIR / "commodity-crudeoil" / "data"
+AVIATION_DIR = LEGACY_DATA_DIR / "commodity-aviation" / "data"
 FERROUS_DIR = LEGACY_DATA_DIR / "commodity-ferrous" / "data"
 AGRI_DIR = LEGACY_DATA_DIR / "commodity-agri" / "data"
 SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
@@ -1193,6 +1194,15 @@ def import_crudeoil(db, stats):
     _import_cmd_series(db, stats, CRUDEOIL_DIR / "crudeoil.json", "crudeoil")
 
 
+def import_aviation(db, stats):
+    """commodity-aviation/data/aviation.json → cmd_*（民航景气度:行业量价/成本锚）。
+
+    共码纪律同前:民航侧一律 AV_ 前缀;行业全口径(民航局,含未上市承运人);
+    航煤出厂价/航司月报/波音交付记 P1。
+    """
+    _import_cmd_series(db, stats, AVIATION_DIR / "aviation.json", "aviation")
+
+
 def import_ferrous(db, stats):
     """commodity-ferrous/data/ferrous.json → cmd_*（黑色系:铁矿/螺纹/焦煤/热卷）。
 
@@ -1571,6 +1581,9 @@ def main():
     ap.add_argument("--only-crudeoil", action="store_true",
                     help="只回灌 commodity-crudeoil/data/crudeoil.json 原油供需序列"
                          "（fetch_crudeoil 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-aviation", action="store_true",
+                    help="只回灌 commodity-aviation/data/aviation.json 民航景气度序列"
+                         "（fetch_aviation 采集后跑；cmd_indicator/cmd_value 两表）")
     ap.add_argument("--only-ferrous", action="store_true",
                     help="只回灌 commodity-ferrous/data/ferrous.json 黑色系序列"
                          "（fetch_ferrous 采集后跑；cmd_indicator/cmd_value 两表）")
@@ -1608,6 +1621,8 @@ def main():
         args.no_clean = True
     if args.only_crudeoil:
         args.no_clean = True
+    if args.only_aviation:
+        args.no_clean = True
     if args.only_ferrous:
         args.no_clean = True
     if args.only_agri:
@@ -1625,6 +1640,7 @@ def main():
             else "only-forecast" if args.only_forecast
             else "only-lithium" if args.only_lithium
             else "only-crudeoil" if args.only_crudeoil
+            else "only-aviation" if args.only_aviation
             else "only-ferrous" if args.only_ferrous
             else "only-agri" if args.only_agri
             else ("only-fresh" if args.only_fresh else "full"))
@@ -1652,6 +1668,8 @@ def main():
             import_lithium(db, stats)
         elif args.only_crudeoil:
             import_crudeoil(db, stats)
+        elif args.only_aviation:
+            import_aviation(db, stats)
         elif args.only_ferrous:
             import_ferrous(db, stats)
         elif args.only_agri:

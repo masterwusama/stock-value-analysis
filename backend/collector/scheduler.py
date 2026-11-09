@@ -116,6 +116,9 @@ def main():
     # 黑色系/农产品供需(07:05/07:15:agro(09:05)之前,金银铜铝锂油之后)
     s.add_job(run_job, "cron", args=["ferrous"], hour=7, minute=5, id="ferrous")
     s.add_job(run_job, "cron", args=["agri"], hour=7, minute=15, id="agri")
+    # 民航景气度(07:35:agri(07:15)/silver-wss(每月1号 07:25)之后再错峰 10 分钟;
+    # 月度民航局数据+周度 FRED,日更只为捡最新值,失败留旧)
+    s.add_job(run_job, "cron", args=["aviation"], hour=7, minute=35, id="aviation")
     # Silver Institute 年报平衡表(月频:1 号 07:25;新版 4 月发布次月捡起,
     # 平时本地缓存+解析幂等,失败留旧数据)
     s.add_job(run_job, "cron", args=["silver-wss"], day=1, hour=7, minute=25, id="silver-wss")
@@ -129,7 +132,7 @@ def main():
           "valuation(每天 03:35 估值分位,免费源刷全 A) "
           "sentiment(交易日 16:30 情绪日报) case(周日 10:05 立案/处罚公告) "
           "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
-          "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报)。"
+          "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报) aviation(每天 07:35 民航景气度)。"
           "Ctrl+C 退出",
           flush=True)
     s.start()
