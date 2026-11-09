@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import CmdIndicator, CmdValue
+from app.models import CmdIndicator, CmdValue, FinBalance, FinIndicator, Security
 
 router = APIRouter(prefix="/api/commodity", tags=["commodity"])
 
@@ -136,6 +136,18 @@ _DESC = {
         "CFTC_OIL_COMM": "产业套保盘净头寸(周度,1986→),与价格常反向——产油国高抛低吸。",
         "OIL_DTWEXBGS": "美元宽口径指数。原油美元计价,美元弱利多油价(经典负相关)。",
     },
+    "aviation": {
+        "AV_PAX": "民航客运量(月度,亿人,民航局全口径含未上市航司)。行业总需求温度计,需配合同比看斜率。",
+        "AV_PAX_YOY": "民航客运量同比(%)。正值区间看斜率:增速抬升=景气上行,连续下台阶=需求走弱。",
+        "AV_RPK": "旅客周转量(亿人公里,月度)。距离加权的真实需求——国际线恢复时 RPK 增速快于客运量。",
+        "AV_TAT": "运输总周转量(亿吨公里,月度,含货运)。全口径景气总温度计,民航局规划与航司运力投放的基准量。",
+        "AV_PLF": "正班客座率(%,月度,2006→)。83% 一线是供需平衡经验线:高客座率+低票价=以价换量,高客座率+票价企稳才是真景气。",
+        "AV_LF": "正班载运率(%,月度)。客+货综合装载效率,货运强时载运率高于客座率。",
+        "AV_JETFUEL": "美湾航煤现货(美元/加仑,周度,1990→36 年)。航司第一大成本锚(占成本 30-40%),×42=美元/桶;国内出厂价随发改委月度联动。",
+        "AV_JF_CL": "航煤/原油比价(自算,无量纲)。>1=航煤溢价=馏分裂解利润强=航空燃油需求旺;油价跌而比价稳=航司燃油成本跟跌顺畅。",
+        "AV_DGS10": "美债 10 年期收益率(%)。飞机经营租赁租金锚——高利率期机队扩张的融资成本高企,机龄老化(不换新)是全行业现象。",
+        "AV_USDCNY": "美元兑人民币(周度)。三大航美元负债+租金敞口:人民币贬值直接产生汇兑损失,升值释放利润。",
+    },
     "ferrous": {
         "RB0_CLOSE": "螺纹钢期货(元/吨),建筑业长材温度计。地产/基建需求的直接定价。",
         "I0_CLOSE": "铁矿石期货(元/吨)。澳洲/巴西双寡头供给 vs 中国需求,黑色系的成本大头(1.6 吨/吨钢)。",
@@ -193,6 +205,13 @@ _GUIDE = {
         "价格(WTI)、比价(布伦特-WTI价差,反映美国以外市场紧张度)、仓位(CFTC 商业净持仓)、"
         "炼制(取暖油/原油比价,成品油相对原料的强弱)。核心图看油价与美元是否反向。"
         "EIA 周度库存与贝克休斯钻机数的免费源已停更,记 P2(可注册 EIA 免费 key 接入)。"
+    ),
+    "aviation": (
+        "民航=重资产+高经营杠杆+强周期,与航运同框架:供给刚性(机队/时刻)+需求波动。"
+        "先看四个关键数:需求(客运量同比)、效率(客座率,83% 一线是供需平衡经验线)、"
+        "成本(航煤现货,占航司成本 30-40%)、汇率(美元兑人民币,三大航美元负债敞口)。"
+        "核心看两条剪刀差:油价与客座率(成本降+装载升=利润弹性最大),客运量增速与客座率(量价背离=以价换量)。"
+        "国内航煤出厂价(发改委月度)无免费结构化源,以美湾价代理(联动税差恒定),记 P1 人工回填。"
     ),
     "lithium": (
         "碳酸锂=新能源周期品种:锂电需求占 80%+,2022 年 60 万→2024 年 7 万的完整周期由供给释放主导,"
@@ -392,6 +411,12 @@ def crudeoil_series(db: Session = Depends(get_session)):
     return _cmd_series(db, "crudeoil")
 
 
+@router.get("/aviation")
+def aviation_series(db: Session = Depends(get_session)):
+    """民航景气度研究 P0:全序列 + 读时统计(2026-11-09 九期,共码序列 AV_ 前缀)。"""
+    return _cmd_series(db, "aviation")
+
+
 @router.get("/ferrous")
 def ferrous_series(db: Session = Depends(get_session)):
     """黑色系供需研究 P0:全序列 + 读时统计(2026-10-27 七期,派生 FE_ 前缀)。"""
@@ -402,3 +427,146 @@ def ferrous_series(db: Session = Depends(get_session)):
 def agri_series(db: Session = Depends(get_session)):
     """农产品(生猪链)供需研究 P0:全序列 + 读时统计(2026-10-27 八期)。"""
     return _cmd_series(db, "agri")
+
+
+# ---- 民航 Survival Watch(上市航司财务压力表,读时合成 fin_* 五表) ----
+# 「撑不住」在中国民航的四种形态:退市/停飞/被接盘/无限定增摊薄(山航B 2023
+# 净资产转负退市是唯一先例)。由此出双排序:存续压力线(谁先停飞易主)与
+# 股东损伤线(谁的净资产先被摊薄)——两条线答案完全不同(春秋存续风险最低,
+# 三大航大而不倒但股东被三轮定增反复稀释)。
+# 纪律:不做自动判分记分卡(黄金记分卡两连 FAIL 判死教训),只呈现指标事实
+# 与单一指标排序,综合研判留给人。
+_AIRLINES = [
+    ("601111", "中国国航", "全服务·央企"),
+    ("600029", "南方航空", "全服务·央企"),
+    ("600115", "中国东航", "全服务·央企"),
+    ("601021", "春秋航空", "廉航·民营"),
+    ("603885", "吉祥航空", "廉航·民营(九元母公司)"),
+    ("600221", "海航控股", "全服务·2021重整(方大系)"),
+    ("002928", "华夏航空", "支线·补贴依赖(兴澄系)"),
+]
+
+
+def _ttm(rows, key):
+    """中国财报累计口径→TTM:最新年报 + 最新期累计 − 上年同期累计。
+    rows: {date: val} 仅累计值;年报本身即 TTM。缺上年同期返回 None。"""
+    if not rows:
+        return None
+    latest_d = max(rows)
+    if latest_d.month == 12:
+        return rows[latest_d]
+    year_end = max((d for d in rows if d.month == 12 and d < latest_d), default=None)
+    prior_d = latest_d.replace(year=latest_d.year - 1)
+    if not year_end or prior_d not in rows:
+        return None
+    ttm = rows[year_end] + rows[latest_d] - rows[prior_d]
+    return round(ttm / 1e8, 1)
+
+
+@router.get("/aviation-stress")
+def aviation_stress(db: Session = Depends(get_session)):
+    """民航 Survival Watch:上市 7 家财务压力表(fin_* 读时合成,零采集)。
+
+    指标口径:
+        debt_ratio 资产负债率(小数,fin_indicator);
+        cash_short_debt 现金短债比=现金÷(短期借款+一年内到期非流动负债),
+            <1 即短债覆盖缺口,是「先撑不住」最硬的流动性信号;
+        equity 归母净资产(亿);ttm_np TTM 归母净利(亿,累计口径换算);
+        loss_years 连续年度亏损年数(年报口径);
+        equity_chg / dilution 归母净资产/实收资本 3 年变化(%)——
+            净资产缩水+实收资本增发=定增摊薄指纹(股东损伤线核心)。
+    双排序是单一指标事实排序非评分模型:存续压力线按
+    (资产负债率×现金短债比)综合呈现,股东损伤线按(净资产缩水+连亏+摊薄)。
+    未上市航司(幸福/奥凯/海航系地方合资等)无财报,走 P1 代理指标
+    (机队/补贴公示/事件),显性标注不填充。
+    """
+    codes = [c for c, _, _ in _AIRLINES]
+    rows_out = []
+    q_ind = (select(Security.sid, Security.code, FinIndicator)
+             .join(FinIndicator, FinIndicator.sid == Security.sid)
+             .where(Security.code.in_(codes)))
+    q_bal = (select(Security.sid, FinBalance)
+             .join(FinBalance, FinBalance.sid == Security.sid)
+             .where(Security.code.in_(codes)))
+    ind_map: dict[int, dict] = defaultdict(dict)
+    name_map: dict[int, str] = {}
+    for sid, code, f in db.execute(q_ind):
+        ind_map[sid][f.report_date] = f
+        name_map[sid] = code
+    bal_map: dict[int, dict] = defaultdict(dict)
+    for sid, f in db.execute(q_bal):
+        bal_map[sid][f.report_date] = f
+
+    for code, name, kind in _AIRLINES:
+        sid = next((s for s, c in name_map.items() if c == code), None)
+        if not sid or not ind_map.get(sid):
+            continue
+        inds = ind_map[sid]
+        latest_d = max(inds)
+        ind = inds[latest_d]
+        bals = bal_map.get(sid, {})
+        bal = bals.get(latest_d) or (bals[max(bals)] if bals else None)
+
+        np_rows = {d: float(f.net_profit) for d, f in inds.items() if f.net_profit is not None}
+        rev_rows = {d: float(f.revenue) for d, f in inds.items() if f.revenue is not None}
+        # 连续年度亏损:年报口径从最新往前数
+        year_rows = sorted((d for d in np_rows if d.month == 12), reverse=True)
+        loss_years = 0
+        for d in year_rows:
+            if np_rows[d] < 0:
+                loss_years += 1
+            else:
+                break
+        # 3 年前年报基期(净资产/实收资本)
+        base_d = None
+        if year_rows:
+            base_year = year_rows[0].year - 3
+            base_d = next((d for d in year_rows if d.year == base_year), None)
+        equity_now = float(bal.equity_parent) / 1e8 if bal and bal.equity_parent is not None else None
+        pic_now = float(bal.paid_in_capital) / 1e8 if bal and bal.paid_in_capital is not None else None
+        base_bal = bals.get(base_d) if base_d else None
+        equity_base = float(base_bal.equity_parent) / 1e8 if base_bal and base_bal.equity_parent is not None else None
+        pic_base = float(base_bal.paid_in_capital) / 1e8 if base_bal and base_bal.paid_in_capital is not None else None
+        short_debt = None
+        if bal:
+            parts = [bal.short_loan, bal.noncurrent_due_1y]
+            short_debt = sum(float(x) for x in parts if x is not None) or None
+        cash = float(bal.cash) if bal and bal.cash is not None else None
+        csd = round(cash / short_debt, 2) if (cash is not None and short_debt) else None
+        rows_out.append({
+            "code": code, "name": name, "kind": kind,
+            "period": latest_d.isoformat(),
+            "debt_ratio": round(float(ind.debt_ratio), 4) if ind.debt_ratio is not None else None,
+            "cash_short_debt": csd,
+            "equity_yi": round(equity_now, 1) if equity_now is not None else None,
+            "ttm_np_yi": _ttm(np_rows, "np"),
+            "ttm_rev_yi": _ttm(rev_rows, "rev"),
+            "loss_years": loss_years,
+            "equity_chg_pct": round((equity_now / equity_base - 1) * 100, 1)
+            if (equity_now is not None and equity_base) else None,
+            "dilution_pct": round((pic_now / pic_base - 1) * 100, 1)
+            if (pic_now is not None and pic_base) else None,
+        })
+
+    # 双排序(单一指标事实排序,降序=压力/损伤更大)
+    by_survival = sorted(
+        rows_out,
+        key=lambda r: (-(r["debt_ratio"] or 0), r["cash_short_debt"] or 99))
+    by_shareholder = sorted(
+        rows_out,
+        key=lambda r: (-(r["loss_years"] or 0), r["equity_chg_pct"] if r["equity_chg_pct"] is not None else 999))
+    for r in rows_out:
+        r["survival_rank"] = by_survival.index(r) + 1
+        r["shareholder_rank"] = by_shareholder.index(r) + 1
+    rows_out.sort(key=lambda r: r["survival_rank"])
+
+    return {
+        "updated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "rows": rows_out,
+        "method": (
+            "存续压力线=资产负债率降序+现金短债比升序(先撑不住=高负债+短债覆盖缺口);"
+            "股东损伤线=连亏年数+3年净资产缩水(定增摊薄指纹=实收资本增而净资产缩)。"
+            "指标是事实不是评分:不做自动判分(记分卡判死教训),综合研判留给人。"
+            "未上市航司无财报走 P1 代理指标(机队/补贴公示/事件流),显性标注不填充。"
+        ),
+    }

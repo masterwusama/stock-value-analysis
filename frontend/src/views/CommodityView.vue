@@ -39,6 +39,7 @@ const CMDS = [
   { key: 'copper', name: '铜' }, { key: 'aluminum', name: '铝' },
   { key: 'lithium', name: '碳酸锂' }, { key: 'crudeoil', name: '原油' },
   { key: 'ferrous', name: '黑色系' }, { key: 'agri', name: '农产品' },
+  { key: 'aviation', name: '民航' },
 ]
 
 // 按商品定制:标题/四件套/核心图双轴与解读
@@ -139,6 +140,18 @@ const META = {
              leftName: 'LME铜(左轴·美元/吨)', rightName: '美元宽口径(右轴·点)',
              tip: '📖 正常态是两线反向(美元弱→铜的美元计价成本降→需求增)。两线同向走=中国需求主导行情,美元不是主线。' },
   },
+  aviation: {
+    title: '民航 · 四个关键数',
+    core: [
+      { code: 'AV_PAX_YOY', tag: '需求', note: '客运量同比·月度全口径' },
+      { code: 'AV_PLF', tag: '效率', note: '客座率·83%平衡线' },
+      { code: 'AV_JETFUEL', tag: '成本', note: '美湾航煤·36年燃油锚' },
+      { code: 'AV_USDCNY', tag: '汇率', note: '美元/人民币·汇兑敞口' },
+    ],
+    chart: { left: 'AV_JETFUEL', right: 'AV_PLF', title: '核心图:航煤 vs 客座率(利润剪刀差)',
+             leftName: '美湾航煤(左轴·美元/加仑)', rightName: '客座率(右轴·%)',
+             tip: '📖 民航利润弹性最大的形态=航煤降+客座率升(成本收入双击)。客座率站上 83% 且油价走低=景气上行;油价高企+客座率滑落=全行业亏损压力(2020-2024 三大航连亏的宏观土壤)。客运量增而客座率降=以价换量,量的景气没传导到价。' },
+  },
 }
 const meta = computed(() => META[cur.value] || META.gold)
 
@@ -159,7 +172,19 @@ async function load(c) {
     loading.value = false
   }
 }
-function switchCmd(c) { if (c !== cur.value) { cur.value = c; load(c) } }
+function switchCmd(c) {
+  if (c !== cur.value) {
+    cur.value = c
+    load(c)
+    if (c === 'aviation') loadStress()
+  }
+}
+
+// ---- 民航 Survival Watch:上市 7 家财务压力表(读时合成,只在民航 Tab 拉) ----
+const stress = ref(null)
+async function loadStress() {
+  try { stress.value = await get('/commodity/aviation-stress') } catch (e) { stress.value = null }
+}
 
 onMounted(async () => {
   echarts = await ensureEcharts()
@@ -354,6 +379,43 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
         <p class="dim tip">{{ meta.chart.tip }}</p>
       </section>
 
+      <!-- 民航专属:Survival Watch 上市 7 家压力表(双排序) -->
+      <section v-if="cur === 'aviation' && stress" class="card">
+        <div class="title-row">
+          <h3>Survival Watch · 谁先撑不住(上市 7 家)</h3>
+          <span class="sub">财报 {{ stress.rows[0]?.period }} · fin 五表读时合成 · 双排序是单一指标事实排序非评分</span>
+        </div>
+        <div class="stress-wrap">
+          <table class="stress-tbl">
+            <thead>
+              <tr>
+                <th>存续#</th><th>损伤#</th><th>公司</th><th>定位</th>
+                <th>负债率</th><th>现金/短债</th><th>TTM净利(亿)</th>
+                <th>连亏(年)</th><th>净资产3年</th><th title="实收资本3年增幅(定增摊薄指纹)">摊薄</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in stress.rows" :key="r.code" :class="{ worst: r.survival_rank <= 2 }">
+                <td><b :class="r.survival_rank === 1 ? 'hot' : ''">{{ r.survival_rank }}</b></td>
+                <td><b :class="r.shareholder_rank === 1 ? 'hot' : ''">{{ r.shareholder_rank }}</b></td>
+                <td class="t-name">{{ r.name }}</td>
+                <td class="t-kind">{{ r.kind }}</td>
+                <td>{{ r.debt_ratio != null ? (r.debt_ratio * 100).toFixed(1) + '%' : '-' }}</td>
+                <td :class="r.cash_short_debt != null && r.cash_short_debt < 1 ? 'poor' : ''">{{ r.cash_short_debt ?? '-' }}</td>
+                <td :class="(r.ttm_np_yi ?? 0) < 0 ? 'poor' : 'ok'">{{ r.ttm_np_yi ?? '-' }}</td>
+                <td :class="r.loss_years > 0 ? 'poor' : ''">{{ r.loss_years || '-' }}</td>
+                <td :class="(r.equity_chg_pct ?? 0) < 0 ? 'poor' : ''">{{ r.equity_chg_pct != null ? sign(r.equity_chg_pct, 0) + '%' : '-' }}</td>
+                <td>{{ r.dilution_pct != null ? sign(r.dilution_pct, 0) + '%' : '-' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="dim tip">📖 {{ stress.method }}</p>
+        <p class="dim tip">读法:存续压力线=高负债率+现金短债比&lt;1(短债覆盖缺口,先撑不住的流动性信号);
+          股东损伤线=连亏+净资产缩水(三大航"大而不倒"但定增摊薄,山航B 2023 净资产转负退市是唯一先例)。
+          未上市盯防名单(P1 代理指标):幸福/奥凯/海航系地方合资(乌航/北部湾/福航)/西藏。</p>
+      </section>
+
       <!-- 全部指标:默认折叠,首屏减负 -->
       <section class="card fold">
         <button type="button" class="fold-btn" @click="expanded = !expanded">
@@ -406,6 +468,8 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
             取暖油比价为无量纲比值(HO/CL),裂解价差绝对值需单位校准故用比值。
             黑色系:钢厂盘面利润=螺纹−1.6×铁矿−0.5×焦煤(吨钢配比口径);普氏与港口库存无免费源。
             农产品:猪粮比为期货口径近似官方(生猪/玉米);能繁母猪存栏无免费源;生猪期货 2021 上市历史短。
+            民航:行业量价为民航局全口径(含未上市承运人);美湾航煤代理国内出厂价(联动税差恒定),
+            发改委月度出厂价/航司月报(7家)/波音交付/机场吞吐量记 P1;压力表 TTM=最新年报+当期累计−上年同期累计。
             供需平衡表(WGC/Silver Institute/USGS)与因子记分卡属 P2,先看数再谈模型
             (设计文档:docs/设计-大宗商品供需模块-黄金.md / -白银.md)。
           </p>
@@ -430,6 +494,21 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
 .stale-warn { color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; padding: 10px 14px;
   border-radius: 8px; font-size: 13px; line-height: 1.7; margin-bottom: 12px; }
 .up { color: var(--up, #dc2626); } .down { color: var(--down, #16a34a); }
+
+/* ---- 民航 Survival Watch 压力表 ---- */
+.stress-wrap { overflow-x: auto; }
+.stress-tbl { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.stress-tbl th { text-align: left; color: var(--sub, #6b7280); font-weight: 500; font-size: 11.5px;
+  padding: 5px 8px; border-bottom: 1px solid var(--line, #e5e9f2); white-space: nowrap; }
+.stress-tbl td { padding: 6px 8px; border-bottom: 1px solid var(--line-soft, #f0f2f7); white-space: nowrap; }
+.stress-tbl tr.worst td { background: #fff7ed; }
+.stress-tbl .t-name { font-weight: 600; }
+.stress-tbl .t-kind { color: var(--sub, #6b7280); font-size: 11px; max-width: 150px; white-space: normal; }
+.stress-tbl .hot { color: #dc2626; }
+.stress-tbl .poor { color: var(--down, #16a34a); font-weight: 600; }
+.stress-tbl .ok { color: var(--up, #dc2626); }
+.m .stress-tbl { font-size: 11.5px; }
+.m .stress-tbl td, .m .stress-tbl th { padding: 5px 6px; }
 
 /* 商品切换条:独立一行,桌面自动换行,移动端横向滚动 */
 .seg-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
