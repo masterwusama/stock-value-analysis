@@ -142,9 +142,13 @@ JOBS = {
     "crudeoil": [(COLLECTOR / "commodity-crudeoil" / "scripts", "fetch_crudeoil.py")],
     # aviation：大宗商品供需模块第九期(民航景气度,首个行业模块)。行业全口径
     # 量价(民航局:客运量/RPK/总周转量/客座率/载运率)+成本锚(美湾航煤36年/
-    # 航煤原油比价/美债10Y/美元人民币)。上市 7 家压力表走读时合成不在此采集。
-    # 航煤出厂价(发改委月度)/航司月报/波音交付记 P1
+    # 航煤原油比价/美债10Y/美元人民币)+国内航煤现货(生意社)。上市 7 家压力表
+    # 走读时合成不在此采集。月度组(民航局)与日度组(生意社/FRED)拆双 job:
+    # 月度序列日更纯属浪费且新浪 81 页接口连续密集请求会被限流(2026-11-09 实测)
     "aviation": [(COLLECTOR / "commodity-aviation" / "scripts", "fetch_aviation.py")],
+    # aviation-monthly：月度组单独跑(--monthly-only,日度组从上轮档继承)。
+    # 民航局月度数据每月 ~10 日发布,12/15 日各试一次(幂等,数据未更新则空转继承)
+    "aviation-monthly": [(COLLECTOR / "commodity-aviation" / "scripts", "fetch_aviation.py")],
     # ferrous：大宗商品供需模块第七期(黑色系)。铁矿/螺纹/焦煤/热卷四期货量仓
     # +钢厂盘面利润(自算)+卷螺差。普氏指数与港口库存无免费源记 P2
     "ferrous": [(COLLECTOR / "commodity-ferrous" / "scripts", "fetch_ferrous.py")],
@@ -170,6 +174,10 @@ JOB_DEFAULTS = {
     # 免费源(em)是默认路径且无需默认参数;Wind 路径的批上限默认在 main() 的 dispatch 里
     # 补(--source wind 时自动追加,当年 56 次/天 ≈780 积分的预算纪律不变)
     "valuation": [],
+    # 民航日度/月度拆分:日度 job 只抓生意社+FRED+WTI,月度组从上轮档继承;
+    # 月度 job 反之(民航局月度数据 ~10 日发布,12/15 日各跑一次幂等捡新)
+    "aviation": ["--daily-only"],
+    "aviation-monthly": ["--monthly-only"],
 }
 
 # 回灌面：日更只动了 index.json（行情/评分），财务文件按 mtime 增量；
@@ -196,6 +204,7 @@ IMPORT_DEFAULTS = {
     "crudeoil": ["--only-crudeoil"],
     # 民航两表(同 cmd_*,commodity='aviation';共码序列 AV_ 前缀)
     "aviation": ["--only-aviation"],
+    "aviation-monthly": ["--only-aviation"],
     "ferrous": ["--only-ferrous"],
     "agri": ["--only-agri"],
 }

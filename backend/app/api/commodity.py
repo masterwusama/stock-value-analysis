@@ -25,7 +25,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import CmdIndicator, CmdValue, FinBalance, FinIndicator, Security
+from app.models import (
+    CmdIndicator, CmdValue, FinBalance, FinIndicator, Security, ValuationPctile,
+)
 
 router = APIRouter(prefix="/api/commodity", tags=["commodity"])
 
@@ -483,6 +485,16 @@ def aviation_stress(db: Session = Depends(get_session)):
     """
     codes = [c for c, _, _ in _AIRLINES]
     rows_out = []
+    # 估值分位(个股联动层):最新交易日 PE/PB/PS 十年分位,一批全市场 join 而来。
+    # 航空股按 PB 分位定价而非 PE(亏损期 PE 转负为空),与压力表双排序互为镜像。
+    val_date = db.execute(select(func.max(ValuationPctile.trade_date))).scalar()
+    val_map: dict[int, tuple] = {}
+    if val_date:
+        q_val = (select(ValuationPctile.sid, ValuationPctile.pe_pctile,
+                        ValuationPctile.pb_pctile, ValuationPctile.ps_pctile)
+                 .where(ValuationPctile.trade_date == val_date))
+        for sid_v, pe, pb, ps in db.execute(q_val):
+            val_map[sid_v] = (pe, pb, ps)
     q_ind = (select(Security.sid, Security.code, FinIndicator)
              .join(FinIndicator, FinIndicator.sid == Security.sid)
              .where(Security.code.in_(codes)))
@@ -547,6 +559,9 @@ def aviation_stress(db: Session = Depends(get_session)):
             if (equity_now is not None and equity_base) else None,
             "dilution_pct": round((pic_now / pic_base - 1) * 100, 1)
             if (pic_now is not None and pic_base) else None,
+            "pe_pctile": val_map.get(sid, (None,) * 3)[0],
+            "pb_pctile": val_map.get(sid, (None,) * 3)[1],
+            "ps_pctile": val_map.get(sid, (None,) * 3)[2],
         })
 
     # 双排序(单一指标事实排序,降序=压力/损伤更大)
@@ -564,9 +579,17 @@ def aviation_stress(db: Session = Depends(get_session)):
     return {
         "updated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "rows": rows_out,
+        "val_date": val_date.isoformat() if val_date else None,
         "method": (
             "存续压力线=资产负债率降序+现金短债比升序(先撑不住=高负债+短债覆盖缺口);"
             "股东损伤线=连亏年数+3年净资产缩水(定增摊薄指纹=实收资本增而净资产缩)。"
+            "⚠重整/大额出清类公司(海航 2021 重整)净资产基期失真:3 年变化列反映债务出清后"
+            "的修复低基数,判断增发损伤读「摊薄」列(实收资本)更可靠。"
+            "估值分位=PE/PB/PS 十年分位(东财源" + (
+                ",更新至 %s" % val_date.isoformat() if val_date else ""
+            ) + "):航空股按 PB 分位定价而非 PE——亏损期 PE 转负为空(三大航 PE 分位全空是常态),"
+            "净资产被连亏蚀空会被动推高 PB 分位(如东航 PB 高分位=损伤线 #1 的镜像,非贵非便宜),"
+            "低 PB 分位+低损伤(春秋)才是周期底部真便宜。"
             "指标是事实不是评分:不做自动判分(记分卡判死教训),综合研判留给人。"
             "未上市航司无财报走 P1 代理指标(机队/补贴公示/事件流),显性标注不填充。"
         ),

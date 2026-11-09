@@ -244,15 +244,30 @@ def main():
     ap.add_argument("--backfill-jf", action="store_true",
                     help="AV_JF_CN 回填模式:生意社栏目翻满列表,每月首篇采样"
                          "月度锚点(≈72 请求;默认增量只抓本地缺的日期)")
+    ap.add_argument("--monthly-only", action="store_true",
+                    help="只抓月度组(民航局交通量/客座率;日度组从上轮档继承)"
+                         "——月度调度用(民航局月度数据每月 ~10 日发布)")
+    ap.add_argument("--daily-only", action="store_true",
+                    help="只抓日度组(生意社航煤/FRED/WTI/派生;月度组从上轮档"
+                         "继承)——日度调度用(月度序列日更纯属浪费且招限流)")
     a = ap.parse_args()
-    plan = [
+    if a.monthly_only and a.daily_only:
+        ap.error("--monthly-only 与 --daily-only 互斥")
+    monthly_codes = {"AV_PAX", "AV_PAX_YOY", "AV_RPK", "AV_TAT", "AV_PLF", "AV_LF"}
+    plan_monthly = [
         ("需求", "AV_PAX/AV_PAX_YOY/AV_RPK/AV_TAT 民航行月度(新浪宏观库,1949→)"),
         ("需求", "AV_PLF/AV_LF 正班客座率/载运率(2006.2→,20年)"),
+    ]
+    plan_daily = [
         ("成本", "AV_JF_CN 国内航煤现货(生意社交易商中位数,增量/可回填)"),
         ("成本", "AV_JETFUEL 美湾航煤现货 FRED(1990→,36年) / AV_JF_CL 比价(自算)"),
         ("宏观", "AV_DGS10 美债10Y / AV_USDCNY 美元兑人民币(FRED)"),
     ]
-    print("[aviation] P0 序列计划: %d 组" % len(plan), flush=True)
+    plan = (plan_monthly if a.monthly_only else plan_daily if a.daily_only
+            else plan_monthly + plan_daily)
+    print("[aviation] 序列计划(%s): %d 组" % (
+        "monthly-only" if a.monthly_only else "daily-only" if a.daily_only else "全量",
+        len(plan)), flush=True)
     for cat, line in plan:
         print("  [%s] %s" % (cat, line), flush=True)
     if a.dry_run:
@@ -287,48 +302,56 @@ def main():
         return pts
 
     raw = {}
-    traf = grab("民航行交通量组(PAX/YOY/RPK/TAT)", fetch_traffic_air) or {}
-    plf = grab("客座率组(PLF/LF)", fetch_load_factor) or {}
-    for k, v in {**traf, **plf}.items():
-        raw[k] = v or None
+    expected_skip = set()   # 模式内主动跳过的序列(继承时不计 warning)
+    if not a.daily_only:
+        traf = grab("民航行交通量组(PAX/YOY/RPK/TAT)", fetch_traffic_air) or {}
+        plf = grab("客座率组(PLF/LF)", fetch_load_factor) or {}
+        for k, v in {**traf, **plf}.items():
+            raw[k] = v or None
+    if a.daily_only:
+        expected_skip |= monthly_codes
+    if a.monthly_only:
+        expected_skip |= {"AV_JF_CN", "AV_JETFUEL", "AV_DGS10", "AV_USDCNY",
+                          "AV_CL", "AV_JF_CL"}
 
-    # AV_JF_CN(生意社):增量合并语义(本轮新点+本地旧点),不走 grab 的组失败降级
-    jf_old = {}
-    if OUT.exists():
+    if not a.monthly_only:
+        # AV_JF_CN(生意社):增量合并语义(本轮新点+本地旧点),不走 grab 的组失败降级
+        jf_old = {}
+        if OUT.exists():
+            try:
+                _old = json.loads(OUT.read_text(encoding="utf-8"))
+                jf_old = {p[0]: p[1] for s in _old.get("series", [])
+                          if s["code"] == "AV_JF_CN" for p in s["points"]}
+            except Exception:  # noqa: BLE001 旧档损坏按空处理,重抓
+                jf_old = {}
         try:
-            _old = json.loads(OUT.read_text(encoding="utf-8"))
-            jf_old = {p[0]: p[1] for s in _old.get("series", [])
-                      if s["code"] == "AV_JF_CN" for p in s["points"]}
-        except Exception:  # noqa: BLE001 旧档损坏按空处理,重抓
-            jf_old = {}
-    try:
-        jf_new = fetch_jf_cn(jf_old, backfill=a.backfill_jf)
-        jf_merged = dict(jf_old)
-        jf_merged.update(dict(jf_new))
-        raw["AV_JF_CN"] = sorted(jf_merged.items()) or None
-        print("[aviation] AV_JF_CN: 本轮 +%d,累计 %d 点 %s~%s" % (
-            len(jf_new), len(jf_merged),
-            min(jf_merged) if jf_merged else "-", max(jf_merged) if jf_merged else "-"), flush=True)
-    except Exception as e:  # noqa: BLE001 生意社整链失败:留旧点(若有),否则序列缺席
-        warnings.append("AV_JF_CN: %s(%s)" % (type(e).__name__, str(e)[:80]))
-        raw["AV_JF_CN"] = sorted(jf_old.items()) or None
-        print("[aviation] AV_JF_CN 失败(留旧 %d 点): %s %s" % (
-            len(jf_old), type(e).__name__, str(e)[:120]), flush=True)
+            jf_new = fetch_jf_cn(jf_old, backfill=a.backfill_jf)
+            jf_merged = dict(jf_old)
+            jf_merged.update(dict(jf_new))
+            raw["AV_JF_CN"] = sorted(jf_merged.items()) or None
+            print("[aviation] AV_JF_CN: 本轮 +%d,累计 %d 点 %s~%s" % (
+                len(jf_new), len(jf_merged),
+                min(jf_merged) if jf_merged else "-", max(jf_merged) if jf_merged else "-"), flush=True)
+        except Exception as e:  # noqa: BLE001 生意社整链失败:留旧点(若有),否则序列缺席
+            warnings.append("AV_JF_CN: %s(%s)" % (type(e).__name__, str(e)[:80]))
+            raw["AV_JF_CN"] = sorted(jf_old.items()) or None
+            print("[aviation] AV_JF_CN 失败(留旧 %d 点): %s %s" % (
+                len(jf_old), type(e).__name__, str(e)[:120]), flush=True)
 
-    singles = [
-        ("AV_JETFUEL", lambda: fetch_fred("DJFUELUSGULF")),
-        ("AV_DGS10", lambda: fetch_fred("DGS10")),
-        ("AV_USDCNY", lambda: fetch_fred("DEXCHUS")),
-        ("AV_CL", fetch_wti),
-    ]
-    for code, fn in singles:
-        raw[code] = grab(code, fn)
-        time.sleep(0.4)
-    derived, dnotes = derive({k: v for k, v in raw.items() if v})
-    for code, pts in derived.items():
-        raw[code] = pts
-        print("[aviation] %s(派生): %d 点 %s~%s" % (code, len(pts), pts[0][0], pts[-1][0]), flush=True)
-    warnings += dnotes
+        singles = [
+            ("AV_JETFUEL", lambda: fetch_fred("DJFUELUSGULF")),
+            ("AV_DGS10", lambda: fetch_fred("DGS10")),
+            ("AV_USDCNY", lambda: fetch_fred("DEXCHUS")),
+            ("AV_CL", fetch_wti),
+        ]
+        for code, fn in singles:
+            raw[code] = grab(code, fn)
+            time.sleep(0.4)
+        derived, dnotes = derive({k: v for k, v in raw.items() if v})
+        for code, pts in derived.items():
+            raw[code] = pts
+            print("[aviation] %s(派生): %d 点 %s~%s" % (code, len(pts), pts[0][0], pts[-1][0]), flush=True)
+        warnings += dnotes
 
     # 展示清单(顺序=页面顺序)。AV_CL 仅作派生原料,不展示。
     SPEC = {
@@ -371,6 +394,7 @@ def main():
     # 序列继承:本轮源失败的序列从上轮 json 原样带过来(点与元数据照抄,idx 仍按
     # SPEC 常量所以顺序稳定)。2026-11-09 三连跑实测:新浪 81 页/FRED 在连续
     # 密集请求下交替瞬断,不继承会让 json 反复丢序列(库里无损但档不稳定)。
+    # expected_skip(模式内主动跳过,如 daily-only 下的月度组)继承不打 warning。
     # SPEC 增删序列时继承的旧 idx 可能与新枚举错位——那时需重跑全量。
     if OUT.exists():
         try:
@@ -380,12 +404,15 @@ def main():
                 if s_old["code"] in have or s_old["code"] not in SPEC:
                     continue
                 series_out.append(s_old)
-                warnings.append("%s: 继承上轮 %d 点(本轮源失败)" % (
-                    s_old["code"], len(s_old.get("points", []))))
-                print("[aviation] %s(继承): %d 点 %s~%s" % (
-                    s_old["code"], len(s_old.get("points", [])),
-                    s_old["points"][0][0] if s_old.get("points") else "-",
-                    s_old["points"][-1][0] if s_old.get("points") else "-"), flush=True)
+                n_old = len(s_old.get("points", []))
+                if s_old["code"] in expected_skip:
+                    print("[aviation] %s(模式跳过,继承): %d 点" % (s_old["code"], n_old), flush=True)
+                else:
+                    warnings.append("%s: 继承上轮 %d 点(本轮源失败)" % (s_old["code"], n_old))
+                    print("[aviation] %s(继承): %d 点 %s~%s" % (
+                        s_old["code"], n_old,
+                        s_old["points"][0][0] if s_old.get("points") else "-",
+                        s_old["points"][-1][0] if s_old.get("points") else "-"), flush=True)
         except Exception:  # noqa: BLE001 上轮档读不了就按本轮结果写
             pass
     series_out.sort(key=lambda s: s["idx"])

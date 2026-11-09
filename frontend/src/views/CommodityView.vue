@@ -379,11 +379,11 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
         <p class="dim tip">{{ meta.chart.tip }}</p>
       </section>
 
-      <!-- 民航专属:Survival Watch 上市 7 家压力表(双排序) -->
+      <!-- 民航专属:Survival Watch 上市 7 家压力表(双排序+估值分位联动) -->
       <section v-if="cur === 'aviation' && stress" class="card">
         <div class="title-row">
           <h3>Survival Watch · 谁先撑不住(上市 7 家)</h3>
-          <span class="sub">财报 {{ stress.rows[0]?.period }} · fin 五表读时合成 · 双排序是单一指标事实排序非评分</span>
+          <span class="sub">财报 {{ stress.rows[0]?.period }} · 估值分位 {{ stress.val_date || '-' }} · fin+valuation 读时合成 · 双排序是单一指标事实排序非评分</span>
         </div>
         <div class="stress-wrap">
           <table class="stress-tbl">
@@ -392,6 +392,9 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
                 <th>存续#</th><th>损伤#</th><th>公司</th><th>定位</th>
                 <th>负债率</th><th>现金/短债</th><th>TTM净利(亿)</th>
                 <th>连亏(年)</th><th>净资产3年</th><th title="实收资本3年增幅(定增摊薄指纹)">摊薄</th>
+                <th title="PE 十年分位;亏损期 PE 转负为空=空格">PE分位</th>
+                <th title="PB 十年分位;航空股主定价锚">PB分位</th>
+                <th title="PS 十年分位">PS分位</th>
               </tr>
             </thead>
             <tbody>
@@ -406,20 +409,25 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
                 <td :class="r.loss_years > 0 ? 'poor' : ''">{{ r.loss_years || '-' }}</td>
                 <td :class="(r.equity_chg_pct ?? 0) < 0 ? 'poor' : ''">{{ r.equity_chg_pct != null ? sign(r.equity_chg_pct, 0) + '%' : '-' }}</td>
                 <td>{{ r.dilution_pct != null ? sign(r.dilution_pct, 0) + '%' : '-' }}</td>
+                <td :title="r.pe_pctile == null ? 'PE 转负(亏损),PE 分位无效' : ''">{{ r.pe_pctile != null ? num(r.pe_pctile, 0) : '—' }}</td>
+                <td :class="(r.pb_pctile ?? 50) >= 80 ? 'poor' : (r.pb_pctile ?? 50) <= 20 ? 'ok' : ''">{{ r.pb_pctile != null ? num(r.pb_pctile, 0) : '—' }}</td>
+                <td>{{ r.ps_pctile != null ? num(r.ps_pctile, 0) : '—' }}</td>
               </tr>
             </tbody>
           </table>
         </div>
         <p class="dim tip">📖 {{ stress.method }}</p>
         <p class="dim tip">读法:存续压力线=高负债率+现金短债比&lt;1(短债覆盖缺口,先撑不住的流动性信号);
-          股东损伤线=连亏+净资产缩水(三大航"大而不倒"但定增摊薄,山航B 2023 净资产转负退市是唯一先例)。
+          股东损伤线=连亏+净资产缩水(三大航"大而不倒"但定增摊薄,山航B 2023 净资产转负退市是唯一先例);
+          海航 3 年净资产 +427% 是 2021 重整出清低基数的修复,读「摊薄」列(+0%=未增发)才见真章。
+          估值列:PE 分位「—」=亏损转负(航空股常态),定价看 PB——连亏蚀空净资产会被动推高 PB 分位(东航 96.8%=损伤镜像,非贵非便宜)。
           未上市盯防名单(P1 代理指标):幸福/奥凯/海航系地方合资(乌航/北部湾/福航)/西藏。</p>
       </section>
 
       <!-- 全部指标:默认折叠,首屏减负 -->
       <section class="card fold">
         <button type="button" class="fold-btn" @click="expanded = !expanded">
-          {{ expanded ? '▲ 收起全部指标' : `▼ 展开全部 ${series.length} 个指标(价格/持仓/工业需求/宏观因子)` }}
+          {{ expanded ? '▲ 收起全部指标' : `▼ 展开全部 ${series.length} 个指标` }}
         </button>
         <template v-if="expanded">
           <div class="toolbar tabs">
