@@ -1,5 +1,5 @@
 {
-  "_comment": "民航 Survival Watch·IPO 申报组(人工结构化档,forecast targets.json 模式)。非上市公司无持续披露义务,数据来自 IPO 申报文件(一次性历史快照,审核问询阶段会更新,届时回填)。字段与上市 7 家压力表对齐:debt_ratio 资产负债率/ equity_yi 归母+少数股东权益合计(亿)/ np_latest_yi 最近年度扣非归母净利(亿)/ ttm_rev_yi 最近年度营收(亿)/ loss_years 连续年度亏损年数/ cash_short_debt 现金短债比(保荐书无细项,招股书细项待补)/ series 三个报告期序列(亿元,2023→2025 年报)。",
+  "_comment": "民航 Survival Watch·非上市披露组(人工结构化档,forecast targets.json 模式)。非上市公司无持续披露义务,但两类来源有强制披露:IPO 申报稿(长龙)/新三板挂牌及退市公司年报(山航)。字段与上市 7 家压力表对齐;period 为各自审计截止日;审核更新/新年报后回填。",
   "updated_at": "2026-11-09",
   "rows": [
     {
@@ -36,6 +36,43 @@
         "coop_route_note": "合作航线收益8.3→10.3→9.8亿(2025约占利润106.8%,问询关注点)",
         "raise": "拟募资不超20亿(A320引进+备用发动机)",
         "rank_note": "2025净利润按航空集团口径国内第5"
+      }
+    },
+    {
+      "code": "OTC-SHANDONG",
+      "name": "山东航空",
+      "kind": "全服务·央企控股(国航系,2023退市现新三板)",
+      "ipo": true,
+      "period": "2025-12-31",
+      "source_doc": "新三板/两网及退市公司2025年年报(2026-03-26披露,东财直链);山航B 2023年4月因2022年报净资产转负退市,国航体系增持托底后独立存续",
+      "debt_ratio": 1.4406,
+      "equity_yi": -122.5,
+      "np_latest_yi": -22.9,
+      "ttm_rev_yi": 201.9,
+      "loss_years": 6,
+      "cash_short_debt": null,
+      "equity_chg_pct": -24.1,
+      "dilution_pct": null,
+      "pe_pctile": null,
+      "pb_pctile": null,
+      "ps_pctile": null,
+      "series": {
+        "years": [2024, 2025],
+        "revenue": [195.9, 201.9],
+        "np_parent": [-22.64, -22.92],
+        "np_deducted": [-23.91, -23.79],
+        "debt_ratio": [1.3569, 1.4406],
+        "equity_parent": [-98.7, -122.5],
+        "ocf": [39.0, 38.3],
+        "total_assets": [276.6, 278.0],
+        "total_liabilities": [375.3, 400.5]
+      },
+      "extra": {
+        "eps_2025": -5.73,
+        "cash_yi": 2.1,
+        "current_ratio": 0.13,
+        "interest_cover": -1.08,
+        "note": "资不抵债运行:负债400.5亿vs总资产278亿,货币资金仅2.1亿;OCF仍为正(38.3亿)靠主营业务回血,但净资产缺口靠国航体系支撑——「撑不住四形态」中退市+股东接盘的实证样本"
       }
     }
   ]
