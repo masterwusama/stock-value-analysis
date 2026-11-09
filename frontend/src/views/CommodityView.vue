@@ -431,7 +431,7 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
       <!-- 民航专属:Survival Watch 上市 7 家压力表(双排序+估值分位联动) -->
       <section v-if="cur === 'aviation' && stress" class="card">
         <div class="title-row">
-          <h3>Survival Watch · 谁先撑不住(上市 7 家)</h3>
+          <h3>Survival Watch · 谁先撑不住(上市 7 家+IPO 申报)</h3>
           <span class="sub">财报 {{ stress.rows[0]?.period }} · 估值分位 {{ stress.val_date || '-' }} · fin+valuation 读时合成 · 双排序是单一指标事实排序非评分</span>
         </div>
         <div class="stress-wrap">
@@ -450,11 +450,13 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
               <tr v-for="r in stress.rows" :key="r.code" :class="{ worst: r.survival_rank <= 2 }">
                 <td><b :class="r.survival_rank === 1 ? 'hot' : ''">{{ r.survival_rank }}</b></td>
                 <td><b :class="r.shareholder_rank === 1 ? 'hot' : ''">{{ r.shareholder_rank }}</b></td>
-                <td class="t-name">{{ r.name }}</td>
+                <td class="t-name">{{ r.name }}<span v-if="r.ipo" class="ipo-badge"
+                    :title="r.source_doc">IPO申报</span></td>
                 <td class="t-kind">{{ r.kind }}</td>
                 <td>{{ r.debt_ratio != null ? (r.debt_ratio * 100).toFixed(1) + '%' : '-' }}</td>
                 <td :class="r.cash_short_debt != null && r.cash_short_debt < 1 ? 'poor' : ''">{{ r.cash_short_debt ?? '-' }}</td>
-                <td :class="(r.ttm_np_yi ?? 0) < 0 ? 'poor' : 'ok'">{{ r.ttm_np_yi ?? '-' }}</td>
+                <td :class="((r.ttm_np_yi ?? r.np_latest_yi) ?? 0) < 0 ? 'poor' : 'ok'"
+                    :title="r.ttm_np_yi == null && r.np_latest_yi != null ? '申报稿仅年度口径:2025 扣非净利(亿元)' : ''">{{ r.ttm_np_yi ?? r.np_latest_yi ?? '-' }}</td>
                 <td :class="r.loss_years > 0 ? 'poor' : ''">{{ r.loss_years || '-' }}</td>
                 <td :class="(r.equity_chg_pct ?? 0) < 0 ? 'poor' : ''">{{ r.equity_chg_pct != null ? sign(r.equity_chg_pct, 0) + '%' : '-' }}</td>
                 <td>{{ r.dilution_pct != null ? sign(r.dilution_pct, 0) + '%' : '-' }}</td>
@@ -470,6 +472,8 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
           股东损伤线=连亏+净资产缩水(三大航"大而不倒"但定增摊薄,山航B 2023 净资产转负退市是唯一先例);
           海航 3 年净资产 +427% 是 2021 重整出清低基数的修复,读「摊薄」列(+0%=未增发)才见真章。
           估值列:PE 分位「—」=亏损转负(航空股常态),定价看 PB——连亏蚀空净资产会被动推高 PB 分位(东航 96.8%=损伤镜像,非贵非便宜)。
+          长龙行=招股书申报稿口径(审计截止 2025-12-31,较上市组晚两季):负债率 89.9% 参排但跨期对比有局限;
+          净利列显示 2025 扣非 4.9 亿(TTM 待上市后);机队 77 架全 A320 系/2025 客座率 88.39%;合作航线收益约占利润 106.8% 是问询焦点。
           未上市盯防名单(P1 代理指标):幸福/奥凯/海航系地方合资(乌航/北部湾/福航)/西藏。</p>
       </section>
 
@@ -563,6 +567,8 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
 .stress-tbl .t-name { font-weight: 600; }
 .stress-tbl .t-kind { color: var(--sub, #6b7280); font-size: 11px; max-width: 150px; white-space: normal; }
 .stress-tbl .hot { color: #dc2626; }
+.ipo-badge { display: inline-block; margin-left: 5px; padding: 0 5px; font-size: 10px; font-weight: 600;
+  color: #92400e; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 999px; vertical-align: 1px; }
 .stress-tbl .poor { color: var(--down, #16a34a); font-weight: 600; }
 .stress-tbl .ok { color: var(--up, #dc2626); }
 .m .stress-tbl { font-size: 11.5px; }

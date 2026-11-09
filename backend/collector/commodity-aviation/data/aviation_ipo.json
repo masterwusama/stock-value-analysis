@@ -1,0 +1,42 @@
+{
+  "_comment": "民航 Survival Watch·IPO 申报组(人工结构化档,forecast targets.json 模式)。非上市公司无持续披露义务,数据来自 IPO 申报文件(一次性历史快照,审核问询阶段会更新,届时回填)。字段与上市 7 家压力表对齐:debt_ratio 资产负债率/ equity_yi 归母+少数股东权益合计(亿)/ np_latest_yi 最近年度扣非归母净利(亿)/ ttm_rev_yi 最近年度营收(亿)/ loss_years 连续年度亏损年数/ cash_short_debt 现金短债比(保荐书无细项,招股书细项待补)/ series 三个报告期序列(亿元,2023→2025 年报)。",
+  "updated_at": "2026-11-09",
+  "rows": [
+    {
+      "code": "IPO-CHANGlong",
+      "name": "长龙航空",
+      "kind": "全服务·民营(杭州基地,IPO申报中)",
+      "ipo": true,
+      "period": "2025-12-31",
+      "source_doc": "上交所主板IPO(华泰联合保荐),招股书申报稿2026-06-02受理,审核问询中;数据摘自发行保荐书(审计截止2025-12-31)",
+      "debt_ratio": 0.8992,
+      "equity_yi": 31.4,
+      "np_latest_yi": 4.9,
+      "ttm_rev_yi": 106.5,
+      "loss_years": 0,
+      "cash_short_debt": null,
+      "equity_chg_pct": null,
+      "dilution_pct": null,
+      "pe_pctile": null,
+      "pb_pctile": null,
+      "ps_pctile": null,
+      "series": {
+        "years": [2023, 2024, 2025],
+        "revenue": [90.1, 100.1, 106.5],
+        "np_deducted": [0.52, 3.37, 4.9],
+        "debt_ratio": [0.942, 0.91, 0.8992],
+        "ocf": [37.7, 38.2, 40.1],
+        "total_assets": [262.5, 272.2, 311.8],
+        "total_liabilities": [247.3, 247.6, 280.4]
+      },
+      "extra": {
+        "fleet": "77架(A320系列全谱),十五五规划超100架",
+        "plf_2025": 88.39,
+        "utilization_2025": 9.42,
+        "coop_route_note": "合作航线收益8.3→10.3→9.8亿(2025约占利润106.8%,问询关注点)",
+        "raise": "拟募资不超20亿(A320引进+备用发动机)",
+        "rank_note": "2025净利润按航空集团口径国内第5"
+      }
+    }
+  ]
+}

@@ -18,6 +18,7 @@ import json
 import threading
 import time
 from collections import defaultdict
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
@@ -449,6 +450,10 @@ _AIRLINES = [
     ("002928", "华夏航空", "支线·补贴依赖(兴澄系)"),
 ]
 
+# IPO 申报组:非上市公司无持续披露,数据来自 IPO 申报文件(一次性历史快照,
+# 人工结构化档,forecast targets.json 模式;审核问询更新后回填)。
+_IPO_JSON = Path(__file__).resolve().parents[2] / "collector" / "commodity-aviation" / "data" / "aviation_ipo.json"
+
 
 def _ttm(rows, key):
     """中国财报累计口径→TTM:最新年报 + 最新期累计 − 上年同期累计。
@@ -564,6 +569,19 @@ def aviation_stress(db: Session = Depends(get_session)):
             "ps_pctile": val_map.get(sid, (None,) * 3)[2],
         })
 
+    # IPO 申报组并表(长龙航空):申报稿一次性历史快照,period 与上市组不同期
+    # (2025 年报 vs 上市组最新季报),负债率参与排序但跨期对比有局限,前端标 badge。
+    if _IPO_JSON.exists():
+        try:
+            ipo = json.loads(_IPO_JSON.read_text(encoding="utf-8"))
+            for r in ipo.get("rows", []):
+                r.setdefault("pe_pctile", None)
+                r.setdefault("pb_pctile", None)
+                r.setdefault("ps_pctile", None)
+                rows_out.append(r)
+        except Exception:  # noqa: BLE001 结构化档损坏不阻断主表
+            pass
+
     # 双排序(单一指标事实排序,降序=压力/损伤更大)
     by_survival = sorted(
         rows_out,
@@ -585,6 +603,8 @@ def aviation_stress(db: Session = Depends(get_session)):
             "股东损伤线=连亏年数+3年净资产缩水(定增摊薄指纹=实收资本增而净资产缩)。"
             "⚠重整/大额出清类公司(海航 2021 重整)净资产基期失真:3 年变化列反映债务出清后"
             "的修复低基数,判断增发损伤读「摊薄」列(实收资本)更可靠。"
+            "IPO 申报组(长龙)数据来自招股书申报稿(审计截止 2025-12-31),与上市组最新季报"
+            "不同期,负债率参与排序但跨期对比有局限;现金短债比待招股书细项回填。"
             "估值分位=PE/PB/PS 十年分位(东财源" + (
                 ",更新至 %s" % val_date.isoformat() if val_date else ""
             ) + "):航空股按 PB 分位定价而非 PE——亏损期 PE 转负为空(三大航 PE 分位全空是常态),"
