@@ -148,9 +148,9 @@ const META = {
       { code: 'AV_JETFUEL', tag: '成本', note: '美湾航煤·36年燃油锚' },
       { code: 'AV_USDCNY', tag: '汇率', note: '美元/人民币·汇兑敞口' },
     ],
-    chart: { left: 'AV_JETFUEL', right: 'AV_PLF', title: '核心图:航煤 vs 客座率(利润剪刀差)',
-             leftName: '美湾航煤(左轴·美元/加仑)', rightName: '客座率(右轴·%)',
-             tip: '📖 民航利润弹性最大的形态=航煤降+客座率升(成本收入双击)。客座率站上 83% 且油价走低=景气上行;油价高企+客座率滑落=全行业亏损压力(2020-2024 三大航连亏的宏观土壤)。客运量增而客座率降=以价换量,量的景气没传导到价。' },
+    chart: { left: 'AV_JETFUEL', right: 'AV_PLF', tall: true, title: '核心图:航煤 vs 客座率(利润剪刀差,双频分图联动)',
+             leftName: '美湾航煤(美元/加仑)', rightName: '客座率(%)',
+             tip: '📖 双图 x 轴联动:上=航煤(周/日频),下=客座率(月度,圆点为实际值)。民航利润弹性最大的形态=航煤降+客座率升(成本收入双击)。客座率站上 83% 且油价走低=景气上行;油价高企+客座率滑落=全行业亏损压力(2020-2024 三大航连亏的宏观土壤)。客运量增而客座率降=以价换量,量的景气没传导到价。' },
   },
 }
 const meta = computed(() => META[cur.value] || META.gold)
@@ -228,13 +228,62 @@ function pickCat(c) {
 }
 
 // ---- 核心图:双轴双线(配置在 META[商品].chart) ----
+// 两条序列频率不同(民航:航煤周/日 vs 客座率月)时拆上下双 grid 分图:
+// category 轴按索引对齐,混频下月度点只落在 3% 日期上(tooltip 绝大多数位置
+// 只有高频序列值,低频线又没 symbol=「点看不见」);time 轴按时间值对齐 +
+// axisPointer link 联动,低频序列 showSymbol 把点显式画出来。同频保持单图双轴。
 function renderCore() {
   if (!coreEl.value || !echarts) return
   if (!coreChart) coreChart = echarts.init(coreEl.value)
+  // 容器高度可能因 tall 配置在切换商品后变化(init 时是旧高度),先同步画布
+  coreChart.resize()
   const cfg = meta.value.chart
   const L = byCode.value[cfg.left]
   const R = byCode.value[cfg.right]
   if (!L && !R) { coreChart.clear(); return }
+  const m = isMobile.value
+  const split = !!(L && R && L.freq !== R.freq)
+  if (split) {
+    const mkTime = (s, name, color, withSymbol) => ({
+      name, type: 'line', showSymbol: withSymbol, symbolSize: 5,
+      connectNulls: true,
+      lineStyle: { width: 1.6, color }, itemStyle: { color },
+      data: windowPoints(s).map((p) => [p[0], p[1]]),
+    })
+    const gz = { left: m ? 42 : 60, right: m ? 40 : 56 }
+    coreChart.setOption({
+      textStyle: { fontFamily: 'inherit' },
+      title: { text: cfg.title, left: 0, top: 0, textStyle: { fontSize: m ? 12 : 13 } },
+      tooltip: { trigger: 'axis', confine: true, textStyle: { fontSize: m ? 10 : 12 } },
+      legend: { top: 6, right: 0, icon: 'roundRect', itemWidth: m ? 10 : 14, itemHeight: 8,
+                textStyle: { fontSize: m ? 9.5 : 11 } },
+      axisPointer: { link: [{ xAxisIndex: 'all' }] },
+      grid: [
+        { ...gz, top: m ? 34 : 38, height: m ? '30%' : '32%' },
+        { ...gz, top: m ? '68%' : '64%', bottom: m ? 44 : 48 },
+      ],
+      xAxis: [
+        { type: 'time', gridIndex: 0, axisLabel: { show: false }, axisTick: { show: false },
+          splitLine: { show: false } },
+        { type: 'time', gridIndex: 1, axisLabel: { fontSize: m ? 8 : 10 } },
+      ],
+      yAxis: [
+        { type: 'value', scale: true, gridIndex: 0, axisLabel: { fontSize: m ? 8 : 10 },
+          splitLine: { lineStyle: { opacity: 0.35 } } },
+        { type: 'value', scale: true, gridIndex: 1, axisLabel: { fontSize: m ? 8 : 10 },
+          splitLine: { lineStyle: { opacity: 0.35 } } },
+      ],
+      dataZoom: [
+        { type: 'inside', xAxisIndex: [0, 1] },
+        { type: 'slider', xAxisIndex: [0, 1], height: m ? 14 : 16, bottom: 6 },
+      ],
+      series: [
+        { ...mkTime(L, cfg.leftName, '#c9a227', false), xAxisIndex: 0, yAxisIndex: 0 },
+        { ...mkTime(R, cfg.rightName, '#2d6cdf', true), xAxisIndex: 1, yAxisIndex: 1 },
+      ],
+    }, true)
+    return
+  }
   const dates = [...new Set([
     ...(L ? windowPoints(L).map((p) => p[0]) : []),
     ...(R ? windowPoints(R).map((p) => p[0]) : []),
@@ -242,15 +291,14 @@ function renderCore() {
   const disc = new Map(dates.map((d, i) => [d, i]))
   const mk = (s, name, color) => {
     if (!s) return null
-    const m = new Map(windowPoints(s).map((p) => [p[0], p[1]]))
+    const mm = new Map(windowPoints(s).map((p) => [p[0], p[1]]))
     return {
       name, type: 'line', showSymbol: false, connectNulls: true,
       lineStyle: { width: 1.6, color }, itemStyle: { color },
-      data: dates.map((d) => (m.has(d) ? [disc.get(d), m.get(d)] : [disc.get(d), null])),
+      data: dates.map((d) => (mm.has(d) ? [disc.get(d), mm.get(d)] : [disc.get(d), null])),
     }
   }
   const ss = [mk(L, cfg.leftName, '#c9a227'), mk(R, cfg.rightName, '#2d6cdf')].filter(Boolean)
-  const m = isMobile.value
   coreChart.setOption({
     textStyle: { fontFamily: 'inherit' },
     grid: { left: m ? 42 : 60, right: m ? 40 : 56, top: m ? 38 : 40, bottom: m ? 44 : 48 },
@@ -373,9 +421,10 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
         </div>
       </section>
 
-      <!-- 首屏:核心图 -->
+      <!-- 首屏:核心图(混频双序列自动分双图,tall 加高) -->
       <section class="card">
-        <div ref="coreEl" class="chart" :style="{ height: isMobile ? '280px' : '400px' }"></div>
+        <div ref="coreEl" class="chart"
+             :style="{ height: (meta.chart.tall ? (isMobile ? '420px' : '540px') : (isMobile ? '280px' : '400px')) }"></div>
         <p class="dim tip">{{ meta.chart.tip }}</p>
       </section>
 
