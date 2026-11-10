@@ -302,6 +302,121 @@ def heat_score(f: dict) -> float | None:
     return round(pts / ws * 100.0, 1)
 
 
+# ---- 危险度(≈随机买入后短期大幅回撤的概率),2026-11-11 ----
+# 每个信号独立加权、命中即累加封顶 95——权重全部有库内校准/课程出处,不是拍脑袋:
+# 炸板次日 -1.6%/胜率20%(sentiment 回测)、跌停日次日 -2.3~-4.7%(用户 val_c2)、
+# 断板次日低开~8%(94课)、高位连板断板=核按钮(80课)、追高=均值回归、
+# 确定雷=退市通道(排雷记分卡)、微盘闪崩带(流通<10亿)、拥挤/换手极端=退潮放大器
+DANGER_W = {
+    "dt_now": 20,        # 今日跌停
+    "zha_y": 15,         # 昨日炸板/炸板黑名单
+    "broke": 10,         # 断板(昨涨停今未再板)
+    "space_high": 25,    # 高位连板 ≥5 板(断板=核按钮)
+    "high_streak": 15,   # 连板 3~4 板
+    "chase50": 18,       # 20日涨幅 ≥50%
+    "chase30": 10,       # 20日涨幅 ≥30%
+    "chase5": 6,         # 5日涨幅 ≥20%
+    "mine3": 30,         # 排雷确定级
+    "mine2": 15,         # 排雷高危级
+    "mine1": 6,          # 排雷关注级
+    "tiny10": 10,        # 流通市值 <10 亿(微盘闪崩带)
+    "tiny15": 5,         # 流通市值 <15 亿
+    "turn98": 6,         # 换手自身分位 ≥98%(筹码极端)
+    "crowded": 5,        # 热度 ≥90(拥挤交易)
+}
+DANGER_CAP = 95.0
+
+DANGER_LABELS = {
+    "dt_now": "今日跌停",
+    "zha_y": "昨日炸板(次日-1.6%校准)",
+    "broke": "断板(次日多低开~8%)",
+    "space_high": "高位连板(断板=核按钮)",
+    "high_streak": "连板3~4板(高度断板风险)",
+    "chase50": "追高:20日+50%",
+    "chase30": "追高:20日+30%",
+    "chase5": "追高:5日+20%",
+    "mine3": "排雷确定级",
+    "mine2": "排雷高危级",
+    "mine1": "排雷关注级",
+    "tiny10": "流通<10亿闪崩带",
+    "tiny15": "流通<15亿",
+    "turn98": "换手分位≥98%",
+    "crowded": "热度拥挤≥90",
+}
+
+
+def danger_score(f: dict) -> tuple[int, list[str]]:
+    """危险度 0~95 与旗列表。入参纯量 dict,离线可测。
+
+    f: risk_level(0~3), dt_today, zha_flag, zt_yesterday, streak,
+       r5/r20, float_mcap, turn_pctile(0~1), heat
+    """
+    pts = 0
+    flags: list[str] = []
+    rl = f.get("risk_level") or 0
+    if rl >= 3:
+        pts += DANGER_W["mine3"]; flags.append("mine3")
+    elif rl == 2:
+        pts += DANGER_W["mine2"]; flags.append("mine2")
+    elif rl == 1:
+        pts += DANGER_W["mine1"]; flags.append("mine1")
+    if f.get("dt_today"):
+        pts += DANGER_W["dt_now"]; flags.append("dt_now")
+    if f.get("zha_flag"):
+        pts += DANGER_W["zha_y"]; flags.append("zha_y")
+    if f.get("zt_yesterday") and not f.get("streak"):
+        pts += DANGER_W["broke"]; flags.append("broke")
+    st = f.get("streak")
+    if st is not None:
+        if st >= 5:
+            pts += DANGER_W["space_high"]; flags.append("space_high")
+        elif st >= 3:
+            pts += DANGER_W["high_streak"]; flags.append("high_streak")
+    r20, r5 = f.get("r20"), f.get("r5")
+    if r20 is not None and r20 >= 0.5:
+        pts += DANGER_W["chase50"]; flags.append("chase50")
+    elif r20 is not None and r20 >= 0.3:
+        pts += DANGER_W["chase30"]; flags.append("chase30")
+    if r5 is not None and r5 >= 0.2:
+        pts += DANGER_W["chase5"]; flags.append("chase5")
+    fm = f.get("float_mcap")
+    if fm is not None:
+        if fm < 10e8:
+            pts += DANGER_W["tiny10"]; flags.append("tiny10")
+        elif fm < 15e8:
+            pts += DANGER_W["tiny15"]; flags.append("tiny15")
+    tp = f.get("turn_pctile")
+    if tp is not None and tp >= 0.98:
+        pts += DANGER_W["turn98"]; flags.append("turn98")
+    heat = f.get("heat")
+    if heat is not None and heat >= 90:
+        pts += DANGER_W["crowded"]; flags.append("crowded")
+    return min(pts, int(DANGER_CAP)), flags
+
+
+def spec_score(heat: float | None, danger: int) -> float | None:
+    """投机推荐分 = 热度 ×(100−危险度)/100。
+
+    乘法语义:热度是进攻(想吃到的肉),危险度是折损(吃肉路上被埋的概率)——
+    「又冷又安全」不得高分(死票),「又热又危险」被重折(雷上加热)。
+    热度判不动(None)则投机分同为 None,绝不冒 0。
+    """
+    if heat is None:
+        return None
+    return round(heat * (100 - danger) / 100.0, 1)
+
+
+def spec_band(score: float | None) -> str | None:
+    """≥65 可上手 / ≥45 观察 / 其余看戏。"""
+    if score is None:
+        return None
+    if score >= 65:
+        return "trade"
+    if score >= 45:
+        return "watch"
+    return "rest"
+
+
 def heat_band(score: float | None) -> str | None:
     if score is None:
         return None
@@ -440,6 +555,12 @@ class MicrocapItem(BaseModel):
     # 热度
     heat: float | None = None
     heat_band: str | None = None
+    # 危险度与投机推荐分(2026-11-11)
+    danger: int = 0
+    danger_flags: list[str] = []
+    danger_labels: list[str] = []
+    spec: float | None = None
+    spec_band: str | None = None
     inflow_t: float | None = None
     inflow_strength: float | None = None   # 今日净流入/流通市值
     inflow_d5: float | None = None
@@ -474,6 +595,7 @@ class OverviewOut(BaseModel):
     env: dict
     calendar: dict
     battle: dict
+    spec: dict
     heat: dict
     mine_stats: dict
 
@@ -722,6 +844,14 @@ def _load_base(db: Session, fresh: bool = False):
             "r5": r5, "r20": r20,
             "hot_concept": bool(concepts),
         })
+        # 危险度与投机推荐分
+        dflags_pre = {"risk_level": level, "dt_today": rec["code"] in dt_today,
+                      "zha_flag": rec["code"] in zha_yesterday or rec["code"] in blacklist,
+                      "zt_yesterday": zt_prev, "streak": streak,
+                      "r5": r5, "r20": r20, "float_mcap": fm,
+                      "turn_pctile": turn_pctile, "heat": hscore}
+        dscore, dflags = danger_score(dflags_pre)
+        sscore = spec_score(hscore, dscore)
         seal_strength = (seal / fm) if (seal is not None and fm) else None
         price, bs, bg = rec["price"], rec["buy_schloss"], rec["buy_graham_def"]
         _ds, _dg, disc, anchor = _discounts(price, bs, bg)
@@ -746,6 +876,9 @@ def _load_base(db: Session, fresh: bool = False):
             latest_np=rec["latest_np"],
             avg20=round(avg20, 3) if avg20 else None,
             heat=hscore, heat_band=heat_band(hscore),
+            danger=dscore, danger_flags=dflags,
+            danger_labels=[DANGER_LABELS[f] for f in dflags if f in DANGER_LABELS],
+            spec=sscore, spec_band=spec_band(sscore),
             inflow_t=inflow_t, inflow_strength=inflow_strength,
             inflow_d5=d5,
             turn_rate=rec["turn_rate"], turn_pctile=round(turn_pctile, 3) if turn_pctile is not None else None,
@@ -893,13 +1026,22 @@ def _load_base(db: Session, fresh: bool = False):
         "dt_side": {"n": dt_n, "oneword": dt_oneword, "negative_spiro": dt_oneword >= 3,
                     "level": spiro_level},
     }
+    # 投机推荐分分布与池内危险度中位
+    specs = [it.spec for it in items if it.spec is not None]
+    dangers = sorted(it.danger for it in items)
+    spec_stat = {
+        "trade": sum(1 for s in specs if s >= 65),
+        "watch": sum(1 for s in specs if 45 <= s < 65),
+        "rest": sum(1 for s in specs if s < 45),
+        "danger_median": dangers[len(dangers) // 2] if dangers else None,
+    }
     top_boards = []
     for b in boards:
         cnt = sum(1 for it in items if it.code in member_sets.get(b["name"], ()))
         top_boards.append({**b, "pool_count": cnt, "members_known": b["name"] in member_sets})
     meta = {
         "trade_date": key[0], "quote_date": key[2],
-        "env": env, "calendar": cal, "battle": battle,
+        "env": env, "calendar": cal, "battle": battle, "spec": spec_stat,
         "pools": {"micro": pool_cnt.get("micro", 0), "small": pool_cnt.get("small", 0)},
         "risk_dist": {str(k): risk_dist.get(k, 0) for k in (3, 2, 1, 0)},
         "pool_effect": {
@@ -942,7 +1084,7 @@ def _sentiment_t(db: Session, row) -> float | None:
 SORT_KEYS = {
     "heat", "inflow_t", "inflow_strength", "turn_rate", "r5", "r20", "streak",
     "market_cap", "chg_pct", "discount", "recommend", "div_yield", "risk_level",
-    "rev_line_ratio", "value", "seal_strength",
+    "rev_line_ratio", "value", "seal_strength", "spec", "danger",
 }
 
 
@@ -972,7 +1114,7 @@ def microcap_overview(db: Session = Depends(get_session)):
         trade_date=meta["trade_date"], quote_date=meta["quote_date"],
         pools=meta["pools"], risk_dist=meta["risk_dist"],
         env=env, calendar=meta["calendar"], battle=meta["battle"],
-        heat=meta["heat"], mine_stats=mine,
+        spec=meta["spec"], heat=meta["heat"], mine_stats=mine,
     )
 
 
@@ -988,7 +1130,10 @@ def microcap_board(
     zt: bool = Query(False, description="预设:只看今日涨停"),
     broke: bool = Query(False, description="预设:上一榜单日涨停、今日断板"),
     turn: bool = Query(False, description="预设:扭亏/摘帽候选(年报亏损或已ST,最新披露期转正)"),
-    sort: str = "heat",
+    tradeable: bool = Query(False, description="预设:投机分可上手档(spec≥65)"),
+    spec_band: str | None = Query(None, pattern="^(trade|watch|rest)$",
+                                  description="投机分档: trade≥65 / watch 45~65 / rest<45"),
+    sort: str = "spec",
     order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -1010,6 +1155,10 @@ def microcap_board(
         items = [it for it in items if it.zt_yesterday and it.streak is None]
     if turn:
         items = [it for it in items if it.turn_profit]
+    if tradeable:
+        items = [it for it in items if it.spec is not None and it.spec >= 65]
+    if spec_band:
+        items = [it for it in items if it.spec_band == spec_band]
     if band:
         items = [it for it in items if it.heat_band == band]
     if concept:

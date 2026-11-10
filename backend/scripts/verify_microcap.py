@@ -24,7 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.microcap import (  # noqa: E402
-    HEAT_BANDS, MICRO_CAP_MAX, SMALL_CAP_MAX, _calendar, _classify, heat_band, heat_score,
+    DANGER_CAP, HEAT_BANDS, MICRO_CAP_MAX, SMALL_CAP_MAX, _calendar, _classify,
+    danger_score, heat_band, heat_score, spec_band, spec_score,
 )
 
 PASS = FAIL = 0
@@ -144,6 +145,33 @@ def test_heat_score():
     check("band常量有序", HEAT_BANDS == ((70.0, "hot"), (50.0, "warm")))
 
 
+def test_danger_spec():
+    # 干净温票:几乎无旗
+    s, fl = danger_score({"risk_level": 0, "r5": 0.05, "r20": 0.15,
+                          "float_mcap": 30e8, "turn_pctile": 0.7, "heat": 80})
+    check("干净票danger≈0", s <= 5 and not fl, f"{s}/{fl}")
+    # 雷上加热:多旗累加封顶
+    s, fl = danger_score({"risk_level": 3, "streak": 6, "r20": 0.6, "r5": 0.25,
+                          "float_mcap": 8e8, "turn_pctile": 0.99, "heat": 95,
+                          "zha_flag": True})
+    check("雷上加热封顶95", s == int(DANGER_CAP) and len(fl) >= 6, f"{s}/{fl}")
+    check("确定雷必挂mine3", "mine3" in fl)
+    # 分级信号各自可判
+    s, fl = danger_score({"risk_level": 0, "zt_yesterday": True, "float_mcap": 25e8})
+    check("断板旗", "broke" in fl and s >= 10, f"{s}/{fl}")
+    s, fl = danger_score({"risk_level": 0, "dt_today": True, "float_mcap": 25e8})
+    check("跌停旗≥20", s >= 20 and "dt_now" in fl, f"{s}/{fl}")
+    s, fl = danger_score({"risk_level": 0, "float_mcap": 25e8, "streak": 5})
+    check("高位连板旗", "space_high" in fl and s >= 25, f"{s}/{fl}")
+    # 乘法语义
+    check("spec=heat×(100-d)/100", spec_score(90, 10) == 81.0 and spec_score(90, 60) == 36.0)
+    check("heat判不动spec=None", spec_score(None, 10) is None)
+    check("同热度危险高spec必低", spec_score(80, 40) < spec_score(80, 5))
+    check("冷而安全不冒高", spec_score(10, 0) < 45)
+    check("band三档", spec_band(70) == "trade" and spec_band(50) == "watch"
+          and spec_band(20) == "rest" and spec_band(None) is None)
+
+
 def test_calendar():
     cal = _calendar(date(2026, 11, 10), None, 0.999)
     check("11月=出清窗口", cal["state"] == "cleared")
@@ -250,6 +278,22 @@ def test_live():
     check("负螺旋口径=一字≥3", ds["negative_spiro"] == (ds["oneword"] >= 3))
     check("负螺旋分级口径", ds["level"] == (2 if ds["oneword"] >= 5 else 1 if ds["oneword"] >= 3 else 0),
           str(ds))
+    sp = ov["spec"]
+    check("投机分布字段齐", all(k in sp for k in ("trade", "watch", "rest", "danger_median")),
+          str(sp))
+    check("可上手≤观察≤看戏加总合理", sp["trade"] + sp["watch"] + sp["rest"]
+          <= ov["pools"]["micro"] + ov["pools"]["small"], str(sp))
+    sb = get("/api/microcap/board?spec_band=trade&page_size=200&sort=spec")
+    check("spec_band=trade全≥65", sb["total"] == 0
+          or all((it["spec"] or 0) >= 65 and it["spec_band"] == "trade" for it in sb["items"]))
+    dg = get("/api/microcap/board?page_size=100&sort=danger&order=desc")
+    dgs = [it["danger"] for it in dg["items"] if it["spec"] is not None]
+    check("危险度降序单调", dgs == sorted(dgs, reverse=True))
+    sps = [it["spec"] for it in get("/api/microcap/board?page_size=100&sort=spec&order=desc")["items"]
+           if it["spec"] is not None]
+    check("投机分降序单调", sps == sorted(sps, reverse=True))
+    ok3 = all((it["danger"] >= 30) for it in dg["items"] if it["risk_level"] == 3)
+    check("确定级危险度≥30", ok3, str([(i['name'], i['danger']) for i in dg['items'] if i['risk_level'] == 3][:3]))
     lad2 = ov["battle"]["ladder"]
     trail = lad2.get("trail") or []
     check("高度轨迹≤15且界内", len(trail) <= 15 and all(isinstance(h, int) and h >= 0 for h in trail),
@@ -262,6 +306,7 @@ if __name__ == "__main__":
     test_classify_levels()
     test_classify_exemption()
     test_heat_score()
+    test_danger_spec()
     test_calendar()
     if "--live" in sys.argv:
         test_live()

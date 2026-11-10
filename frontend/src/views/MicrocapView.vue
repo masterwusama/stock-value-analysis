@@ -22,11 +22,12 @@ const error = ref('')
 const pool = ref('')          // ''=两池 / micro / small
 const band = ref('')          // ''=全部 / hot / warm / cool
 const risk = ref('')          // ''=全部 / 3 / 2 / 1 / 0
-const preset = ref('')        // ''=无 / zt 今日涨停 / broke 断板观察 / turn 扭亏摘帽候
+const preset = ref('')        // ''=无 / zt 今日涨停 / broke 断板观察 / turn 扭亏摘帽候 / trade 可上手
+const specBand = ref('')      // ''=全部 / trade / watch / rest 投机分档
 const concept = ref('')
 const industry = ref('')
 const keyword = ref('')
-const sort = ref('heat')
+const sort = ref('spec')
 const order = ref('desc')
 const page = ref(1)
 const PAGE_SIZE = 50
@@ -50,6 +51,8 @@ const RISK_TABS = [
   { key: '0', label: '🟢 安全', cls: 'r0' },
 ]
 const SORTS = [
+  { key: 'spec', label: '投机分' },
+  { key: 'danger', label: '危险度' },
   { key: 'heat', label: '热度' },
   { key: 'inflow_t', label: '主力净流入' },
   { key: 'streak', label: '连板' },
@@ -82,6 +85,8 @@ async function loadBoard() {
       zt: preset.value === 'zt' || undefined,
       broke: preset.value === 'broke' || undefined,
       turn: preset.value === 'turn' || undefined,
+      tradeable: preset.value === 'trade' || undefined,
+      spec_band: specBand.value || undefined,
       industry: industry.value || undefined, keyword: keyword.value || undefined,
       sort: sort.value, order: order.value, page: page.value, page_size: PAGE_SIZE,
     })
@@ -120,9 +125,9 @@ function setPreset(p) {
 function syncHash() {
   const q = new URLSearchParams()
   for (const [k, v] of [['pool', pool.value], ['band', band.value], ['risk', risk.value],
-    ['preset', preset.value], ['concept', concept.value], ['industry', industry.value],
-    ['kw', keyword.value], ['sort', sort.value], ['order', order.value],
-    ['page', page.value > 1 ? page.value : '']]) {
+    ['preset', preset.value], ['sb', specBand.value], ['concept', concept.value],
+    ['industry', industry.value], ['kw', keyword.value], ['sort', sort.value],
+    ['order', order.value], ['page', page.value > 1 ? page.value : '']]) {
     if (v !== '' && v != null) q.set(k, v)
   }
   const qs = q.toString()
@@ -194,6 +199,7 @@ onMounted(async () => {
   if (q.get('band')) band.value = q.get('band')
   if (q.get('risk')) risk.value = q.get('risk')
   if (q.get('preset')) preset.value = q.get('preset')
+  if (q.get('sb')) specBand.value = q.get('sb')
   if (q.get('concept')) concept.value = q.get('concept')
   if (q.get('industry')) industry.value = q.get('industry')
   if (q.get('kw')) keyword.value = q.get('kw')
@@ -265,6 +271,17 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           <button class="chip c-all" :class="{ on: risk === '' }" @click="setFilter(() => risk = '')">
             全部 <b>{{ overview.pools.micro + overview.pools.small }}</b>
           </button>
+          <span class="spec-sep"></span>
+          <button class="chip c-spec1" :class="{ on: specBand === 'trade' }" title="投机推荐分≥65(热度×(100−危险度)/100)" @click="setFilter(() => specBand = specBand === 'trade' ? '' : 'trade')">
+            🎯 可上手 <b>{{ overview.spec?.trade ?? '—' }}</b>
+          </button>
+          <button class="chip c-spec2" :class="{ on: specBand === 'watch' }" title="投机推荐分 45~65" @click="setFilter(() => specBand = specBand === 'watch' ? '' : 'watch')">
+            观察 <b>{{ overview.spec?.watch ?? '—' }}</b>
+          </button>
+          <span class="spec-sep"></span>
+          <span class="chip c-dgr" :title="`池内危险度中位数(≈随机买入一只短期大幅回撤的概率);分值口径见底部说明`">
+            池内危险度中位 <b>{{ overview.spec?.danger_median ?? '—' }}</b>
+          </span>
         </div>
       </div>
 
@@ -363,6 +380,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           <button class="chip" :class="{ on: preset === 'zt' }" title="今日涨停池内的票(含晋级),打板/接力视角" @click="setPreset('zt')">今日涨停</button>
           <button class="chip" :class="{ on: preset === 'broke' }" title="昨日涨停今日未再板——94课口径:2板封不死,次日正股多低开~8%;强承接低吸 or 出货规避,看当日涨幅分辨" @click="setPreset('broke')">断板观察</button>
           <button class="chip" :class="{ on: preset === 'turn' }" title="年报亏损或已ST,最新披露期净利润转正——ST即摘帽博弈候选,非ST即困境反转候选(业绩面信号,非交易所认定)" @click="setPreset('turn')">扭亏/摘帽候</button>
+          <button class="chip" :class="{ on: preset === 'trade' }" title="投机推荐分≥65:热度×(100−危险度)/100,热度够且短期回撤折损小——进攻首选档" @click="setPreset('trade')">可上手</button>
           <button v-if="preset" class="chip" @click="setPreset(preset)">清除</button>
         </div>
         <div class="toolbar">
@@ -393,6 +411,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             <tr>
               <th class="l stick">标的</th>
               <th title="排雷记分卡:确定/高危/关注/安全,悬浮看旗子与年报财务">排雷</th>
+              <th :class="{ on: sort === 'spec' }" title="投机推荐分=热度×(100−危险度)/100;≥65可上手,45~65观察,<45看戏。危险度≈随机买入短期大幅回撤的概率" @click="setSortToggle('spec')">投机{{ sort === 'spec' ? (order === 'desc' ? '↓' : '↑') : '' }}</th>
               <th :class="{ on: sort === 'heat' }" @click="setSortToggle('heat')">热度{{ sort === 'heat' ? (order === 'desc' ? '↓' : '↑') : '' }}</th>
               <th class="l" title="今日涨停生态:连板数/封单资金;近5日涨停次数;炸板警示(实测次日-1.6%)">涨停生态</th>
               <th :class="{ on: sort === 'inflow_t' }" title="今日主力净流入(额/占流通市值)" @click="setSortToggle('inflow_t')">主力净流入{{ sort === 'inflow_t' ? (order === 'desc' ? '↓' : '↑') : '' }}</th>
@@ -422,6 +441,13 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
                 </div>
               </td>
               <td><span class="risk-badge" :class="RISK_META[s.risk_level].cls" :title="riskTitle(s)">{{ RISK_META[s.risk_level].label }}</span></td>
+              <td>
+                <div class="spec-cell">
+                  <b :class="s.spec >= 65 ? 'spec-hi' : s.spec == null ? 'flat' : ''">{{ s.spec?.toFixed(0) ?? '—' }}</b>
+                  <em class="dgr" :class="s.danger >= 45 ? 'dgr-hi' : s.danger >= 25 ? 'dgr-mid' : 'dgr-lo'"
+                    :title="(s.danger_labels || []).join(' · ') || '无危险旗'">险{{ s.danger }}</em>
+                </div>
+              </td>
               <td>
                 <div class="heat-cell">
                   <b :class="s.heat >= 70 ? 'zt-hot' : ''">{{ s.heat?.toFixed(0) ?? '—' }}</b>
@@ -464,7 +490,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
               <b>{{ s.name }}</b><span class="cd">{{ s.code }}</span>
               <span v-if="s.turn_profit" class="turn-badge">扭亏🔥</span>
               <span class="risk-badge" :class="RISK_META[s.risk_level].cls">{{ RISK_META[s.risk_level].label }}</span>
-              <span class="m-pick">{{ s.heat?.toFixed(0) ?? '—' }}热</span>
+              <span class="m-pick">{{ s.spec?.toFixed(0) ?? '—' }}投 <i class="m-dgr">险{{ s.danger }}</i></span>
             </div>
             <div class="m-row2">
               <span v-if="ztTxt(s)" :class="ztClass(s)">{{ ztTxt(s) }}</span>
@@ -503,7 +529,12 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
         </p>
         <p>
           <b>池子</b>:总市值切档,微盘&lt;25 亿、小票 25~60 亿;排北交所、剔上市不满 1 年次新。
-          <b>热度分</b>(0~100)只是排序器:主力净流入强度(今日/流通市值 0~30、5日 0~15)、
+          <b>投机推荐分 = 热度 ×(100−危险度)/100</b>(≥65 可上手🎯 / 45~65 观察 / &lt;45 看戏):
+          热度是进攻(想吃到的肉),危险度是折损(吃肉路上被埋的概率)——「又冷又安全」不得高分,
+          「又热又危险」被重折。危险度(0~95,≈随机买入一只短期大幅回撤的概率)=今日跌停20/
+          昨日炸板15(实测次日-1.6%)/断板10(次日多低开~8%)/高位连板≥5板25/追高(20日+50%→18)/
+          排雷级3·2·1→30·15·6/流通&lt;10亿闪崩10/换手分位98%+6/热度拥挤5,全部命中累加封顶;
+          每股的危险旗悬浮在「险」字上。<b>热度分</b>(0~100)只是排序器:主力净流入强度(今日/流通市值 0~30、5日 0~15)、
           换手自身分位 0~15、连板数 0~20、5日/20日动量各 0~10、热门概念 +10;
           缺数因子按可用权重归一,资金流源未更新时分数只含行情因子(不冒 0)。
         </p>
@@ -551,7 +582,18 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .zt-hot { color: #c0392b; font-weight: 600; }
 .marg-pos { color: #c0392b; font-weight: 600; }
 .flow-warn { background: #fff7e6; color: #8a6d1a; border: 1px solid #f0dcb0; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; }
-.stat-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+.stat-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.spec-sep { width: 1px; height: 18px; background: #dfe3e9; margin: 0 2px; }
+.chip.c-spec1.on { background: #f4eefd; border-color: #b9a3e8; color: #6c3fc5; font-weight: 600; }
+.chip.c-spec2.on { background: #eef7fa; border-color: #a3cbe8; color: #2a6fa8; font-weight: 600; }
+.chip.c-dgr { background: #f7f8fa; color: #5a6472; cursor: default; }
+.spec-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.spec-hi { color: #6c3fc5; }
+.dgr { font-style: normal; font-size: 10.5px; border-radius: 3px; padding: 0 4px; }
+.dgr-lo { color: #1e7e34; background: #edf7ee; }
+.dgr-mid { color: #b8860b; background: #fff7e6; }
+.dgr-hi { color: #a93226; background: #fdeeee; font-weight: 600; }
+.m-dgr { font-style: normal; font-size: 11px; color: #8a94a6; }
 .chip { border: 1px solid #dfe3e9; background: #fff; border-radius: 999px; padding: 5px 12px; font-size: 13px; cursor: pointer; color: #5a6472; }
 .chip.on { font-weight: 600; }
 .chip.c-r3.on { background: #fdeeee; border-color: #e4a3a3; color: #a93226; }
