@@ -1,6 +1,6 @@
 <script setup>
 // 掘金台:全库 A股/港股的「值得买」决策看板。
-// 数据 /api/pick/stars(强推+统计+情绪) /cloud(散点) /board(清单),三者共享
+// 数据 /api/pick/stars(统计+情绪;其强推名单卡片已于 2026-11-10 下线,地图与清单承接) /cloud(散点) /board(清单),三者共享
 // 后端进程内缓存,并发拉取无额外成本。口径详见页面底部说明与 app/api/pick.py 头注。
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
@@ -12,7 +12,6 @@ const router = useRouter()
 
 const meta = ref(null)
 const stats = ref(null)
-const stars = ref([])
 const cloud = ref([])
 const board = ref({ total: 0, items: [] })
 const industries = ref([])
@@ -99,13 +98,13 @@ async function loadBoard() {
     if (seq === boardSeq) boardLoading.value = false
   }
 }
+// /pick/stars 仍提供全页统计 chips 与底部图例的数据(强推卡片已下线,不再消费其 stars 列表)
 async function loadStars() {
   const d = await get('/pick/stars', {
-    limit: 12, market: market.value, ex_industry: exIndustries.value.join(','),
+    market: market.value, ex_industry: exIndustries.value.join(','),
   })
   meta.value = d.meta
   stats.value = d.stats
-  stars.value = d.stars
 }
 async function loadCloud() {
   cloud.value = await get('/pick/cloud', { market: market.value, ex_industry: exIndustries.value.join(',') })
@@ -116,7 +115,7 @@ async function loadIndustries() {
   const indRes = await get('/securities/industries', { market: market.value || undefined }).catch(() => [])
   industries.value = (Array.isArray(indRes) ? indRes : []).map((i) => i.industry).filter(Boolean)
 }
-// 市场切换:全页联动(统计 chips / 强推卡 / 散点 / 行业字典 / 清单),hash 同步
+// 市场切换:全页联动(统计 chips / 散点 / 行业字典 / 清单),hash 同步
 async function setMarket(m) {
   if (market.value === m) return
   market.value = m
@@ -137,7 +136,7 @@ function syncHash() {
   const qs = q.toString()
   history.replaceState(null, '', `#/pick${qs ? '?' + qs : ''}`)
 }
-// 排除行业变更:统计/强推卡/散点/清单全页联动
+// 排除行业变更:统计/散点/清单全页联动
 async function applyEx() {
   page.value = 1
   syncHash()
@@ -362,40 +361,6 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <!-- ── 强推卡片区 ── -->
-      <div v-if="stars.length" class="stars-sec">
-        <div class="sec-title">★ 强推名单 <span class="sec-sub">入手分前列 · 安全边际 / PB 分位 / 股息至少一项过硬 · 点击卡片看详情</span></div>
-        <div class="stars-grid">
-          <div v-for="s in stars" :key="s.sid" class="pick-card" @click="router.push(`/stock/${s.code}`)">
-            <div class="pc-head">
-              <span class="pc-name">{{ s.name }}</span>
-              <router-link v-if="s.research" :to="'/research/' + s.research.slug" class="rs-flag"
-                :title="s.research.title + '(结论:' + s.research.conclusion + ')'" @click.stop>研</router-link>
-              <span class="pc-code">{{ s.code }}</span>
-              <span class="badge">{{ s.market === 'HK' ? '港股' : 'A股' }}</span>
-            </div>
-            <div class="pc-score-row">
-              <span class="pc-pick">{{ Math.round(s.pick) }}</span>
-              <span class="pc-pick-label">入手分</span>
-              <span class="pc-price">
-                <b>{{ s.price?.toFixed(2) }}</b>
-                <span :class="s.change_pct >= 0 ? 'up' : 'down'">{{ s.change_pct == null ? '' : (s.change_pct * 100).toFixed(2) + '%' }}</span>
-              </span>
-              <span class="tier-badge" :class="TIER_META[s.tier].cls">{{ TIER_META[s.tier].label }}</span>
-            </div>
-            <div class="pc-metrics">
-              <div class="pm"><i>安全边际</i><b :class="s.discount < -0.01 ? 'marg-pos' : 'flat'">{{ s.discount == null ? '—' : pctText(s.discount) }}</b></div>
-              <div class="pm"><i>PB十年分位</i><b>{{ s.pb_pctile == null ? '—' : s.pb_pctile.toFixed(0) + '%' }}</b></div>
-              <div class="pm"><i>股息率</i><b>{{ fmtPct(s.div_yield) }}</b></div>
-              <div class="pm"><i>推荐分R</i><b>{{ s.recommend?.toFixed(0) ?? '—' }}<span v-if="gateHasTrap(s)" class="risk-flag" title="价值陷阱标注线命中：R 照打，陷阱风险见风险旗">⚠陷阱</span></b></div>
-            </div>
-            <div class="pc-reasons" :title="s.reasons.join(' · ')">{{ s.reasons.slice(0, 3).join(' · ') }}</div>
-            <div v-if="s.risks.length" class="pc-risks"><span v-for="r in s.risks" :key="r" class="risk-flag">{{ r }}</span></div>
-          </div>
-        </div>
-      </div>
-      <div v-else class="card wip">当前无强推标的(市场整体偏贵时会自动收缩)</div>
-
       <!-- ── 散点云 ── -->
       <div class="card cloud-card">
         <div class="sec-title">估值-评分地图 <span class="sec-sub">越靠右安全边际越深,越靠上越值得买 · 红点=强推 蓝点=值得买 灰点=观察 · 点点跳详情</span></div>
@@ -595,34 +560,13 @@ onBeforeUnmount(() => {
 
 .sec-title { font-weight: 700; margin-bottom: 10px; font-size: 15px; }
 .sec-sub { font-weight: 400; font-size: 12px; color: var(--sub); margin-left: 8px; }
-.stars-sec { margin-bottom: 14px; }
-.stars-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 10px; }
-.pick-card {
-  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
-  padding: 12px 14px; cursor: pointer; transition: box-shadow 0.15s, transform 0.15s;
-  box-shadow: var(--shadow-s, 0 1px 2px rgba(20, 30, 55, 0.05));
-}
-.pick-card:hover { box-shadow: var(--shadow-m, 0 2px 10px rgba(20, 30, 55, 0.07)); transform: translateY(-1px); }
-.pc-head { display: flex; align-items: center; gap: 6px; }
-.pc-name { font-size: 15px; font-weight: 700; }
-.pc-code { color: var(--sub); font-size: 12px; margin-left: auto; }
-.pc-score-row { display: flex; align-items: baseline; gap: 6px; margin: 6px 0 4px; }
-.pc-pick { font-size: 30px; font-weight: 800; color: #c0392b; line-height: 1; }
-.pc-pick-label { color: var(--sub); font-size: 12px; }
-.pc-price { margin-left: 10px; font-size: 13px; display: flex; gap: 6px; align-items: baseline; }
 .tier-badge { font-size: 11px; padding: 1px 8px; border-radius: 10px; margin-left: auto; white-space: nowrap; }
 .t-strong { background: #fdeeee; color: #c0392b; font-weight: 700; }
 .t-buy { background: #e8f0fe; color: #2d6cdf; font-weight: 700; }
 .t-watch { background: #f0f2f5; color: #6b7686; }
 .t-na { background: #f7f8fa; color: #b0b6c0; }
 .t-avoid { background: #ececec; color: #8a94a6; }
-.pc-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 8px 0; }
-.pm { text-align: center; background: #f7f9fc; border-radius: 6px; padding: 4px 2px; }
-.pm i { display: block; font-style: normal; font-size: 10px; color: var(--sub); }
-.pm b { font-size: 13px; }
 .marg-pos { color: #2d6cdf; font-weight: 600; }
-.pc-reasons { font-size: 12px; color: var(--txt); opacity: 0.85; line-height: 1.5; }
-.pc-risks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 .risk-flag { font-size: 10px; padding: 0 6px; border-radius: 8px; background: #fdf6e7; color: #b7791f; border: 1px solid #f0e0bb; white-space: nowrap; }
 
 .cloud-card { margin-bottom: 14px; }
@@ -661,12 +605,9 @@ onBeforeUnmount(() => {
 .note-fine { opacity: 0.75; }
 
 @media (max-width: 600px) {
-  .stars-grid { grid-template-columns: 1fr; }
   .cloud-chart { height: 260px; }
-  .pc-metrics { grid-template-columns: repeat(4, 1fr); gap: 3px; }
-  .pc-pick { font-size: 26px; }
   .head-title { font-size: 17px; }
-  /* 统计 chips 单行横滑：折成两行会与「强推名单」标题挤在一起 */
+  /* 统计 chips 单行横滑:折行会顶高头部 */
   .stat-chips {
     flex-wrap: nowrap;
     overflow-x: auto;
