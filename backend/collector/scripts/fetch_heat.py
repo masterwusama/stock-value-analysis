@@ -173,6 +173,36 @@ def fetch_members(board_names: list, members: dict) -> tuple:
     return members, missing
 
 
+def _ship(fresh_files: list) -> None:
+    """采集成功后把工件推到服务端(cloud VM):云端 IP 段被东财 push2 集群 TCP 层
+    拉黑(2026-11-10 实测,含全部数字镜像;datacenter-web/push2ex/gtimg 不受影响),
+    资金流排行只能由可达侧采集。云端 16:45 的自跑因此退化为兜底(失败不写 latest,
+    不会覆盖这里推过去的真数据)。目标可用 VA_HEAT_SHIP_TARGET 覆盖;推送失败只
+    打日志不失败 job——采集成功≠分发必须成功,latest 停旧时 API 有降级横幅。"""
+    import shutil
+    import subprocess
+
+    target = os.environ.get(
+        "VA_HEAT_SHIP_TARGET",
+        "ubuntu@100.65.58.108:/opt/stock-value-analysis/backend/collector/data/heat/",
+    )
+    if not shutil.which("scp"):
+        print("[heat] 无 scp,跳过 ship", flush=True)
+        return
+    found = [str(p) for p in fresh_files if Path(p).exists()]
+    if not found:
+        return
+    try:
+        r = subprocess.run(["scp", "-o", "ConnectTimeout=10", *found, target],
+                           capture_output=True, text=True, timeout=120)
+        if r.returncode == 0:
+            print(f"[heat] ship → {target} ({len(found)} 件)", flush=True)
+        else:
+            print(f"[heat] ship 失败: {r.stderr.strip()[:200]}", flush=True)
+    except Exception as e:  # noqa: BLE001 分发失败不影响采集本身
+        print(f"[heat] ship 异常: {e}", flush=True)
+
+
 def cleanup_snapshots():
     """快照滚动清理:flow_/boards_ 各只留近 KEEP_DAYS 个文件(members/latest 永存)。"""
     for prefix in ("flow_", "boards_"):
@@ -219,6 +249,7 @@ def main():
         _atomic_write(OUT / "latest.json", json.dumps({**latest, "missing_members": missing,
                                                        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds")},
                                                       ensure_ascii=False))
+        _ship([OUT / "members.json", OUT / "latest.json"])
         print(f"[heat] {date_iso} 成分补拉完成,仍缺{len(missing)}板", flush=True)
         return 0
 
@@ -241,13 +272,22 @@ def main():
         members, missing = fetch_members([b["name"] for b in boards], members)
         _atomic_write(OUT / "members.json", json.dumps(members, ensure_ascii=False))
 
-    _atomic_write(OUT / "latest.json", json.dumps({
-        "date": date_iso,
-        "flow": bool(flow),
-        "boards": bool(boards),
-        "missing_members": missing,
-        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-    }, ensure_ascii=False))
+    if flow or boards:
+        _atomic_write(OUT / "latest.json", json.dumps({
+            "date": date_iso,
+            "flow": bool(flow),
+            "boards": bool(boards),
+            "missing_members": missing,
+            "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }, ensure_ascii=False))
+    else:
+        # 全失败不落 latest:保留现有(可能是 ship 推来的)状态,不然云端自跑一次
+        # 失败就会把推过来的真数据盖成「源未更新」
+        print(f"[heat] {date_iso} 全部拉取失败,不覆盖 latest.json", flush=True)
+
+    fresh = [p for p in (flow_path, boards_path) if p.exists()]
+    if fresh:
+        _ship([*fresh, OUT / "members.json", OUT / "latest.json"])
     cleanup_snapshots()
     print(f"[heat] {date_iso} 完成:资金流{'✓' if flow else '✗'} "
           f"板块{'✓' if boards else '✗'} 成分缺{len(missing)}板", flush=True)

@@ -64,6 +64,45 @@ def run_job(name: str):
     print(f"[scheduler] {name} 退出码 {r.returncode}", flush=True)
 
 
+def _sweep_zombie_runs():
+    """清扫僵尸 running 行:运维重启会把采集子进程连带杀死(本机 stop.ps1 清进程、
+    云端 systemctl restart 杀 cgroup——2026-11-10 两侧各留过一条永远转圈的 running:
+    本地 agro 晚场被 api 重启杀、云端 valuation 跑到 97% 被手工 restart 杀),
+    run.py 只在自己结尾改状态,进程死后没人收尸,etl_job_log 就停在 running 说谎。
+    凡 running 且超过该 job 挂死护栏(SCRIPT_TIMEOUT,缺省 2h)+10 分钟宽限的行
+    一律判死留痕;护栏内的 running 不动——它可能是并发中的手动跑。启动即扫一次,
+    之后每小时扫,僵尸存活上限≈护栏+1小时。"""
+    sys.path.insert(0, str(BACKEND))
+    from sqlalchemy import select
+
+    from app.db import SessionLocal
+    from app.models import EtlJobLog
+
+    from collector.run import SCRIPT_TIMEOUT
+
+    db = SessionLocal()
+    try:
+        now = datetime.now()
+        killed = 0
+        for log in db.execute(
+            select(EtlJobLog).where(EtlJobLog.status == "running")
+        ).scalars():
+            limit = SCRIPT_TIMEOUT.get(log.job_name, 2 * 3600) + 600
+            if log.started_at and (now - log.started_at).total_seconds() > limit:
+                log.status = "failed"
+                log.finished_at = now
+                log.message = (f"调度器清扫:上一任进程被重启连杀,行残留 running 超 "
+                               f"{log.job_name} 挂死护栏 {limit // 60} 分钟,判死")
+                killed += 1
+        db.commit()
+        if killed:
+            print(f"[scheduler] 僵尸清扫:判死 {killed} 条残留 running 行", flush=True)
+    except Exception as e:  # noqa: BLE001 清扫失败不影响调度本体
+        print(f"[scheduler] 僵尸清扫失败(下次再试): {e}", flush=True)
+    finally:
+        db.close()
+
+
 def main():
     # misfire_grace_time 默认只有 1 秒:机器休眠/进程被卡超 1 秒,本轮触发就被静默丢弃。
     # 对本链「晚跑」永远优于「不跑」——宽限 1 小时,同一 job 错过多次只补跑一次(coalesce)。
@@ -136,11 +175,15 @@ def main():
     # 覆盖不了跨点宕机;etf 便宜且不碰 .fetch.lock,适合自动补)
     s.add_job(run_job, "cron", args=["etf-heal"], day_of_week="mon-fri",
               hour="18-23", minute="3,33", id="etf-heal")
+    # 僵尸 running 行清扫:启动即扫一次,之后每小时扫(见 _sweep_zombie_runs 头注)
+    s.add_job(_sweep_zombie_runs, "interval", hours=1,
+              next_run_time=datetime.now(), id="zombie-sweep")
     print("[scheduler] 已注册: stock(周一~六 16:05/22:05 估值快照) "
           "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农化制品,不碰 Wind) "
           "valuation(每天 03:35 估值分位,免费源刷全 A) "
           "sentiment(交易日 16:30 情绪日报) heat(交易日 16:45 资金热度/概念题材) case(周日 10:05 立案/处罚公告) "
           "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
+          "zombie-sweep(启动+每小时 清扫僵尸 running 行) "
           "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报) aviation(每天 07:35 民航日度组) aviation-monthly(每月 12/15 日 07:45 民航月度组)。"
           "Ctrl+C 退出",
           flush=True)

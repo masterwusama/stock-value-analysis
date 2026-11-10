@@ -184,7 +184,8 @@ onMounted(async () => {
     loading.value = false
   }
 })
-const isMobile = ref(false)
+// 初值必须当场求值:只挂 change 监听的话,移动端直接加载(从不缩放)会永远渲染桌面表格
+const isMobile = ref(window.matchMedia(MOBILE_QUERY).matches)
 onBeforeUnmount(() => { clearTimeout(kwTimer) })
 </script>
 
@@ -465,4 +466,64 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .m-pick { margin-left: auto; font-weight: 600; color: #5a6472; }
 .m-row2 { display: flex; gap: 12px; font-size: 12px; margin-top: 4px; color: #5a6472; }
 .m-row3 { margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* —— 移动端(600px 断点,与全站一致):横滑条防折行堆叠 ——
+   概念面板 15 板若一板一行会把正文顶出三屏,是最优先要收的一块 */
+@media (max-width: 600px) {
+  .head-title { font-size: 17px; }
+  .head-row { gap: 8px; }
+  /* 环境行:五个指标一条横滑,不折行 */
+  .env-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+    margin-inline: -11px;
+    padding-inline: 11px;
+  }
+  .env-row::-webkit-scrollbar { display: none; }
+  .env-item { flex: none; white-space: nowrap; }
+  /* 风险分布 chips 单行横滑 */
+  .stat-chips {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+    margin-inline: -11px;
+    padding-inline: 11px;
+  }
+  .stat-chips::-webkit-scrollbar { display: none; }
+  .stat-chips .chip { flex: none; padding: 5px 12px; min-height: 34px; }
+  /* 概念面板单行横滑;窄条里去涨幅列(悬浮有全量),副标题藏起不占两行 */
+  .concept-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+    margin-inline: -11px;
+    padding-inline: 11px;
+  }
+  .concept-row::-webkit-scrollbar { display: none; }
+  .concept-chip { flex: none; padding: 6px 9px; }
+  .concept-chip .cc-chg { display: none; }
+  .concept-card .sec-sub { display: none; }
+  /* 工具条:两组 tab 各自整行横滑,下拉与搜索分享一行 */
+  .list-card .toolbar { gap: 8px; }
+  .list-card .toolbar .tabs {
+    flex: 1 1 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .list-card .toolbar .tabs::-webkit-scrollbar { display: none; }
+  .list-card .toolbar .tabs .tab { flex: none; white-space: nowrap; }
+  .list-card .toolbar .sel { flex: 1 1 auto; min-width: 0; min-height: 34px; }
+  .list-card .toolbar input { flex: 1 1 120px; min-width: 0; min-height: 34px; }
+  /* 已筛概念条不满宽 */
+  .concept-active { max-width: 100%; }
+}
 </style>
