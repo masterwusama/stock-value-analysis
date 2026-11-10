@@ -125,6 +125,44 @@ RISK_LABELS = {
 _PREMIUM_LOCAL = {"极强": "+3.6%(胜率73%)", "普通": "+2.5%(67%)",
                   "回暖": "+2.0%(60%)", "极弱": "+2.2%(63%)"}
 
+# ---- 年历层(出处:桃子课 117-121「A股一年三阶段行情规律」,2018-2024 年复一复现; ----
+#      用户 _quant/val_b_monthly 以国证2000 2019-2026 独立复核)。12 个月的大环境=情绪
+#      =氛围各不相同:「2 5 11 月玩大票(容量),其余玩小票;做反=极强全错过、长征全赶上」。
+#      small_ok: True=小票进攻月(本模块的主场) / False=防守月(降仓/看戏) / None=只做主线核心
+MONTH_REGIME = {
+    1:  ("极弱", "1月底易血崩(7次崩6次)·极弱激活5-10倍弹性·防守月,雷暴中", False),
+    2:  ("极强", "业绩真空期=全年最宽松·7次反弹7次(毛+37.5%)·小票主升", True),
+    3:  ("大震", "继承2月弹性+政治事件多·先暴跌后暴涨·月后10天神奇回正·波动大勿追", None),
+    4:  ("极弱", "4/20 后年报雷(6年崩6次)·与雷暴日历互证·防守月", False),
+    5:  ("极强", "仅次于2月·题材猛·雷暴出清后的主升", True),
+    6:  ("长征初", "指数还有活力·大概率收小红·只主线核心", None),
+    7:  ("长征", "要史诗级题材才救红(如20年7月券商)·只主线", False),
+    8:  ("长征", "资金疲劳·基本跌·看成交额水量(≈6000亿=不够)", False),
+    9:  ("长征末", "全年最差·资金疲劳顶点·低吸铁死月", False),
+    10: ("极弱", "资金疲劳+三季报雷·防守月·长征终点前最黑", False),
+    11: ("极强", "长征后的极强·出清窗口=小票主升·本模块主场", True),
+    12: ("博弈", "6次崩5次·低位大阴线次日恐慌点低吸·只能博弈的思路", None),
+}
+
+# ---- 红盘率分布校准(出处:桃子课 111-120 s19「中证2000涨跌幅→全A红盘率」正态分布表; ----
+#      小盘剔除银行等高股息~10%常年红的干扰后更极端:-2% 时小盘赚钱率实际≈0)。用池内中位
+#      涨幅作「平均股价」代理(等权口径),对照当日实际红盘率→偏离即分布异常日
+_RED_RATE_CURVE = ((-3.0, 0.03), (-2.0, 0.10), (-1.0, 0.20), (-0.25, 0.40),
+                   (0.25, 0.60), (1.0, 0.80), (2.0, 0.90), (3.0, 0.95))
+
+
+def _red_rate_expect(median_chg_pct: float | None) -> float | None:
+    """池内中位涨幅(%) → 分布预期红盘率(0~1),课程校准表线性插值。"""
+    if median_chg_pct is None:
+        return None
+    pts = _RED_RATE_CURVE
+    if median_chg_pct <= pts[0][0]:
+        return pts[0][1]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if median_chg_pct <= x1:
+            return y0 + (y1 - y0) * (median_chg_pct - x0) / (x1 - x0)
+    return pts[-1][1]
+
 
 # ---------------------------------------------------------------------------
 # 纯函数:排雷分级与热度打分(离线可测,verify_microcap.py 的不变量落在这里)
@@ -756,6 +794,19 @@ def _load_base(db: Session, fresh: bool = False):
         ladder_max = max(ladder_max, lv)
     ladder = {"max": ladder_max, "total": sum(ladder_dist.values()),
               "dist": {str(k): ladder_dist[k] for k in sorted(ladder_dist, reverse=True)}}
+    # 跌停侧(大A大B 负螺旋监控,出处:桃子课 39「业绩雷引发大跌」+120 案例复盘:
+    # 一字跌停梯队带全体补跌=负螺旋;一字梯队打开=正螺旋反弹起点)
+    dt_rows = list(dt_snaps[0][1].values()) if dt_snaps and dt_snaps[0][0] == qd_compact else []
+    dt_n = len(dt_rows)
+    dt_oneword = 0
+    for r in dt_rows:
+        try:
+            if abs(float(r.get("涨跌幅") or 0)) >= 9.8:
+                dt_oneword += 1
+        except (TypeError, ValueError):
+            pass
+    # 负螺旋预警:一字跌停 ≥3 家(10A 一字梯队开始带 5000B 补跌的量级)
+    negative_spiro = dt_oneword >= 3
 
     # ---- meta:环境/日历/分布/热榜 ----
     sent = db.execute(
@@ -787,18 +838,27 @@ def _load_base(db: Session, fresh: bool = False):
         cal = _calendar(today, None, _progress(cal.get("last_period")))
     risk_dist = Counter(it.risk_level for it in items)
     pool_cnt = Counter(it.pool for it in items)
-    chgs = [it.chg_pct for it in items if it.chg_pct is not None]
     pool_zt = sum(1 for it in items if it.streak)
     # 打法提示:当日 daily.json 新鲜则用采集侧落盘的 premium_hint/trap,
     # 否则退 _PREMIUM_LOCAL 按最新状态查表(字典与 fetch_sentiment 同源)
+    chgs = [it.chg_pct for it in items if it.chg_pct is not None]
     daily_fresh = daily_json.get("date") == (qd_max.isoformat() if qd_max else "")
     premium_hint = (daily_json.get("premium_hint") if daily_fresh else None) \
         or _PREMIUM_LOCAL.get(env.get("state") or "")
+    # 分布校准:池内中位涨幅=「平均股价」代理 → 课程红盘率分布预期 vs 实际红盘率
+    median_chg = round(sorted(chgs)[len(chgs) // 2], 2) if chgs else None
+    regime_label, regime_advice, small_ok = MONTH_REGIME[today.month]
     battle = {
         "premium_hint": premium_hint,
         "trap": bool(daily_json.get("trap")) if daily_fresh else False,
         "zt_yd": zt_yd_perf,
         "ladder": ladder,
+        "regime": {"month": today.month, "label": regime_label,
+                   "advice": regime_advice, "small_ok": small_ok},
+        "calibration": {"median_chg": median_chg,
+                        "expect_red": _red_rate_expect(median_chg),
+                        "actual_red": (sum(1 for c in chgs if c > 0) / len(chgs)) if chgs else None},
+        "dt_side": {"n": dt_n, "oneword": dt_oneword, "negative_spiro": negative_spiro},
     }
     top_boards = []
     for b in boards:

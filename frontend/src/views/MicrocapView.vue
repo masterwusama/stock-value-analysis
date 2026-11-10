@@ -155,6 +155,19 @@ const ztClass = (it) => it.streak ? 'zt-hot'
   : it.dt_today ? 'down' : it.zha_flag ? 'warn-amber' : 'flat'
 const sealTxt = (it) => it.seal_amt == null ? '' : yi(it.seal_amt)
 const flowMissing = computed(() => overview.value && !overview.value.heat?.flow_ok)
+// 分布校准偏离:实际红盘率 - 分布预期(百分数),>0=强于分布(赚钱效应超统计)
+const calibDev = computed(() => {
+  const c = overview.value?.battle?.calibration
+  if (!c || c.expect_red == null || c.actual_red == null) return 0
+  return (c.actual_red - c.expect_red) * 100
+})
+const calibText = computed(() => {
+  const d = calibDev.value
+  if (!overview.value?.battle?.calibration?.actual_red) return ''
+  if (d >= 5) return '——强于分布(赚钱效应超统计)'
+  if (d <= -5) return '——弱于分布(亏钱效应超统计)'
+  return '——符合分布'
+})
 const calLabel = computed(() => {
   const c = overview.value?.calendar
   if (!c) return ''
@@ -270,6 +283,20 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             <div class="bt-trap" v-if="overview.battle?.trap">
               ⚠ 陷阱日：昨日极弱今日普通——该形态次日仅 +0.55%/胜率50%，全局禁隔夜
             </div>
+            <div class="bt-hint" v-if="overview.battle?.calibration?.expect_red != null">
+              分布校准：池内中位 {{ pctNum(overview.battle.calibration.median_chg) }} → 预期红盘
+              ~{{ Math.round(overview.battle.calibration.expect_red * 100) }}%，实际
+              <b :class="calibDev >= 0 ? 'up' : 'down'">{{ overview.battle.calibration.actual_red != null ? Math.round(overview.battle.calibration.actual_red * 100) + '%' : '—' }}</b>
+              {{ calibText }}
+            </div>
+          </div>
+          <div class="bt-block">
+            <div class="bt-title">月历 <span class="bt-sub">2 5 11玩大票，其余玩小票；做反=极强全错过长征全赶上</span></div>
+            <div class="bt-row">
+              {{ overview.battle?.regime?.month }} 月
+              <b class="regime-tag" :class="overview.battle?.regime?.small_ok === true ? 'rg-ok' : overview.battle?.regime?.small_ok === false ? 'rg-bad' : 'rg-mid'">{{ overview.battle?.regime?.label ?? '—' }}</b>
+            </div>
+            <div class="bt-hint">{{ overview.battle?.regime?.advice }}</div>
           </div>
           <div class="bt-block">
             <div class="bt-title">池内昨日涨停 → 今日 <span class="bt-sub">打板赚钱效应</span></div>
@@ -288,7 +315,15 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
                 :class="{ top: +lv === overview.battle?.ladder?.max }">{{ lv }}板×{{ cnt }}</span>
               <span v-if="!overview.battle?.ladder?.total" class="bt-hint">今日榜单未出</span>
             </div>
-            <div class="bt-hint">最高 {{ overview.battle?.ladder?.max ?? '—' }} 板——空间板的身位参照，高位断板=题材退潮信号</div>
+            <div class="bt-hint">
+              最高 {{ overview.battle?.ladder?.max ?? '—' }} 板——空间板的身位参照，高位断板=题材退潮信号
+              <template v-if="overview.battle?.dt_side?.n">
+                · 跌停 {{ overview.battle.dt_side.n }}（一字 {{ overview.battle.dt_side.oneword }}）
+              </template>
+            </div>
+            <div class="bt-trap" v-if="overview.battle?.dt_side?.negative_spiro">
+              ⚠ 负螺旋：一字跌停 ≥3 家——10A 一字梯队正在带 5000B 补跌，一字梯队打开=正螺旋反弹起点（39课）
+            </div>
           </div>
         </div>
       </div>
@@ -443,10 +478,14 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
       <div class="card note-card">
         <b>怎么读这块看板</b>
         <p>
-          <b>作战面板三问三答</b>:①今天什么打法——按大盘情绪状态的历史校准(极强日涨停股次日竞价 +3.6%/胜率73%,
-          炸板股 -1.6% 应回避,极弱转普通的「陷阱日」禁隔夜);②今天打板赚不赚钱——池内昨日涨停股今日均涨/红盘率/晋级数,
-          红盘率 ≥60% 赚钱效应在、≤40% 退潮只低吸;③身位在哪——全市场连板梯队,最高板是空间参照,
-          高位断板=题材退潮信号。<b>快捷预设</b>:今日涨停(打板/接力)、断板观察(强承接低吸 or 出货规避,看当日涨幅分辨)、
+          <b>作战面板四问四答</b>:①今天什么打法——按大盘情绪状态的历史校准(极强日涨停股次日竞价 +3.6%/胜率73%,
+          炸板股 -1.6% 应回避,极弱转普通的「陷阱日」禁隔夜);②今天在年历的哪一段——12个月大环境各不相同,
+          极弱月(1/4/10)防守、极强月(2/5/11)小票主升、长征月(6-9)只主线核心、12月只能博弈;
+          「2 5 11 玩大票(容量),其余玩小票,做反=极强全错过长征全赶上」;分布校准=池内中位涨幅按正态分布
+          应有的红盘率 vs 实际(±5pp 内符合分布);③今天打板赚不赚钱——池内昨日涨停股今日均涨/红盘率/晋级数,
+          红盘率 ≥60% 赚钱效应在、≤40% 退潮只低吸;④身位在哪——全市场连板梯队,最高板是空间参照,
+          高位断板=题材退潮信号;跌停侧看一字梯队(≥3 家=负螺旋:大A 一字带 5000B 补跌,梯队打开=反弹起点)。
+          <b>快捷预设</b>:今日涨停(打板/接力)、断板观察(强承接低吸 or 出货规避,看当日涨幅分辨)、
           扭亏/摘帽候(年报亏损或已 ST、最新披露期转正——摘帽博弈/困境反转的正主题,业绩面信号非交易所认定)。
         </p>
         <p>
@@ -522,9 +561,13 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .ctag.lead { background: #fdf6ec; color: #b05e10; font-weight: 600; }
 .mine-hot { font-size: 10.5px; color: #fff; background: #c0392b; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
 .turn-badge { font-size: 10.5px; color: #0e7a5f; background: #e6f5f0; border: 1px solid #b8e0d3; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
-/* 作战面板:三块并排,窄屏纵叠 */
+/* 作战面板:四块并排(打法/月历/赚钱效应/梯队),窄屏纵叠 */
 .battle-card { display: block; }
-.battle-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.battle-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.regime-tag { display: inline-block; margin-left: 8px; border-radius: 4px; padding: 1px 8px; font-size: 12px; }
+.regime-tag.rg-ok { background: #edf7ee; color: #1e7e34; }
+.regime-tag.rg-bad { background: #fdeeee; color: #a93226; }
+.regime-tag.rg-mid { background: #fdf3e7; color: #b05e10; }
 .bt-block { min-width: 0; }
 .bt-title { font-size: 13.5px; font-weight: 600; margin-bottom: 6px; }
 .bt-sub { font-weight: 400; color: #8a94a6; font-size: 11.5px; margin-left: 6px; }

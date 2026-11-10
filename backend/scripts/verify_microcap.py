@@ -236,6 +236,19 @@ def test_live():
         check("扭亏样本含雷区或ST底", t0["risk_level"] >= 1 or "ST" in t0["name"].upper(),
               f"{t0['name']} risk={t0['risk_level']}")
 
+    # 年历层+分布校准+跌停侧(课程规律层,2026-11-11)
+    rg = ov["battle"]["regime"]
+    check("月历字段齐", all(k in rg for k in ("month", "label", "advice", "small_ok")), str(rg))
+    check("月历口径合法", rg["label"] in ("极弱", "极强", "大震", "长征初", "长征", "长征末", "博弈")
+          and isinstance(rg["small_ok"], bool))
+    cal = ov["battle"]["calibration"]
+    check("校准字段齐", all(k in cal for k in ("median_chg", "expect_red", "actual_red")))
+    check("预期红盘率界内", cal["expect_red"] is None or 0 <= cal["expect_red"] <= 1,
+          str(cal["expect_red"]))
+    ds = ov["battle"]["dt_side"]
+    check("跌停侧自洽", ds["oneword"] <= ds["n"] and isinstance(ds["negative_spiro"], bool), str(ds))
+    check("负螺旋口径=一字≥3", ds["negative_spiro"] == (ds["oneword"] >= 3))
+
 
 if __name__ == "__main__":
     test_classify_levels()
