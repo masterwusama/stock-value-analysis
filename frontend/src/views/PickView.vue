@@ -293,8 +293,14 @@ onMounted(async () => {
     // 四路并行:各自只写自己的状态,总耗时=最慢一路而非四路求和(端点各自有缓存,
     // 但冷启动时 board 1.5s、stars/industries/cloud 各几十 ms,串行白等)
     await Promise.all([loadStars(), loadIndustries(), loadCloud(), loadBoard()])
-    chart?.on('click', onCloudClick)
     loading.value = false
+    // 内容整体在 v-else 门后:loadCloud 尾部的 drawCloud 跑在 loading 翻假之前,
+    // chartEl 还是 null 会静默早退(2026-10 重构丢了原版「翻假后补画」的契约,
+    // 地图空白、点点跳详情也不挂)。这里等 ref 绑定后补画;切市场/行业走的
+    // loadCloud 不受影响——那时内容已渲染。
+    await nextTick()
+    await drawCloud()
+    chart?.on('click', onCloudClick)
   } catch (e) {
     error.value = e.message
     loading.value = false
