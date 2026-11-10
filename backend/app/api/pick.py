@@ -752,13 +752,29 @@ def pick_stars(
 def pick_cloud(
     market: str | None = Query(None, pattern="^(A|HK)$"),
     ex_industry: str | None = Query(None, max_length=1024, description="排除行业复选(逗号分隔)"),
+    tier: str | None = Query(None, description="评级复选(逗号分隔): strong/buy/watch/na/avoid"),
+    industry: str | None = Query(None, max_length=64),
+    keyword: str | None = Query(None, max_length=32, description="代码/名称模糊匹配"),
     fresh: bool = Query(False),
     db: Session = Depends(get_session),
 ):
     """散点云:评级≥观察、可打分且有买点锚(折价可算)的全体。
-    无锚者不进图——x 坐标只能取哨兵值,堆在左缘成柱反而误导;清单里照样可见。"""
+    无锚者不进图——x 坐标只能取哨兵值,堆在左缘成柱反而误导;清单里照样可见。
+    market/ex_industry/tier/industry/keyword 与清单同一套筛选语义(2026-11-10 起
+    地图随筛选联动);tier 选回避时域内无点,图空是诚实态不是故障。"""
     items, _ = _load_base(db, fresh=fresh)
     items = _apply_ex_industry(items, _parse_ex_industry(ex_industry))
+    if tier:
+        wants = {t.strip() for t in tier.split(",") if t.strip()}
+        bad = wants - set(TIER_KEYS)
+        if bad:
+            raise HTTPException(status_code=400, detail=f"invalid tier: {','.join(sorted(bad))}")
+        items = [it for it in items if it.tier in wants]
+    if industry:
+        items = [it for it in items if it.industry == industry]
+    if keyword:
+        kw = keyword.upper()
+        items = [it for it in items if kw in it.code or kw in it.name.upper()]
     out = []
     for it in items:
         if it.tier not in ("strong", "buy", "watch") or it.pick is None:

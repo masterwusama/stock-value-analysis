@@ -106,8 +106,15 @@ async function loadStars() {
   meta.value = d.meta
   stats.value = d.stats
 }
+// 地图与清单同一套筛选:market/排除行业之外,tier 页签、行业下拉、关键词也联动
+// (2026-11-10);tier=回避时域内无点,图空是诚实态(回避者无买点锚不进图)
 async function loadCloud() {
-  cloud.value = await get('/pick/cloud', { market: market.value, ex_industry: exIndustries.value.join(',') })
+  cloud.value = await get('/pick/cloud', {
+    market: market.value, ex_industry: exIndustries.value.join(','),
+    tier: tier.value || undefined,
+    industry: industry.value || undefined,
+    keyword: keyword.value || undefined,
+  })
   await nextTick()
   drawCloud()
 }
@@ -175,6 +182,9 @@ function setFilter(fn) {
   page.value = 1
   syncHash()
   loadBoard()
+  // tier/行业/关键词筛选同步地图(排序其实不影响散点,但云端点便宜——同进程缓存
+  // 上过滤几十 ms,不值得为省它分叉两条路径)
+  loadCloud()
 }
 function setSort(key) {
   if (sort.value === key) order.value = order.value === 'desc' ? 'asc' : 'desc'
