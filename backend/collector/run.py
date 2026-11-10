@@ -97,6 +97,12 @@ JOBS = {
     # 16:30 独立时段：收盘后 90 分钟,越过指数日频的更新延迟窗口,且与 stock(16:05) 错开；
     # 休市与当日去重采集器自兜
     "sentiment": [(SCRIPTS, "fetch_sentiment.py")],
+    # heat：盘后资金热度（东财个股主力资金流排行+概念板块排行+热门概念成分，
+    # 约 2~3 分钟，不碰 Wind）。给小微盘投机池(#/microcap)补「资金热度/热门题材」
+    # 维度——涨停生态由 sentiment 榜单池覆盖，这里只采资金流与概念。JSON-only
+    # 落盘（data/heat/），无回灌面（见 NO_IMPORT）；16:45 独立时段排在 sentiment
+    # (16:30) 之后错峰，资金流数据收盘后才定盘，采集器自带休市/盘中/幂等三重跳过
+    "heat": [(SCRIPTS, "fetch_heat.py")],
     # case：证监会立案/处罚公告（巨潮全文检索，全市场聚合翻页 ≈1 分钟，不碰 Wind）。
     # 周更：立案是低频事件，且回答「正在立案」只看近 2 年的公告面；回灌走 --only-case
     # （case_event + 单刷 score_daily——立案抬 ST 高危旗发生在 score 行重建里）
@@ -210,8 +216,9 @@ IMPORT_DEFAULTS = {
 }
 
 # 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
-# 空转时若照常 _import_db 会退化成一次全量导入(重且无意义)
-NO_IMPORT = {"etf-heal"}
+# 空转时若照常 _import_db 会退化成一次全量导入(重且无意义);heat 是纯 JSON
+# 工件(data/heat/,API 直读),没有回灌面
+NO_IMPORT = {"etf-heal", "heat"}
 
 
 # 全量抓取持锁时跳过调度（fetch_data 的 index.json 为全量重写,两进并行会互盖条目）
@@ -230,6 +237,7 @@ SCRIPT_TIMEOUT = {
     "valuation": 3 * 3600,
     "import": 2 * 3600,
     "sentiment": 1800,
+    "heat": 900,    # 个股/板块排行各 1 请求 + 成分 top15×1.2s 步进,实测 ≈2~3 分钟
     "agro": 2 * 3600,
     "case": 1800,   # 全量回填 28 页 ≈1 分钟，增量更少；放宽到与 sentiment 同档
     "etf": 900,     # 每只 ≈15 秒(中证2000 2000 只行情批拉最重),多只线性涨,留足余量

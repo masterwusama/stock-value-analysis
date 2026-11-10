@@ -13,6 +13,7 @@ onMounted(prefetchEcharts)
     <nav aria-label="主导航">
       <router-link to="/">证券列表</router-link>
       <router-link to="/pick">掘金台</router-link>
+      <router-link to="/microcap">小微盘</router-link>
       <router-link to="/agro">农化制品</router-link>
       <router-link to="/commodity">大宗商品</router-link>
       <router-link to="/forecast">业绩预测</router-link>

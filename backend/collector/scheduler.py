@@ -88,6 +88,11 @@ def main():
     # 榜单池数据源只留 15 个交易日,中断超两周记得手动补跑
     s.add_job(run_job, "cron", args=["sentiment"], day_of_week="mon-fri",
               hour=16, minute=30, id="sentiment")
+    # 资金热度每个交易日 16:45(sentiment 16:30 之后错峰 15 分钟;东财资金流排行
+    # 收盘后数据才定盘,16:45 已稳)。给小微盘投机池(#/microcap)补资金热度/概念
+    # 题材维度;JSON-only 无回灌,休市/盘中/当日已生成三重跳过在采集器内部
+    s.add_job(run_job, "cron", args=["heat"], day_of_week="mon-fri",
+              hour=16, minute=45, id="heat")
     # 立案/处罚公告每周一次(周日 10:05,在 agro 早场之后,互不挤时段)。
     # 立案是低频事件,周更足够;回灌 --only-case 顺带单刷 score_daily 把「正在立案」
     # 抬成 ST 高危旗(旗发生在 score 行重建里,只灌 case_event 看不到)
@@ -134,7 +139,7 @@ def main():
     print("[scheduler] 已注册: stock(周一~六 16:05/22:05 估值快照) "
           "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农化制品,不碰 Wind) "
           "valuation(每天 03:35 估值分位,免费源刷全 A) "
-          "sentiment(交易日 16:30 情绪日报) case(周日 10:05 立案/处罚公告) "
+          "sentiment(交易日 16:30 情绪日报) heat(交易日 16:45 资金热度/概念题材) case(周日 10:05 立案/处罚公告) "
           "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
           "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报) aviation(每天 07:35 民航日度组) aviation-monthly(每月 12/15 日 07:45 民航月度组)。"
           "Ctrl+C 退出",

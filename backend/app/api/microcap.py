@@ -1,0 +1,858 @@
+# -*- coding: utf-8 -*-
+"""小微盘投机池:微盘/小票两档股票池 × 投机热度 × 排雷记分卡。
+
+定位是**投机选股工具**,排雷是风控亮灯层——亮灯不拦截(trap 标注制同一哲学):
+季报雷暴出清后小微盘是 A 股季节性投机主战场,而小市值恰是 ST/退市雷的重灾区,
+热钱爱炒的与容易暴雷的经常是同一批票,两个维度必须同屏。
+
+数据全部读时合成,与掘金台同一套「不做采集、不落新表」纪律:
+    - 池子:quote_daily 最新日总市值切档(微盘<25 亿/小票 25~60 亿),
+      排北交所(30%涨跌幅/流动性结构另类)、剔上市不满 1 年次新;
+    - 排雷:2024 退市新规原文要件逐条独立亮灯,营收分板线复用采集侧
+      scoring._st_board_line(主板 3 亿/双创 1 亿,同一函数不另起口径);
+    - 热度:涨停生态复用 sentiment job 的东财榜单池(连板数/封板资金/炸板,
+      全市场 15 交易日窗),资金流与概念题材来自 heat job 的 JSON 工件
+      (data/heat/,个股主力净流入今日+5日、概念板块排行+热门概念成分映射);
+    - 雷暴日历:fin_indicator 披露家数/全 A 分母——出清窗口=小微盘超额的
+      历史时段,这是模块的选时锚。
+
+heat 工件缺失时资金/概念两维度整体降级为「—」(显性标注,不冒充 0 分),
+涨停生态+动量+换手的底座永远在——纯行情形态下模块依然完整可用。
+
+排雷分级(逐条独立、取最高级,规则取新规原文不是拟合):
+    3 确定  简称已 ST/*ST;最新年报利润/扣非孰低<0 且营收低于分板线(披露后
+            必然戴帽,未戴帽者=即将戴帽);最新年报净资产为负(gate 同源)
+    2 高危  审计非标;证监会立案;亏损+营收不足线 2 倍(明年触线主候选);
+            20 日均价<1.5 元或现价<1.2 元(面值退市提前量,它不走 ST 程序);
+            总市值逼近市值退市线(主板 5 亿/双创 3 亿+20% 提前量);
+            仅最新披露期净资产转负(年报仍正的盲区——不进确定级,年报级
+            定性事实才判死,与掘金台资不抵债双道同语法)
+    1 关注  资产负债率>90%(非金融);年报亏损但营收在线上;连续两年扣非
+            亏(第二年营收再崩即触线);最新披露期转亏(业绩变脸)
+    0 安全  无旗
+
+双创上市不满 4 个完整会计年度的未盈利豁免窗内触线,降级为关注(旗名带
+_ex 后缀),与 scoring._st_risk 同一豁免口径。
+
+热度分 heat_score(0~100)只是排序器,每个因子独立成列——透明加权,缺数
+因子按可用权重归一(总分权重<30 不给分),绝不缺列冒 0:
+    主力净流入强度(今日/流通市值)0~30 | 5日累计 0~15 | 换手自身分位 0~15 |
+    连板数×8 封顶 20 | 5日/20日动量各 0~10 | 所属热门概念 top15 +10
+"""
+import csv
+import json
+import sys
+import time
+from collections import Counter, defaultdict
+from datetime import date, timedelta
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
+from sqlalchemy import and_, func, or_, select
+from sqlalchemy.orm import Session, aliased
+
+from app.db import get_session
+from app.models import (FinBalance, FinIncome, FinIndicator, QuoteDaily,
+                        ScoreDaily, Security, SentimentDaily)
+
+# scoring.py 是 collector 侧平铺 import,API 进程先挂 sys.path(pick.py 同款);
+# 营收分板线取同一函数,排雷口径与采集侧 ST 前验旗永不漂移
+_CSCRIPTS = str(Path(__file__).resolve().parents[2] / "collector" / "scripts")
+if _CSCRIPTS not in sys.path:
+    sys.path.insert(0, _CSCRIPTS)
+from scoring import _st_board_line  # noqa: E402
+
+from app.api.pick import _discounts  # 两派买点折价,与掘金台同一把尺
+
+router = APIRouter(prefix="/api/microcap", tags=["microcap"])
+
+BACKEND = Path(__file__).resolve().parents[2]
+HEAT_DIR = BACKEND / "collector" / "data" / "heat"
+SENT_DIR = BACKEND / "collector" / "data" / "sentiment"
+
+# ---- 池子口径(改口径只动这一处) ----
+MICRO_CAP_MAX = 25e8      # 微盘上界:总市值 <25 亿
+SMALL_CAP_MAX = 60e8      # 小票上界:25 亿 ≤ 总市值 <60 亿
+LIST_AGE_MIN_YEARS = 1    # 次新剔除:上市不满 1 年(无完整年报、波动结构另类)
+BJ_PREFIXES = ("43", "82", "83", "87", "88", "92")   # 北交所代码前缀,整段排除
+
+# ---- 排雷线(与 scoring/_st_risk 同族,这里把面值/市值两族补齐) ----
+FACE_AVG20 = 1.5          # 20 日均价预警线(1 元面值退市的提前量)
+FACE_PRICE = 1.2          # 现价预警线(=scoring.price_low 同线)
+MCAP_THIN_MAIN = 6e8      # 主板市值退市线 5 亿 +20% 提前量
+MCAP_THIN_CY = 4e8        # 双创市值退市线 3 亿 +20% 提前量
+ST_FIN_KW = ("金融", "银行", "保险", "证券", "货币金融", "资本市场")  # 同 scoring
+
+# ---- 热度分权重(总分只是排序器,因子列各自独立展示) ----
+W_INFLOW_T = 30.0         # 今日主力净流入/流通市值,3% 封顶
+INFLOW_T_FULL = 0.03
+W_INFLOW_D5 = 15.0        # 5 日主力净流入/流通市值,10% 封顶
+INFLOW_D5_FULL = 0.10
+W_TURN = 15.0             # 换手自身分位(近 min(120,可用) 交易日)
+W_STREAK = 20.0           # 连板数 ×8 封顶
+STREAK_PER = 8.0
+W_R5 = 10.0               # 5 日涨幅 15% 封顶
+R5_FULL = 0.15
+W_R20 = 10.0              # 20 日涨幅 30% 封顶
+R20_FULL = 0.30
+W_CONCEPT = 10.0          # 所属热门概念(top15 板)
+MIN_WEIGHT = 30.0         # 可用权重低于此不给分(判不动 ≠ 0 分)
+TURN_WIN_MAX = 120        # 换手分位窗上限(表滚动窗现约 43 日,加深自动受益)
+TURN_MIN_ROWS = 20        # 分位窗最少行数
+HEAT_BANDS = ((70.0, "hot"), (50.0, "warm"))   # 火爆/温热/冷 三档下界
+
+# ---- 风险旗 → 中文 ----
+RISK_LABELS = {
+    "st_named": "已ST/风险警示",
+    "loss_rev_hit": "触线:亏损且营收低于退市线",
+    "loss_rev_ex": "触线(双创豁免窗)",
+    "neg_equity": "年报资不抵债",
+    "negeq_soft": "最新期净资产转负",
+    "audit_qualify": "审计非标",
+    "case_filed": "证监会立案",
+    "loss_rev_near": "亏损且营收不足线2倍",
+    "face_value": "面值危险(20日均价<1.5元)",
+    "mcap_thin": "市值逼近退市线",
+    "debt90": "资产负债率>90%",
+    "year_loss": "年报亏损(营收在线上)",
+    "loss2y": "连续两年扣非亏",
+    "q_turn_loss": "最新期转亏",
+}
+
+
+# ---------------------------------------------------------------------------
+# 纯函数:排雷分级与热度打分(离线可测,verify_microcap.py 的不变量落在这里)
+# ---------------------------------------------------------------------------
+
+def _loss_min(np, ded):
+    """利润总额侧的「孰低」:净利润/扣非净利润里可判者取最小;全缺返回 None。"""
+    vals = [x for x in (np, ded) if x is not None]
+    return min(vals) if vals else None
+
+
+def _is_biotech_exempt(code: str, annual_year: int, list_date) -> bool:
+    """双创未盈利豁免窗:上市不满 4 个完整会计年度,财务类退市指标不适用。"""
+    if code[:3] in ("688", "689") or code[:2] == "30":
+        if list_date:
+            try:
+                return annual_year - list_date.year < 4
+            except (TypeError, ValueError):
+                return False
+    return False
+
+
+def _classify(rec: dict) -> tuple[int, list[str]]:
+    """排雷记分卡:入参纯量 dict → (level 0~3, flags)。优先级取最高级,旗全量保留。
+
+    rec 必备键:name/code/annual_np/annual_ded/annual_rev/annual_debt/list_date/
+    prev_min_np(上一年报孰低)/latest_np(最新披露期累计净利)/latest_is_annual/
+    latest_eq(最新披露期归母权益)/gate_flags(list)/mcap/avg20/price
+    """
+    flags: list[str] = []
+    code = rec["code"]
+    is_st = "ST" in str(rec["name"]).upper()
+    gate = set(rec.get("gate_flags") or [])
+
+    # ---- 确定级素材 ----
+    if is_st:
+        flags.append("st_named")
+    annual_min = _loss_min(rec["annual_np"], rec["annual_ded"])
+    rev = rec["annual_rev"]
+    hit = False
+    if annual_min is not None and annual_min < 0 and rev is not None:
+        line = _st_board_line(code)
+        if rev < line:
+            if _is_biotech_exempt(code, rec.get("annual_year") or 0, rec.get("list_date")):
+                flags.append("loss_rev_ex")
+            else:
+                flags.append("loss_rev_hit")
+                hit = True
+        elif rev < 2 * line:
+            flags.append("loss_rev_near")
+    if annual_min is not None and annual_min < 0 and "loss_rev_hit" not in flags \
+            and "loss_rev_ex" not in flags and "loss_rev_near" not in flags:
+        flags.append("year_loss")
+    if "neg_equity" in gate:
+        flags.append("neg_equity")
+
+    # ---- 高危级素材 ----
+    if "audit_qualify" in gate:
+        flags.append("audit_qualify")
+    if "case_filed" in gate:
+        flags.append("case_filed")
+    eq = rec.get("latest_eq")
+    if eq is not None and eq < 0 and "neg_equity" not in gate:
+        flags.append("negeq_soft")
+    avg20, price = rec.get("avg20"), rec.get("price")
+    if (avg20 is not None and avg20 < FACE_AVG20) or (price is not None and 0 < price <= FACE_PRICE):
+        flags.append("face_value")
+    mcap = rec.get("mcap")
+    if mcap:
+        thin = MCAP_THIN_CY if (code[:3] in ("688", "689") or code[:2] == "30") else MCAP_THIN_MAIN
+        if mcap < thin:
+            flags.append("mcap_thin")
+
+    # ---- 关注级素材 ----
+    dr = rec.get("annual_debt")
+    if dr is not None and dr > 0.9 and not any(k in str(rec.get("industry") or "") for k in ST_FIN_KW):
+        flags.append("debt90")
+    prev_min = rec.get("prev_min_np")
+    if annual_min is not None and annual_min < 0 and prev_min is not None and prev_min < 0:
+        flags.append("loss2y")
+    lnp = rec.get("latest_np")
+    if not rec.get("latest_is_annual") and lnp is not None and lnp < 0 \
+            and annual_min is not None and annual_min > 0:
+        flags.append("q_turn_loss")
+
+    # ---- 定级:命中即最高档 ----
+    L3 = {"st_named", "loss_rev_hit", "neg_equity"}
+    L2 = {"negeq_soft", "audit_qualify", "case_filed", "loss_rev_near", "face_value", "mcap_thin"}
+    if any(f in L3 for f in flags):
+        return 3, flags
+    if any(f in L2 for f in flags):
+        return 2, flags
+    # 双创豁免窗触线降为关注(旗仍在,前端区分文案)
+    if flags:
+        return 1, flags
+    return 0, flags
+
+
+def _clamp01(x):
+    return max(0.0, min(1.0, x))
+
+
+def heat_score(f: dict) -> float | None:
+    """热度分 0~100。缺数因子按可用权重归一;可用权重 <MIN_WEIGHT 判不动返回 None。
+
+    f: inflow_t/float_mcap, inflow_d5/float_mcap(强度比率), turn_pctile(0~1),
+       streak(今日连板数), r5/r20(区间收益), hot_concept(bool)
+    """
+    pts, ws = 0.0, 0.0
+    its, dfs = f.get("inflow_strength"), f.get("inflow_d5_strength")
+    if its is not None:
+        pts += _clamp01(its / INFLOW_T_FULL) * W_INFLOW_T
+        ws += W_INFLOW_T
+    if dfs is not None:
+        pts += _clamp01(dfs / INFLOW_D5_FULL) * W_INFLOW_D5
+        ws += W_INFLOW_D5
+    tp = f.get("turn_pctile")
+    if tp is not None:
+        pts += _clamp01(tp) * W_TURN
+        ws += W_TURN
+    st = f.get("streak")
+    if st is not None:
+        pts += min(st * STREAK_PER, W_STREAK)
+        ws += W_STREAK
+    r5, r20 = f.get("r5"), f.get("r20")
+    if r5 is not None:
+        pts += _clamp01(r5 / R5_FULL) * W_R5
+        ws += W_R5
+    if r20 is not None:
+        pts += _clamp01(r20 / R20_FULL) * W_R20
+        ws += W_R20
+    if f.get("hot_concept"):
+        pts += W_CONCEPT
+        ws += W_CONCEPT
+    if ws < MIN_WEIGHT:
+        return None
+    return round(pts / ws * 100.0, 1)
+
+
+def heat_band(score: float | None) -> str | None:
+    if score is None:
+        return None
+    for lo, band in HEAT_BANDS:
+        if score >= lo:
+            return band
+    return "cool"
+
+
+# ---------------------------------------------------------------------------
+# 文件工件装载(heat job / sentiment 榜单池;读不到按降级纪律返回空)
+# ---------------------------------------------------------------------------
+
+def _read_json(path: Path, default):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return default
+
+
+def _heat_files() -> dict:
+    """heat 工件:{latest, flow, boards, members}。全部可缺——调用侧按缺降级。"""
+    latest = _read_json(HEAT_DIR / "latest.json", None)
+    flow, boards, members = {}, [], {}
+    if latest:
+        d = (latest.get("date") or "").replace("-", "")
+        flow = _read_json(HEAT_DIR / f"flow_{d}.json", {})
+        boards = _read_json(HEAT_DIR / f"boards_{d}.json", [])
+        members = _read_json(HEAT_DIR / "members.json", {})
+    return {"latest": latest, "flow": flow, "boards": boards, "members": members}
+
+
+def _pool_csv_map(kind: str, need: int) -> list[tuple[str, dict]]:
+    """sentiment 榜单池 CSV,新→旧至多 need 份:[(yyyymmdd, {code: 行dict})]。"""
+    out = []
+    for p in sorted(SENT_DIR.glob(f"pool_{kind}_*.csv"), reverse=True):
+        d = p.stem.split("_")[-1]
+        try:
+            with open(p, encoding="utf-8-sig", newline="") as fh:
+                rows = {str(r.get("代码") or "").zfill(6): r for r in csv.DictReader(fh)}
+        except OSError:
+            continue
+        out.append((d, rows))
+        if len(out) >= need:
+            break
+    return out
+
+
+def _read_daily_json() -> dict:
+    return _read_json(SENT_DIR / "daily.json", {}) or {}
+
+
+# ---------------------------------------------------------------------------
+# 雷暴日历
+# ---------------------------------------------------------------------------
+
+def _calendar(today: date, progress: float | None, last_progress: float | None) -> dict:
+    """当前/上一/下一个披露窗。窗内且进度<95%=雷暴进行中,其余=出清窗口
+    (出清态带上一个刚收窗的报告期与终值进度——雷暴统计读的就是它)。"""
+    y = today.year
+    windows = [
+        (date(y, 1, 1), date(y, 4, 30), date(y - 1, 12, 31), f"{y - 1}年报+{y}一季报"),
+        (date(y, 7, 1), date(y, 8, 31), date(y, 6, 30), f"{y}中报"),
+        (date(y, 10, 1), date(y, 10, 31), date(y, 9, 30), f"{y}三季报"),
+        (date(y + 1, 1, 1), date(y + 1, 4, 30), date(y, 12, 31), f"{y}年报+{y + 1}一季报"),
+    ]
+    cur = next((w for w in windows if w[0] <= today <= w[1]), None)
+    if cur:
+        ws, we, period, label = cur
+        revealing = progress is not None and progress < 0.95
+        return {"period": period.isoformat(), "label": label,
+                "window": [ws.isoformat(), we.isoformat()],
+                "state": "revealing" if revealing else "cleared",
+                "progress": progress, "days_to_next": 0,
+                "next_label": None, "last_period": None, "last_label": None}
+    nxt = next((w for w in windows if w[0] > today), None)
+    last = next((w for w in reversed(windows) if w[1] < today), None)
+    return {"period": None, "label": None, "window": None,
+            "state": "cleared", "progress": None,
+            "days_to_next": (nxt[0] - today).days if nxt else None,
+            "next_label": nxt[3] if nxt else None,
+            "last_period": last[2].isoformat() if last else None,
+            "last_label": last[3] if last else None,
+            "last_progress": last_progress}
+
+
+# ---------------------------------------------------------------------------
+# 行装载(进程缓存:键=评分日/行情日+当日行数+heat戳+榜单池戳,与 pick 同语法)
+# ---------------------------------------------------------------------------
+
+_cache: dict = {"key": None, "at": 0.0, "items": None, "meta": None}
+_CACHE_TTL = 3600.0
+
+
+def _heat_stamp() -> tuple:
+    latest = _read_json(HEAT_DIR / "latest.json", None)
+    if not latest:
+        return ("-", 0)
+    mem = HEAT_DIR / "members.json"
+    return (latest.get("date"), int(mem.stat().st_mtime) if mem.exists() else 0)
+
+
+def _csv_stamp() -> str:
+    snaps = sorted(SENT_DIR.glob("pool_zt_*.csv"))
+    return snaps[-1].stem if snaps else "-"
+
+
+class MicrocapItem(BaseModel):
+    """池内一行:行情+财务+排雷+热度+库内评分,前端表格列的超集。"""
+    sid: int
+    code: str
+    name: str
+    industry: str | None = None
+    price: float | None = None
+    chg_pct: float | None = None
+    market_cap: float | None = None
+    float_mcap: float | None = None
+    pool: str                      # micro / small
+    list_date: str | None = None
+    list_date_missing: bool = False
+    # 排雷
+    risk_level: int = 0
+    risk_flags: list[str] = []
+    risk_labels: list[str] = []
+    # 财务快照(最新年报 + 最新披露期)
+    annual_date: str | None = None
+    annual_np: float | None = None
+    annual_ded: float | None = None
+    annual_rev: float | None = None
+    rev_line: float | None = None          # 分板营收线(元)
+    rev_line_ratio: float | None = None    # 营收/线,>1 在线外
+    debt_ratio: float | None = None
+    latest_period: str | None = None
+    latest_np: float | None = None
+    avg20: float | None = None
+    # 热度
+    heat: float | None = None
+    heat_band: str | None = None
+    inflow_t: float | None = None
+    inflow_strength: float | None = None   # 今日净流入/流通市值
+    inflow_d5: float | None = None
+    turn_rate: float | None = None
+    turn_pctile: float | None = None
+    streak: int | None = None              # 今日连板数(非涨停日为 None)
+    seal_amt: float | None = None          # 封板资金(元)
+    zt_5d: int = 0                         # 近 5 个榜单日涨停次数
+    zha_flag: bool = False                 # 昨日炸板/黑名单
+    dt_today: bool = False
+    r5: float | None = None
+    r20: float | None = None
+    hot_concepts: list[str] = []
+    # 库内评分与买点(照掘金台,帮助挑「干净的超跌小票」)
+    recommend: float | None = None
+    value: float | None = None
+    growth: float | None = None
+    div_yield: float | None = None
+    discount: float | None = None
+    discount_anchor: str | None = None
+
+
+class OverviewOut(BaseModel):
+    trade_date: str | None
+    quote_date: str | None
+    pools: dict
+    risk_dist: dict
+    env: dict
+    calendar: dict
+    heat: dict
+    mine_stats: dict
+
+
+class BoardOut(BaseModel):
+    total: int
+    page: int
+    page_size: int
+    meta: dict
+    items: list[MicrocapItem]
+
+
+def _load_base(db: Session, fresh: bool = False):
+    """全量池内行 + meta。缓存键含 heat/latest 戳与榜单池最新文件名:
+    heat job 落盘即失效,不等 TTL。"""
+    td = db.execute(select(func.max(ScoreDaily.trade_date))).scalar_one()
+    qd_max = db.execute(select(func.max(QuoteDaily.trade_date))).scalar_one()
+    key = (
+        td.isoformat() if td else None,
+        db.execute(select(func.count()).select_from(ScoreDaily)
+                   .where(ScoreDaily.trade_date == td)).scalar_one() if td else None,
+        qd_max.isoformat() if qd_max else None,
+        db.execute(select(func.count()).select_from(QuoteDaily)
+                   .where(QuoteDaily.trade_date == qd_max)).scalar_one() if qd_max else None,
+        _heat_stamp(), _csv_stamp(),
+    )
+    if (not fresh and _cache["items"] is not None and _cache["key"] == key
+            and time.time() - _cache["at"] < _CACHE_TTL):
+        return _cache["items"], _cache["meta"]
+
+    today = date.today()
+    list_cutoff = date(today.year - LIST_AGE_MIN_YEARS, today.month, today.day)
+
+    # ---- 主行:A股 × 最新评分 × 最新行情(相关子查询取每家最新一行,pick 同款) ----
+    _Q2 = aliased(QuoteDaily)
+    rows = db.execute(
+        select(ScoreDaily, Security, QuoteDaily)
+        .join(Security, Security.sid == ScoreDaily.sid)
+        .join(QuoteDaily, and_(
+            QuoteDaily.sid == ScoreDaily.sid,
+            QuoteDaily.trade_date == select(func.max(_Q2.trade_date))
+            .where(_Q2.sid == ScoreDaily.sid).scalar_subquery()))
+        .where(ScoreDaily.trade_date == td, Security.market == "A",
+               or_(Security.list_date.is_(None), Security.list_date < list_cutoff))
+    ).all()
+
+    recs: dict[int, dict] = {}
+    keep_sids: list[int] = []
+    for s, sec, q in rows:
+        code = sec.code
+        if code[:2] in BJ_PREFIXES:
+            continue
+        mcap = float(q.market_cap) if q.market_cap else None
+        if not mcap or mcap >= SMALL_CAP_MAX:
+            continue
+        recs[sec.sid] = {
+            "sid": sec.sid, "code": code, "name": sec.name,
+            "industry": sec.industry, "list_date": sec.list_date,
+            "price": float(q.price) if q.price is not None else None,
+            "chg_pct": float(q.change_pct) if q.change_pct is not None else None,
+            "mcap": mcap,
+            "float_mcap": float(q.float_market_cap) if q.float_market_cap else None,
+            "turn_rate": float(q.turnover_rate) if q.turnover_rate is not None else None,
+            "gate_flags": s.gate_flags or [],
+            "recommend": s.recommend, "value": s.value, "growth": s.growth,
+            "div_yield": s.div_yield,
+            "buy_schloss": s.buy_schloss, "buy_graham_def": s.buy_graham_def,
+            # 财务槽位待填
+            "annual_year": None, "annual_np": None, "annual_ded": None,
+            "annual_rev": None, "annual_debt": None, "annual_date": None,
+            "prev_min_np": None, "latest_np": None, "latest_period": None,
+            "latest_is_annual": False, "latest_eq": None,
+        }
+        keep_sids.append(sec.sid)
+
+    # ---- 财务:fin_income 最近两个年报(扣非/营收/净利) ----
+    ann = (
+        select(FinIncome.sid, FinIncome.report_date,
+               func.row_number().over(
+                   partition_by=FinIncome.sid,
+                   order_by=FinIncome.report_date.desc()).label("rn"))
+        .where(FinIncome.sid.in_(keep_sids),
+               func.month(FinIncome.report_date) == 12,
+               FinIncome.report_date >= date(today.year - 4, 1, 1))
+        .subquery()
+    )
+    for fi in db.execute(
+        select(FinIncome).join(ann, and_(ann.c.sid == FinIncome.sid,
+                                         ann.c.report_date == FinIncome.report_date,
+                                         ann.c.rn <= 2))
+    ).scalars():
+        rec = recs.get(fi.sid)
+        if rec is None:
+            continue
+        m = _loss_min(fi.net_profit, fi.deducted_net_profit)
+        if rec["annual_date"] is None or fi.report_date > rec["annual_date"]:
+            rec.update(annual_date=fi.report_date, annual_year=fi.report_date.year,
+                       annual_np=float(fi.net_profit) if fi.net_profit is not None else None,
+                       annual_ded=float(fi.deducted_net_profit) if fi.deducted_net_profit is not None else None,
+                       annual_rev=float(fi.revenue_total) if fi.revenue_total is not None else None)
+        elif m is not None:
+            rec["prev_min_np"] = m
+
+    # ---- fin_indicator:最新年报(资产负债率兜底营收/净利) + 最新披露期(转亏判定) ----
+    ind_ann = (
+        select(FinIndicator.sid, FinIndicator.report_date,
+               func.row_number().over(
+                   partition_by=FinIndicator.sid,
+                   order_by=FinIndicator.report_date.desc()).label("rn"))
+        .where(FinIndicator.sid.in_(keep_sids),
+               func.month(FinIndicator.report_date) == 12,
+               FinIndicator.report_date >= date(today.year - 4, 1, 1))
+        .subquery()
+    )
+    for fi in db.execute(
+        select(FinIndicator).join(ind_ann, and_(ind_ann.c.sid == FinIndicator.sid,
+                                                ind_ann.c.report_date == FinIndicator.report_date,
+                                                ind_ann.c.rn <= 1))
+    ).scalars():
+        rec = recs.get(fi.sid)
+        if rec is None:
+            continue
+        if fi.debt_ratio is not None:
+            rec["annual_debt"] = float(fi.debt_ratio)
+        if rec["annual_np"] is None and fi.net_profit is not None:
+            rec["annual_np"] = float(fi.net_profit)
+        if rec["annual_rev"] is None and fi.revenue is not None:
+            rec["annual_rev"] = float(fi.revenue)
+        if rec["annual_year"] is None:
+            rec["annual_year"] = fi.report_date.year
+
+    ind_last = (
+        select(FinIndicator.sid, func.max(FinIndicator.report_date).label("md"))
+        .where(FinIndicator.sid.in_(keep_sids))
+        .group_by(FinIndicator.sid).subquery()
+    )
+    for fi in db.execute(
+        select(FinIndicator).join(ind_last, and_(ind_last.c.sid == FinIndicator.sid,
+                                                 ind_last.c.md == FinIndicator.report_date))
+    ).scalars():
+        rec = recs.get(fi.sid)
+        if rec is None:
+            continue
+        rec["latest_period"] = fi.report_date
+        rec["latest_is_annual"] = fi.report_date.month == 12
+        rec["latest_np"] = float(fi.net_profit) if fi.net_profit is not None else None
+
+    # ---- 最新披露期归母权益(资不抵债软盲区;pick._neg_equity_latest_sids 同式) ----
+    bal_last = (
+        select(FinBalance.sid, func.max(FinBalance.report_date).label("md"))
+        .where(FinBalance.sid.in_(keep_sids))
+        .group_by(FinBalance.sid).subquery()
+    )
+    for fb in db.execute(
+        select(FinBalance).join(bal_last, and_(bal_last.c.sid == FinBalance.sid,
+                                               bal_last.c.md == FinBalance.report_date))
+    ).scalars():
+        rec = recs.get(fb.sid)
+        if rec is None:
+            continue
+        eq = fb.equity_parent if fb.equity_parent is not None else fb.equity_total
+        rec["latest_eq"] = float(eq) if eq is not None else None
+
+    # ---- 行情历史:近 ~75 自然日(现窗约 43 行)→20日均价/动量/换手自身分位 ----
+    hist: dict[int, list] = defaultdict(list)
+    if qd_max and keep_sids:
+        for sid, tdate, price, turn in db.execute(
+            select(QuoteDaily.sid, QuoteDaily.trade_date, QuoteDaily.price,
+                   QuoteDaily.turnover_rate)
+            .where(QuoteDaily.sid.in_(keep_sids),
+                   QuoteDaily.trade_date >= qd_max - timedelta(days=75))
+            .order_by(QuoteDaily.sid, QuoteDaily.trade_date)
+        ):
+            hist[sid].append((tdate, float(price) if price is not None else None,
+                              float(turn) if turn is not None else None))
+
+    # ---- 文件工件:heat + 榜单池 ----
+    heat = _heat_files()
+    flow: dict = heat["flow"] if heat["latest"] and heat["latest"].get("flow") else {}
+    boards: list = heat["boards"] if heat["latest"] and heat["latest"].get("boards") else []
+    members: dict = heat["members"] or {}
+    member_sets = {b: set(m.get("codes") or []) for b, m in members.items()}
+    zt_snaps = _pool_csv_map("zt", 6)
+    zha_snaps = _pool_csv_map("zha", 2)
+    dt_snaps = _pool_csv_map("dt", 2)
+    qd_compact = qd_max.strftime("%Y%m%d") if qd_max else ""
+    zt_today = dict(zt_snaps[0][1]) if zt_snaps and zt_snaps[0][0] == qd_compact else {}
+    zt_hist = Counter()
+    for _d, m in zt_snaps[1:6]:
+        zt_hist.update(m.keys())
+    zha_yesterday = set(zha_snaps[1][1].keys()) if len(zha_snaps) > 1 else (
+        set(zha_snaps[0][1].keys()) if zha_snaps else set())
+    blacklist = {str(b.get("code") or "").zfill(6)
+                 for b in _read_daily_json().get("blacklist") or []}
+    dt_today = set(dt_snaps[0][1].keys()) if dt_snaps and dt_snaps[0][0] == qd_compact else set()
+
+    # ---- 逐行合成 ----
+    items: list[MicrocapItem] = []
+    for sid, rec in recs.items():
+        series = hist.get(sid) or []
+        prices = [p for _d, p, _t in series if p is not None][-(TURN_WIN_MAX + 1):]
+        turns = [t for _d, _p, t in series if t is not None][-TURN_WIN_MAX:]
+        avg20 = (sum(prices[-20:]) / len(prices[-20:])) if len(prices) >= 5 else None
+        r5 = r20 = None
+        if len(prices) > 5 and prices[-6] > 0:
+            r5 = prices[-1] / prices[-6] - 1
+        if len(prices) > 20 and prices[-21] > 0:
+            r20 = prices[-1] / prices[-21] - 1
+        turn_pctile = None
+        if rec["turn_rate"] is not None and len(turns) >= TURN_MIN_ROWS:
+            below = sum(1 for t in turns if t <= rec["turn_rate"])
+            turn_pctile = below / len(turns)
+        # 涨停生态(榜单池口径:今日行 + 近 5 榜单日频次 + 昨日炸板)
+        zt = zt_today.get(rec["code"])
+        streak = int(zt["连板数"]) if zt and zt.get("连板数") else None
+        seal = float(zt["封板资金"]) if zt and zt.get("封板资金") else None
+        # ---- 排雷分级 ----
+        level, flags = _classify(rec)
+        # ---- 热度 ----
+        fw = flow.get(rec["code"]) or {}
+        inflow_t = fw.get("inflow_t")
+        fm = rec["float_mcap"]
+        inflow_strength = (inflow_t / fm) if (inflow_t is not None and fm) else None
+        d5 = fw.get("inflow_d5")
+        d5_strength = (d5 / fm) if (d5 is not None and fm) else None
+        concepts = [b["name"] for b in boards
+                    if rec["code"] in member_sets.get(b["name"], ())][:3]
+        hscore = heat_score({
+            "inflow_strength": inflow_strength,
+            "inflow_d5_strength": d5_strength,
+            "turn_pctile": turn_pctile,
+            "streak": streak,
+            "r5": r5, "r20": r20,
+            "hot_concept": bool(concepts),
+        })
+        price, bs, bg = rec["price"], rec["buy_schloss"], rec["buy_graham_def"]
+        _ds, _dg, disc, anchor = _discounts(price, bs, bg)
+        pool = "micro" if (rec["mcap"] or 0) < MICRO_CAP_MAX else "small"
+        items.append(MicrocapItem(
+            sid=rec["sid"], code=rec["code"], name=rec["name"], industry=rec["industry"],
+            price=price, chg_pct=rec["chg_pct"], market_cap=rec["mcap"],
+            float_mcap=fm, pool=pool,
+            list_date=rec["list_date"].isoformat() if rec["list_date"] else None,
+            list_date_missing=rec["list_date"] is None,
+            risk_level=level,
+            risk_flags=flags,
+            risk_labels=[RISK_LABELS[f] for f in flags if f in RISK_LABELS],
+            annual_date=rec["annual_date"].isoformat() if rec["annual_date"] else None,
+            annual_np=rec["annual_np"], annual_ded=rec["annual_ded"],
+            annual_rev=rec["annual_rev"],
+            rev_line=float(_st_board_line(rec["code"])),
+            rev_line_ratio=(rec["annual_rev"] / _st_board_line(rec["code"]))
+            if rec["annual_rev"] is not None else None,
+            debt_ratio=rec["annual_debt"],
+            latest_period=rec["latest_period"].isoformat() if rec["latest_period"] else None,
+            latest_np=rec["latest_np"],
+            avg20=round(avg20, 3) if avg20 else None,
+            heat=hscore, heat_band=heat_band(hscore),
+            inflow_t=inflow_t, inflow_strength=inflow_strength,
+            inflow_d5=d5,
+            turn_rate=rec["turn_rate"], turn_pctile=round(turn_pctile, 3) if turn_pctile is not None else None,
+            streak=streak, seal_amt=seal,
+            zt_5d=zt_hist.get(rec["code"], 0),
+            zha_flag=rec["code"] in zha_yesterday or rec["code"] in blacklist,
+            dt_today=rec["code"] in dt_today,
+            r5=round(r5, 4) if r5 is not None else None,
+            r20=round(r20, 4) if r20 is not None else None,
+            hot_concepts=concepts,
+            recommend=rec["recommend"], value=rec["value"], growth=rec["growth"],
+            div_yield=rec["div_yield"], discount=disc, discount_anchor=anchor,
+        ))
+
+    # ---- meta:环境/日历/分布/热榜 ----
+    sent = db.execute(
+        select(SentimentDaily).order_by(SentimentDaily.trade_date.desc()).limit(1)
+    ).scalar_one_or_none()
+    env = {}
+    if sent:
+        env = {"date": sent.trade_date.isoformat(), "state": sent.state,
+               "red_rate": sent.red_rate, "zt_count": sent.zt_count,
+               "zha_rate": sent.zha_rate, "r5": sent.r5,
+               "t": _sentiment_t(db, sent)}
+    # 披露进度:当前窗(雷暴中)/上一窗(出清态)的报告期已披露家数 / 全 A
+    cal = _calendar(today, None, None)
+    total_a = db.execute(
+        select(func.count()).select_from(Security)
+        .where(Security.market == "A")).scalar_one()
+
+    def _progress(period_iso: str | None):
+        if not period_iso or not total_a:
+            return None
+        disclosed = db.execute(
+            select(func.count(func.distinct(FinIndicator.sid)))
+            .where(FinIndicator.report_date == date.fromisoformat(period_iso))).scalar_one()
+        return disclosed / total_a
+
+    if cal["period"]:
+        cal = _calendar(today, _progress(cal["period"]), None)
+    else:
+        cal = _calendar(today, None, _progress(cal.get("last_period")))
+    risk_dist = Counter(it.risk_level for it in items)
+    pool_cnt = Counter(it.pool for it in items)
+    chgs = [it.chg_pct for it in items if it.chg_pct is not None]
+    pool_zt = sum(1 for it in items if it.streak)
+    top_boards = []
+    for b in boards:
+        cnt = sum(1 for it in items if it.code in member_sets.get(b["name"], ()))
+        top_boards.append({**b, "pool_count": cnt, "members_known": b["name"] in member_sets})
+    meta = {
+        "trade_date": key[0], "quote_date": key[2],
+        "env": env, "calendar": cal,
+        "pools": {"micro": pool_cnt.get("micro", 0), "small": pool_cnt.get("small", 0)},
+        "risk_dist": {str(k): risk_dist.get(k, 0) for k in (3, 2, 1, 0)},
+        "pool_effect": {
+            "avg_chg": round(sum(chgs) / len(chgs), 2) if chgs else None,
+            "median_chg": round(sorted(chgs)[len(chgs) // 2], 2) if chgs else None,
+            "red_rate": (sum(1 for c in chgs if c > 0) / len(chgs)) if chgs else None,
+            "zt_count": pool_zt,
+        },
+        "heat": {
+            "date": (heat["latest"] or {}).get("date"),
+            "flow_ok": bool(flow),
+            "missing_members": (heat["latest"] or {}).get("missing_members") or [],
+            "updated_at": (heat["latest"] or {}).get("updated_at"),
+            "boards": top_boards,
+        },
+    }
+    _cache.update(key=key, at=time.time(), items=items, meta=meta)
+    return items, meta
+
+
+def _sentiment_t(db: Session, row) -> float | None:
+    """情绪温度 T:pick._sentiment_snapshot 同式(streak 从近 500 日状态推)。"""
+    from collector.scripts import sentiment_score  # noqa: PLC0415  API 进程延迟导入
+    states = db.execute(
+        select(SentimentDaily.state).where(SentimentDaily.trade_date <= row.trade_date)
+        .order_by(SentimentDaily.trade_date.desc()).limit(500)
+    ).scalars().all()
+    streak = sentiment_score.streak_of(list(reversed(states)))[-1] if states else 0
+    sc = sentiment_score.score_card(
+        {"red_rate": row.red_rate, "zt_count": row.zt_count, "zha_rate": row.zha_rate,
+         "dt_count": row.dt_count, "yz_dt_count": row.yz_dt_count, "r5": row.r5},
+        row.state, streak)
+    return sc["t"] if sc else None
+
+
+# ---------------------------------------------------------------------------
+# 端点
+# ---------------------------------------------------------------------------
+
+SORT_KEYS = {
+    "heat", "inflow_t", "inflow_strength", "turn_rate", "r5", "r20", "streak",
+    "market_cap", "chg_pct", "discount", "recommend", "div_yield", "risk_level",
+    "rev_line_ratio", "value",
+}
+
+
+def _sort_items(items: list[MicrocapItem], sort: str, order: str):
+    attr = sort if sort in SORT_KEYS else "heat"
+
+    def key(it):
+        v = getattr(it, attr)
+        return (v is None, v or 0.0)   # 缺失垫底,与方向无关
+
+    return sorted(items, key=key, reverse=(order != "asc"))
+
+
+@router.get("/overview", response_model=OverviewOut)
+def microcap_overview(db: Session = Depends(get_session)):
+    items, meta = _load_base(db)
+    env = {**meta["env"], "pool_effect": meta["pool_effect"]}
+    mine = {
+        "st_named": sum(1 for it in items if "st_named" in it.risk_flags),
+        "loss_rev_hit": sum(1 for it in items if "loss_rev_hit" in it.risk_flags),
+        "loss_rev_near": sum(1 for it in items if "loss_rev_near" in it.risk_flags),
+        "face_value": sum(1 for it in items if "face_value" in it.risk_flags),
+        "case_filed": sum(1 for it in items if "case_filed" in it.risk_flags),
+        "year_loss": sum(1 for it in items if "year_loss" in it.risk_flags),
+    }
+    return OverviewOut(
+        trade_date=meta["trade_date"], quote_date=meta["quote_date"],
+        pools=meta["pools"], risk_dist=meta["risk_dist"],
+        env=env, calendar=meta["calendar"], heat=meta["heat"], mine_stats=mine,
+    )
+
+
+@router.get("/board", response_model=BoardOut)
+def microcap_board(
+    pool: str | None = Query(None, pattern="^(micro|small|all)$", description="缺省=两池全量"),
+    risk: str | None = Query(None, description="风险等级复选(逗号分隔): 3/2/1/0"),
+    band: str | None = Query(None, pattern="^(hot|warm|cool)$", description="热度档"),
+    concept: str | None = Query(None, description="热门概念名,精确匹配"),
+    industry: str | None = Query(None),
+    keyword: str | None = Query(None, description="代码/名称包含"),
+    safe_only: bool = Query(False, description="只看安全区(risk_level=0)"),
+    sort: str = "heat",
+    order: str = Query("desc", pattern="^(asc|desc)$"),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=1, le=200),
+    fresh: bool = Query(False, description="绕过进程缓存重算"),
+    db: Session = Depends(get_session),
+):
+    items, meta = _load_base(db, fresh=fresh)
+    if pool and pool != "all":
+        items = [it for it in items if it.pool == pool]
+    if safe_only:
+        items = [it for it in items if it.risk_level == 0]
+    elif risk:
+        wants = {int(x) for x in risk.split(",") if x.strip().isdigit()}
+        if wants:
+            items = [it for it in items if it.risk_level in wants]
+    if band:
+        items = [it for it in items if it.heat_band == band]
+    if concept:
+        items = [it for it in items if concept in it.hot_concepts]
+    if industry:
+        items = [it for it in items if it.industry == industry]
+    if keyword:
+        kw = keyword.strip().lower()
+        items = [it for it in items
+                 if kw in it.code.lower() or kw in it.name.lower()]
+    items = _sort_items(items, sort, order)
+    total = len(items)
+    start = (page - 1) * page_size
+    return BoardOut(
+        total=total, page=page, page_size=page_size,
+        meta={"trade_date": meta["trade_date"], "quote_date": meta["quote_date"],
+              "heat_date": meta["heat"]["date"], "flow_ok": meta["heat"]["flow_ok"]},
+        items=items[start:start + page_size],
+    )

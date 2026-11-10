@@ -4,6 +4,7 @@ import { healStaleChunk } from '../lib/chunkRecovery.js'
 const routes = [
   { path: '/', name: 'list', component: () => import('../views/StockListView.vue') },
   { path: '/pick', name: 'pick', component: () => import('../views/PickView.vue') },
+  { path: '/microcap', name: 'microcap', component: () => import('../views/MicrocapView.vue') },
   { path: '/stock/:code', name: 'detail', component: () => import('../views/StockDetailView.vue') },
   { path: '/agro', name: 'agro', component: () => import('../views/AgroView.vue') },
   { path: '/commodity', name: 'commodity', component: () => import('../views/CommodityView.vue') },
