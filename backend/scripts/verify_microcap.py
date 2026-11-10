@@ -214,6 +214,28 @@ def test_live():
     p2 = get("/api/microcap/board?page_size=5&page=2")
     check("分页total一致", p2["total"] == d["total"] and len(p2["items"]) <= 5)
 
+    # 作战面板与快捷预设(2026-11-11)
+    check("battle字段齐", all(k in ov["battle"] for k in ("premium_hint", "trap", "zt_yd", "ladder")),
+          str(ov.get("battle", {}).keys()))
+    lad = ov["battle"]["ladder"]
+    check("梯队自洽", isinstance(lad["dist"], dict)
+          and sum(lad["dist"].values()) == lad["total"]
+          and (lad["max"] == 0 or str(lad["max"]) in lad["dist"]), str(lad))
+    check("打法提示非空", bool(ov["battle"]["premium_hint"]), str(ov["battle"]["premium_hint"]))
+    ztf = get("/api/microcap/board?zt=true&page_size=200")
+    check("zt预设全涨停(空集放行)", ztf["total"] == 0
+          or all(it["streak"] is not None for it in ztf["items"]))
+    brk = get("/api/microcap/board?broke=true&page_size=200")
+    check("断板预设", brk["total"] == 0
+          or all(it["zt_yesterday"] and it["streak"] is None for it in brk["items"]))
+    trn = get("/api/microcap/board?turn=true&page_size=50")
+    check("扭亏预设非空且全命中", trn["total"] > 0
+          and all(it["turn_profit"] for it in trn["items"]))
+    if trn["items"]:
+        t0 = trn["items"][0]
+        check("扭亏样本含雷区或ST底", t0["risk_level"] >= 1 or "ST" in t0["name"].upper(),
+              f"{t0['name']} risk={t0['risk_level']}")
+
 
 if __name__ == "__main__":
     test_classify_levels()

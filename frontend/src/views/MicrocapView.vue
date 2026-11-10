@@ -22,6 +22,7 @@ const error = ref('')
 const pool = ref('')          // ''=两池 / micro / small
 const band = ref('')          // ''=全部 / hot / warm / cool
 const risk = ref('')          // ''=全部 / 3 / 2 / 1 / 0
+const preset = ref('')        // ''=无 / zt 今日涨停 / broke 断板观察 / turn 扭亏摘帽候
 const concept = ref('')
 const industry = ref('')
 const keyword = ref('')
@@ -78,6 +79,9 @@ async function loadBoard() {
     const d = await get('/microcap/board', {
       pool: pool.value || undefined, band: band.value || undefined,
       risk: risk.value || undefined, concept: concept.value || undefined,
+      zt: preset.value === 'zt' || undefined,
+      broke: preset.value === 'broke' || undefined,
+      turn: preset.value === 'turn' || undefined,
       industry: industry.value || undefined, keyword: keyword.value || undefined,
       sort: sort.value, order: order.value, page: page.value, page_size: PAGE_SIZE,
     })
@@ -110,11 +114,15 @@ function setSortToggle(key) {
 function setConcept(name) {
   setFilter(() => { concept.value = concept.value === name ? '' : name })
 }
+function setPreset(p) {
+  setFilter(() => { preset.value = preset.value === p ? '' : p })
+}
 function syncHash() {
   const q = new URLSearchParams()
   for (const [k, v] of [['pool', pool.value], ['band', band.value], ['risk', risk.value],
-    ['concept', concept.value], ['industry', industry.value], ['kw', keyword.value],
-    ['sort', sort.value], ['order', order.value], ['page', page.value > 1 ? page.value : '']]) {
+    ['preset', preset.value], ['concept', concept.value], ['industry', industry.value],
+    ['kw', keyword.value], ['sort', sort.value], ['order', order.value],
+    ['page', page.value > 1 ? page.value : '']]) {
     if (v !== '' && v != null) q.set(k, v)
   }
   const qs = q.toString()
@@ -135,13 +143,16 @@ const chgClass = (v) => v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'fl
 const lineClass = (r) => r == null ? '' : r < 1 ? 'down' : r < 2 ? 'warn-amber' : ''
 const turnPctileTxt = (it) => it.turn_pctile == null ? '—' : `${Math.round(it.turn_pctile * 100)}%`
 const ztTxt = (it) => {
-  if (it.streak) return `${it.streak}板`
+  if (it.streak) return (it.zt_yesterday ? '晋级↑' : '') + `${it.streak}板`
+  if (it.zt_yesterday) return '断板↓'
   if (it.dt_today) return '跌停'
   if (it.zha_flag) return '炸板⚠'
   if (it.zt_5d > 0) return `近5日${it.zt_5d}次`
   return ''
 }
-const ztClass = (it) => it.streak ? 'zt-hot' : it.dt_today ? 'down' : it.zha_flag ? 'warn-amber' : 'flat'
+const ztClass = (it) => it.streak ? 'zt-hot'
+  : it.zt_yesterday ? 'warn-amber'
+  : it.dt_today ? 'down' : it.zha_flag ? 'warn-amber' : 'flat'
 const sealTxt = (it) => it.seal_amt == null ? '' : yi(it.seal_amt)
 const flowMissing = computed(() => overview.value && !overview.value.heat?.flow_ok)
 const calLabel = computed(() => {
@@ -169,6 +180,7 @@ onMounted(async () => {
   if (q.get('pool')) pool.value = q.get('pool')
   if (q.get('band')) band.value = q.get('band')
   if (q.get('risk')) risk.value = q.get('risk')
+  if (q.get('preset')) preset.value = q.get('preset')
   if (q.get('concept')) concept.value = q.get('concept')
   if (q.get('industry')) industry.value = q.get('industry')
   if (q.get('kw')) keyword.value = q.get('kw')
@@ -243,6 +255,44 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
         </div>
       </div>
 
+      <!-- ── 投机作战面板 ── -->
+      <div class="card battle-card">
+        <div class="battle-grid">
+          <div class="bt-block">
+            <div class="bt-title">今日打法 <span class="bt-sub">按情绪状态的历史校准</span></div>
+            <div class="bt-row">
+              状态 <b :class="(overview.env?.t ?? 50) >= 60 ? 'zt-hot' : 'flat'">{{ overview.env?.state ?? '—' }}</b>
+              <span v-if="overview.env?.t != null"> · 温度 {{ overview.env.t }}</span>
+            </div>
+            <div class="bt-hint" v-if="overview.battle?.premium_hint">
+              该状态下涨停股次日竞价 <b>{{ overview.battle.premium_hint }}</b>
+            </div>
+            <div class="bt-trap" v-if="overview.battle?.trap">
+              ⚠ 陷阱日：昨日极弱今日普通——该形态次日仅 +0.55%/胜率50%，全局禁隔夜
+            </div>
+          </div>
+          <div class="bt-block">
+            <div class="bt-title">池内昨日涨停 → 今日 <span class="bt-sub">打板赚钱效应</span></div>
+            <div class="bt-row">
+              <b>{{ overview.battle?.zt_yd?.n ?? '—' }}</b> 只
+              · 均涨 <b :class="chgClass(overview.battle?.zt_yd?.avg_chg)">{{ pctNum(overview.battle?.zt_yd?.avg_chg) }}</b>
+              · 红盘 <b>{{ overview.battle?.zt_yd?.red_rate != null ? Math.round(overview.battle.zt_yd.red_rate * 100) + '%' : '—' }}</b>
+              · 晋级 <b class="zt-hot">{{ overview.battle?.zt_yd?.promo ?? '—' }}</b>
+            </div>
+            <div class="bt-hint">红盘率 ≥60% 赚钱效应在可打板；≤40% 退潮期只低吸不追高</div>
+          </div>
+          <div class="bt-block">
+            <div class="bt-title">连板梯队 <span class="bt-sub">全市场 {{ overview.battle?.ladder?.total ?? 0 }} 家涨停</span></div>
+            <div class="ladder-row">
+              <span v-for="(cnt, lv) in overview.battle?.ladder?.dist || {}" :key="lv" class="lv-chip"
+                :class="{ top: +lv === overview.battle?.ladder?.max }">{{ lv }}板×{{ cnt }}</span>
+              <span v-if="!overview.battle?.ladder?.total" class="bt-hint">今日榜单未出</span>
+            </div>
+            <div class="bt-hint">最高 {{ overview.battle?.ladder?.max ?? '—' }} 板——空间板的身位参照，高位断板=题材退潮信号</div>
+          </div>
+        </div>
+      </div>
+
       <!-- ── 热门概念面板 ── -->
       <div class="card concept-card">
         <div class="sec-title">热门概念题材
@@ -263,6 +313,13 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 
       <!-- ── 清单 ── -->
       <div class="card list-card">
+        <div class="preset-row">
+          <span class="preset-label">快捷</span>
+          <button class="chip" :class="{ on: preset === 'zt' }" title="今日涨停池内的票(含晋级),打板/接力视角" @click="setPreset('zt')">今日涨停</button>
+          <button class="chip" :class="{ on: preset === 'broke' }" title="昨日涨停今日未再板——断板观察:强承接低吸 or 出货规避,看当日涨幅分辨" @click="setPreset('broke')">断板观察</button>
+          <button class="chip" :class="{ on: preset === 'turn' }" title="年报亏损或已ST,最新披露期净利润转正——ST即摘帽博弈候选,非ST即困境反转候选(业绩面信号,非交易所认定)" @click="setPreset('turn')">扭亏/摘帽候</button>
+          <button v-if="preset" class="chip" @click="setPreset(preset)">清除</button>
+        </div>
         <div class="toolbar">
           <div class="tabs">
             <button v-for="t in POOL_TABS" :key="t.key" class="tab" :class="{ active: pool === t.key }"
@@ -310,14 +367,22 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
                   <b>{{ s.name }}</b>
                   <span class="cd">{{ s.code }}</span>
                   <span v-if="heatOnMine(s)" class="mine-hot" title="雷区+高热度:摘帽/重组预期的炒作重地,波动极大,务必看清旗子">雷上加热🔥</span>
+                  <span v-if="s.turn_profit" class="turn-badge" title="年报亏损或已ST,最新披露期净利润已转正——ST 即摘帽博弈候选,非 ST 即困境反转候选(业绩面信号,非交易所认定)">扭亏🔥</span>
                 </div>
                 <div v-if="s.hot_concepts.length" class="concept-tags">
-                  <span v-for="c in s.hot_concepts.slice(0, 2)" :key="c" class="ctag">{{ c }}</span>
+                  <span v-for="c in s.hot_concepts.slice(0, 2)" :key="c" class="ctag"
+                    :class="{ lead: s.concept_lead?.includes(c) }"
+                    :title="s.concept_lead?.includes(c) ? c + ' 的池内身位最高(连板/热度)' : ''">{{ (s.concept_lead?.includes(c) ? '👑' : '') + c }}</span>
                   <span v-if="s.hot_concepts.length > 2" class="ctag more" :title="s.hot_concepts.join(' · ')">+{{ s.hot_concepts.length - 2 }}</span>
                 </div>
               </td>
               <td><span class="risk-badge" :class="RISK_META[s.risk_level].cls" :title="riskTitle(s)">{{ RISK_META[s.risk_level].label }}</span></td>
-              <td><b :class="s.heat >= 70 ? 'zt-hot' : ''">{{ s.heat?.toFixed(0) ?? '—' }}</b></td>
+              <td>
+                <div class="heat-cell">
+                  <b :class="s.heat >= 70 ? 'zt-hot' : ''">{{ s.heat?.toFixed(0) ?? '—' }}</b>
+                  <i v-if="s.heat != null" class="hbar"><u :style="{ width: s.heat + '%' }"></u></i>
+                </div>
+              </td>
               <td class="l">
                 <span v-if="ztTxt(s)" :class="ztClass(s)">{{ ztTxt(s) }}</span>
                 <span v-if="s.seal_amt" class="seal" title="封板资金">封{{ sealTxt(s) }}</span>
@@ -349,6 +414,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           <div v-for="s in board.items" :key="s.sid" class="m-item" @click="router.push(`/stock/${s.code}`)">
             <div class="m-row1">
               <b>{{ s.name }}</b><span class="cd">{{ s.code }}</span>
+              <span v-if="s.turn_profit" class="turn-badge">扭亏🔥</span>
               <span class="risk-badge" :class="RISK_META[s.risk_level].cls">{{ RISK_META[s.risk_level].label }}</span>
               <span class="m-pick">{{ s.heat?.toFixed(0) ?? '—' }}热</span>
             </div>
@@ -376,6 +442,13 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
       <!-- ── 口径说明 ── -->
       <div class="card note-card">
         <b>怎么读这块看板</b>
+        <p>
+          <b>作战面板三问三答</b>:①今天什么打法——按大盘情绪状态的历史校准(极强日涨停股次日竞价 +3.6%/胜率73%,
+          炸板股 -1.6% 应回避,极弱转普通的「陷阱日」禁隔夜);②今天打板赚不赚钱——池内昨日涨停股今日均涨/红盘率/晋级数,
+          红盘率 ≥60% 赚钱效应在、≤40% 退潮只低吸;③身位在哪——全市场连板梯队,最高板是空间参照,
+          高位断板=题材退潮信号。<b>快捷预设</b>:今日涨停(打板/接力)、断板观察(强承接低吸 or 出货规避,看当日涨幅分辨)、
+          扭亏/摘帽候(年报亏损或已 ST、最新披露期转正——摘帽博弈/困境反转的正主题,业绩面信号非交易所认定)。
+        </p>
         <p>
           <b>池子</b>:总市值切档,微盘&lt;25 亿、小票 25~60 亿;排北交所、剔上市不满 1 年次新。
           <b>热度分</b>(0~100)只是排序器:主力净流入强度(今日/流通市值 0~30、5日 0~15)、
@@ -446,7 +519,29 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .concept-tags { margin-top: 2px; display: flex; gap: 4px; }
 .ctag { font-size: 10.5px; color: #2d6cdf; background: #eef3fd; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
 .ctag.more { color: #8a94a6; background: #f4f5f7; }
+.ctag.lead { background: #fdf6ec; color: #b05e10; font-weight: 600; }
 .mine-hot { font-size: 10.5px; color: #fff; background: #c0392b; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+.turn-badge { font-size: 10.5px; color: #0e7a5f; background: #e6f5f0; border: 1px solid #b8e0d3; border-radius: 4px; padding: 1px 5px; white-space: nowrap; }
+/* 作战面板:三块并排,窄屏纵叠 */
+.battle-card { display: block; }
+.battle-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.bt-block { min-width: 0; }
+.bt-title { font-size: 13.5px; font-weight: 600; margin-bottom: 6px; }
+.bt-sub { font-weight: 400; color: #8a94a6; font-size: 11.5px; margin-left: 6px; }
+.bt-row { font-size: 13px; color: #5a6472; }
+.bt-hint { font-size: 11.5px; color: #8a94a6; margin-top: 5px; }
+.bt-trap { font-size: 11.5px; color: #a93226; background: #fdeeee; border-radius: 6px; padding: 4px 8px; margin-top: 5px; }
+.ladder-row { display: flex; gap: 5px; flex-wrap: wrap; }
+.lv-chip { font-size: 11.5px; color: #5a6472; background: #f4f5f7; border-radius: 4px; padding: 2px 7px; }
+.lv-chip.top { color: #c0392b; background: #fdeeee; font-weight: 700; }
+/* 快捷预设行 */
+.preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.preset-label { font-size: 12px; color: #8a94a6; }
+.preset-row .chip.on { background: #f4eefd; border-color: #b9a3e8; color: #6c3fc5; font-weight: 600; }
+/* 热度列迷你条 */
+.heat-cell { display: flex; flex-direction: column; gap: 3px; min-width: 46px; }
+.hbar { display: block; height: 3px; background: #eef0f3; border-radius: 2px; overflow: hidden; }
+.hbar u { display: block; height: 100%; background: linear-gradient(90deg, #e67e22, #c0392b); }
 .mc-table { font-size: 12.5px; }
 .mc-table th { white-space: nowrap; font-weight: 600; cursor: pointer; }
 .mc-table th.on { color: #2d6cdf; }
@@ -472,6 +567,29 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 @media (max-width: 600px) {
   .head-title { font-size: 17px; }
   .head-row { gap: 8px; }
+  /* 作战面板纵叠:三问各成块,梯队横滑 */
+  .battle-grid { grid-template-columns: 1fr; gap: 10px; }
+  .ladder-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .ladder-row::-webkit-scrollbar { display: none; }
+  .lv-chip { flex: none; }
+  /* 快捷预设单行横滑 */
+  .preset-row {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+    margin-inline: -11px;
+    padding-inline: 11px;
+  }
+  .preset-row::-webkit-scrollbar { display: none; }
+  .preset-row .chip { flex: none; white-space: nowrap; }
   /* 环境行:五个指标一条横滑,不折行 */
   .env-row {
     flex-wrap: nowrap;

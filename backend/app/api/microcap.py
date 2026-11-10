@@ -120,6 +120,11 @@ RISK_LABELS = {
     "q_turn_loss": "最新期转亏",
 }
 
+# 情绪状态 → 次日竞价溢价校准(与 fetch_sentiment.PREMIUM 同源快照,那边改了须同步这里;
+# 不直接 import 采集脚本——其模块级会清代理环境变量,不值得为 4 行字典引入副作用)
+_PREMIUM_LOCAL = {"极强": "+3.6%(胜率73%)", "普通": "+2.5%(67%)",
+                  "回暖": "+2.0%(60%)", "极弱": "+2.2%(63%)"}
+
 
 # ---------------------------------------------------------------------------
 # 纯函数:排雷分级与热度打分(离线可测,verify_microcap.py 的不变量落在这里)
@@ -405,8 +410,11 @@ class MicrocapItem(BaseModel):
     streak: int | None = None              # 今日连板数(非涨停日为 None)
     seal_amt: float | None = None          # 封板资金(元)
     zt_5d: int = 0                         # 近 5 个榜单日涨停次数
+    zt_yesterday: bool = False             # 上一榜单日在涨停池(今日晋级/断板的判定底)
     zha_flag: bool = False                 # 昨日炸板/黑名单
     dt_today: bool = False
+    turn_profit: bool = False              # 扭亏/摘帽候:年报亏损(或已ST)且最新披露期转正
+    concept_lead: list[str] = []           # 此股是其龙头(身位最高)的热门概念名
     r5: float | None = None
     r20: float | None = None
     hot_concepts: list[str] = []
@@ -426,6 +434,7 @@ class OverviewOut(BaseModel):
     risk_dist: dict
     env: dict
     calendar: dict
+    battle: dict
     heat: dict
     mine_stats: dict
 
@@ -613,13 +622,19 @@ def _load_base(db: Session, fresh: bool = False):
     dt_snaps = _pool_csv_map("dt", 2)
     qd_compact = qd_max.strftime("%Y%m%d") if qd_max else ""
     zt_today = dict(zt_snaps[0][1]) if zt_snaps and zt_snaps[0][0] == qd_compact else {}
+    # 「上一榜单日」涨停池:今日快照在列时取它的前一份,否则(周末/榜单未出)最新那份即上一交易日
+    if zt_snaps and zt_snaps[0][0] == qd_compact:
+        zt_prev_map = dict(zt_snaps[1][1]) if len(zt_snaps) > 1 else {}
+    else:
+        zt_prev_map = dict(zt_snaps[0][1]) if zt_snaps else {}
     zt_hist = Counter()
     for _d, m in zt_snaps[1:6]:
         zt_hist.update(m.keys())
     zha_yesterday = set(zha_snaps[1][1].keys()) if len(zha_snaps) > 1 else (
         set(zha_snaps[0][1].keys()) if zha_snaps else set())
+    daily_json = _read_daily_json()
     blacklist = {str(b.get("code") or "").zfill(6)
-                 for b in _read_daily_json().get("blacklist") or []}
+                 for b in daily_json.get("blacklist") or []}
     dt_today = set(dt_snaps[0][1].keys()) if dt_snaps and dt_snaps[0][0] == qd_compact else set()
 
     # ---- 逐行合成 ----
@@ -638,10 +653,17 @@ def _load_base(db: Session, fresh: bool = False):
         if rec["turn_rate"] is not None and len(turns) >= TURN_MIN_ROWS:
             below = sum(1 for t in turns if t <= rec["turn_rate"])
             turn_pctile = below / len(turns)
-        # 涨停生态(榜单池口径:今日行 + 近 5 榜单日频次 + 昨日炸板)
+        # 涨停生态(榜单池口径:今日行 + 近 5 榜单日频次 + 上一榜单日 + 昨日炸板)
         zt = zt_today.get(rec["code"])
         streak = int(zt["连板数"]) if zt and zt.get("连板数") else None
         seal = float(zt["封板资金"]) if zt and zt.get("封板资金") else None
+        zt_prev = rec["code"] in zt_prev_map
+        # ---- 扭亏/摘帽候:年报亏损(或已ST)且最新披露期转正——雷区里的投机正主题 ----
+        annual_min = _loss_min(rec["annual_np"], rec["annual_ded"])
+        turn_profit = ((annual_min is not None and annual_min < 0) or "ST" in str(rec["name"]).upper()) \
+            and rec["latest_np"] is not None and rec["latest_np"] > 0 \
+            and rec["annual_date"] is not None and rec["latest_period"] is not None \
+            and rec["latest_period"] > rec["annual_date"]
         # ---- 排雷分级 ----
         level, flags = _classify(rec)
         # ---- 热度 ----
@@ -689,14 +711,51 @@ def _load_base(db: Session, fresh: bool = False):
             turn_rate=rec["turn_rate"], turn_pctile=round(turn_pctile, 3) if turn_pctile is not None else None,
             streak=streak, seal_amt=seal,
             zt_5d=zt_hist.get(rec["code"], 0),
+            zt_yesterday=zt_prev,
             zha_flag=rec["code"] in zha_yesterday or rec["code"] in blacklist,
             dt_today=rec["code"] in dt_today,
+            turn_profit=bool(turn_profit),
             r5=round(r5, 4) if r5 is not None else None,
             r20=round(r20, 4) if r20 is not None else None,
             hot_concepts=concepts,
             recommend=rec["recommend"], value=rec["value"], growth=rec["growth"],
             div_yield=rec["div_yield"], discount=disc, discount_anchor=anchor,
         ))
+
+    # ---- 投机作战素材:概念龙头(身位) + 昨日涨停今日表现(池内) + 全市场连板梯队 ----
+    lead_by_code: dict[str, list[str]] = {}
+    for b in boards:
+        name = b["name"]
+        if not member_sets.get(name):
+            continue
+        cands = [it for it in items if name in it.hot_concepts]
+        if not cands:
+            continue
+        # 身位=今日连板,次序=热度(无板时热度高者也算「资金身位」)
+        top = max(cands, key=lambda it: (it.streak or 0, it.heat or 0))
+        lead_by_code.setdefault(top.code, []).append(name)
+    for it in items:
+        it.concept_lead = lead_by_code.get(it.code, [])
+
+    yd = [it for it in items if it.zt_yesterday]
+    yd_chgs = [it.chg_pct for it in yd if it.chg_pct is not None]
+    zt_yd_perf = {
+        "n": len(yd),
+        "avg_chg": round(sum(yd_chgs) / len(yd_chgs), 2) if yd_chgs else None,
+        "red_rate": (sum(1 for c in yd_chgs if c > 0) / len(yd_chgs)) if yd_chgs else None,
+        "promo": sum(1 for it in yd if it.streak),   # 今日再板=晋级
+    }
+    ladder_dist = Counter()
+    ladder_max = 0
+    for row in zt_today.values():
+        try:
+            lv = int(row.get("连板数") or 1)
+        except (TypeError, ValueError):
+            lv = 1
+        ladder_dist[lv] += 1
+        ladder_max = max(ladder_max, lv)
+    ladder = {"max": ladder_max, "total": sum(ladder_dist.values()),
+              "dist": {str(k): ladder_dist[k] for k in sorted(ladder_dist, reverse=True)}}
 
     # ---- meta:环境/日历/分布/热榜 ----
     sent = db.execute(
@@ -730,13 +789,24 @@ def _load_base(db: Session, fresh: bool = False):
     pool_cnt = Counter(it.pool for it in items)
     chgs = [it.chg_pct for it in items if it.chg_pct is not None]
     pool_zt = sum(1 for it in items if it.streak)
+    # 打法提示:当日 daily.json 新鲜则用采集侧落盘的 premium_hint/trap,
+    # 否则退 _PREMIUM_LOCAL 按最新状态查表(字典与 fetch_sentiment 同源)
+    daily_fresh = daily_json.get("date") == (qd_max.isoformat() if qd_max else "")
+    premium_hint = (daily_json.get("premium_hint") if daily_fresh else None) \
+        or _PREMIUM_LOCAL.get(env.get("state") or "")
+    battle = {
+        "premium_hint": premium_hint,
+        "trap": bool(daily_json.get("trap")) if daily_fresh else False,
+        "zt_yd": zt_yd_perf,
+        "ladder": ladder,
+    }
     top_boards = []
     for b in boards:
         cnt = sum(1 for it in items if it.code in member_sets.get(b["name"], ()))
         top_boards.append({**b, "pool_count": cnt, "members_known": b["name"] in member_sets})
     meta = {
         "trade_date": key[0], "quote_date": key[2],
-        "env": env, "calendar": cal,
+        "env": env, "calendar": cal, "battle": battle,
         "pools": {"micro": pool_cnt.get("micro", 0), "small": pool_cnt.get("small", 0)},
         "risk_dist": {str(k): risk_dist.get(k, 0) for k in (3, 2, 1, 0)},
         "pool_effect": {
@@ -808,7 +878,8 @@ def microcap_overview(db: Session = Depends(get_session)):
     return OverviewOut(
         trade_date=meta["trade_date"], quote_date=meta["quote_date"],
         pools=meta["pools"], risk_dist=meta["risk_dist"],
-        env=env, calendar=meta["calendar"], heat=meta["heat"], mine_stats=mine,
+        env=env, calendar=meta["calendar"], battle=meta["battle"],
+        heat=meta["heat"], mine_stats=mine,
     )
 
 
@@ -821,6 +892,9 @@ def microcap_board(
     industry: str | None = Query(None),
     keyword: str | None = Query(None, description="代码/名称包含"),
     safe_only: bool = Query(False, description="只看安全区(risk_level=0)"),
+    zt: bool = Query(False, description="预设:只看今日涨停"),
+    broke: bool = Query(False, description="预设:上一榜单日涨停、今日断板"),
+    turn: bool = Query(False, description="预设:扭亏/摘帽候选(年报亏损或已ST,最新披露期转正)"),
     sort: str = "heat",
     order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -837,6 +911,12 @@ def microcap_board(
         wants = {int(x) for x in risk.split(",") if x.strip().isdigit()}
         if wants:
             items = [it for it in items if it.risk_level in wants]
+    if zt:
+        items = [it for it in items if it.streak is not None]
+    if broke:
+        items = [it for it in items if it.zt_yesterday and it.streak is None]
+    if turn:
+        items = [it for it in items if it.turn_profit]
     if band:
         items = [it for it in items if it.heat_band == band]
     if concept:
