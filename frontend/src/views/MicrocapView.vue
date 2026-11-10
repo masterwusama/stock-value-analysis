@@ -145,7 +145,8 @@ const yi = (v) => v == null ? '—' : `${(v / 1e8).toFixed(v >= 1e9 ? 1 : 2)}亿
 const pctS = (v) => v == null ? '—' : `${v > 0 ? '+' : ''}${(v * 100).toFixed(1)}%`
 const pctNum = (v) => v == null ? '—' : `${v > 0 ? '+' : ''}${v.toFixed(1)}%`   // 后端已是百分数
 const chgClass = (v) => v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'flat'
-const lineClass = (r) => r == null ? '' : r < 1 ? 'down' : r < 2 ? 'warn-amber' : ''
+// 营收/线着色是「危险度」语义不是涨跌方向:<1 触线=红(危险),1~2 边缘=琥珀
+const lineClass = (r) => r == null ? '' : r < 1 ? 'line-hit' : r < 2 ? 'warn-amber' : ''
 const turnPctileTxt = (it) => it.turn_pctile == null ? '—' : `${Math.round(it.turn_pctile * 100)}%`
 const ztTxt = (it) => {
   if (it.streak) return (it.zt_yesterday ? '晋级↑' : '') + `${it.streak}板`
@@ -577,8 +578,10 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .cal-sub { margin-left: 6px; opacity: 0.85; font-size: 12px; }
 .env-row { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted, #8a94a6); }
 .env-item b { margin-left: 4px; font-size: 13px; }
-.up { color: #c0392b; } .down { color: #1e7e34; } .flat { color: #8a94a6; }
+/* 涨跌色走全站令牌(红涨绿跌),不再本页硬编码——与列表页/掘金台同一根色管 */
+.up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--sub-deep, #8a94a6); }
 .warn-amber { color: #b8860b; }
+.line-hit { color: var(--up); font-weight: 600; }   /* 营收触线:红色危险,勿与涨跌混淆 */
 .zt-hot { color: #c0392b; font-weight: 600; }
 .marg-pos { color: #c0392b; font-weight: 600; }
 .flow-warn { background: #fff7e6; color: #8a6d1a; border: 1px solid #f0dcb0; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; }
