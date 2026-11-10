@@ -461,6 +461,11 @@ def main():
                     print("[aviation] %s: CAAC %d 点 %s~%s" % (
                         code, len(merged), merged[0][0], merged[-1][0]), flush=True)
             if not caac_codes:
+                # 数据无更新(月份已齐):旧点原样带过并标 expected_skip,
+                # 不是源失败——继承机制若再碰同码不打 warning
+                for code, pts in _old_caac.items():
+                    raw[code] = pts
+                    expected_skip.add(code)
                 print("[aviation] CAAC: 无新月(全跳过)", flush=True)
         except Exception as e:  # noqa: BLE001 CAAC 整链失败继承旧档,不阻断月度组
             warnings.append("CAAC: %s(%s)" % (type(e).__name__, str(e)[:80]))
