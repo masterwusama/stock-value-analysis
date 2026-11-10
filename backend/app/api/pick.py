@@ -34,6 +34,12 @@ buy vs 研报回避-轻),有深度覆盖处以研报结论为准对 tier 收紧�
 只在中报/三季报转负、年报仍为正的不进硬门槛(披露面尚无年报级定性事实),
 但强制封顶 watch(只降不升,na 本就低于 watch 不回灌)——PB 锚在负权益下
 已失效,分数照给、分歧亮在风险旗,与研报裁决层同一套「只降不升」语法。
+
+净有息负债三级降档(2026-11-10):净现金(货币资金含类现金 − 有息负债)/市值
+深度为负=重杠杆——−30% 起灰带线性扣分(−80% 扣满 −10),<−100% 封顶 watch,
+<−200% 封顶 na。口径取窄口径(net_cash_w/原币市值),与加分侧的宽口径
+net_cash_ratio(减全部负债)是两把尺;银行结构性 NULL 不罚,非银金融不豁免;
+回避留给定性事实,重杠杆只降档不进硬门槛。
 无 R 的标的不直接出局:施洛斯分≥70 且现价较买点折 ≥10% 走烟蒂通道,
 分数封顶 65(烟蒂按定义到不了「强推」)。
 """
@@ -104,6 +110,19 @@ AGE_LATE_SOFT = 3         # 年报基准落后「应有年报期」3 个月内�
 AGE_LATE_PENALTY = 8.0    # 落后 >3 月:缺最新年报
 AGE_LATE_HARD = 15        # 落后 >15 月:连前年年报都缺
 AGE_LATE_HARD_PENALTY = 18.0
+
+# ---- 净有息负债/市值 三级降档(2026-11-10) ----
+# 口径 = score_daily.net_cash_w(加权类现金:货币资金+交易性金融资产+应收票据×0.4+定期存款等
+# − 五桶有息负债)÷ 行情原币市值,负值=净有息负债占比。全链路此前对「净现金水平为负」零惩罚
+# (NCR_BONUS 只正向垫分、施洛斯只罚债务增长不罚水平),派分不动,决策合成层分级承接:
+# −30% 起灰带线性扣分(−80% 扣满);<−100% 封顶 watch;<−200% 封顶 na——回避留给定性事实,
+# 重杠杆不进硬门槛。NULL(银行无「货币资金」科目等)=算不出,不罚;非银金融(券商/保险)
+# 不豁免(用户决策:其杠杆同样是风险;银行天然不命中)。普查见 scripts/audit_net_cash.py。
+NCW_GRAY_FROM = -0.30     # 灰带起点(轻于此完全无感)
+NCW_GRAY_K = 0.20         # 每深 1pp 扣 0.2 分
+NCW_GRAY_CAP = 10.0       # 灰带扣分封顶(−80% 扣满,再深由档位线接管)
+NCW_CAP_WATCH = -1.00     # 净有息负债≈一倍市值:不进买入区
+NCW_CAP_NA = -2.00        # 净有息负债≈两倍市值:连观察区都不进
 
 STRONG_MIN = 78.0
 BUY_MIN = 65.0
@@ -259,11 +278,13 @@ def _discounts(price, buy_s, buy_g):
 
 
 def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late,
-           negeq: bool = False) -> dict:
+           negeq: bool = False, ncw: float | None = None) -> dict:
     """pick/tier/理由合成。入参都是纯量,验证脚本可直接离线复用。
 
     negeq=最新披露期归母权益为负(中报/三季报转负、年报仍为正的盲区):
     强制封顶 watch 并亮旗,不没收 pick 分数。
+    ncw=净有息负债/市值(net_cash_w/原币市值,负值=净负债):−30% 起灰带扣分,
+    <−100% 封顶 watch、<−200% 封顶 na(三级制,详见常量块注释)。
     """
     reasons: list[str] = []
     risks: list[str] = []
@@ -318,6 +339,11 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late,
                     pick += b
                     reasons.append(f"净现金占市值 {s.net_cash_ratio * 100:.0f}%")
                     break
+        if ncw is not None and NCW_GRAY_FROM > ncw >= NCW_CAP_WATCH:
+            # 灰带扣分(−30%~−100%):线性到 −80% 扣满;封顶区(更深)的旗在档位段置顶,
+            # 这里只扣分不重复插旗
+            pick -= min(NCW_GRAY_CAP, (NCW_GRAY_FROM - ncw) * 100 * NCW_GRAY_K)
+            risks.append(f"净有息负债/市值 {ncw * 100:.0f}%")
         if fraud is not None and fraud > FRAUD_GRAY_FROM:
             pick -= (fraud - FRAUD_GRAY_FROM) * FRAUD_GRAY_K
             risks.append(f"造假分 {fraud:.0f} 偏高")
@@ -382,6 +408,19 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late,
         if _TIER_ORDER.index(tier) < _TIER_ORDER.index("watch"):
             tier = "watch"
         risks.insert(0, "最新披露期资不抵债(归母权益为负)")
+
+    # 净有息负债/市值 档位线(2026-11-10):灰带扣分在上方,档位线在此——<−100% 不进
+    # 买入区、<−200% 连观察区都不进;只降不升(na/avoid 不回灌),与裁决层/资不抵债
+    # 软封顶同一套语法;回避留给定性事实,重杠杆只降档不进硬门槛。
+    if ncw is not None and not avoid:
+        if ncw < NCW_CAP_NA:
+            if _TIER_ORDER.index(tier) < _TIER_ORDER.index("na"):
+                tier = "na"
+            risks.insert(0, f"净有息负债/市值 {ncw * 100:.0f}%(超线,不进观察区)")
+        elif ncw < NCW_CAP_WATCH:
+            if _TIER_ORDER.index(tier) < _TIER_ORDER.index("watch"):
+                tier = "watch"
+            risks.insert(0, f"净有息负债/市值 {ncw * 100:.0f}%(超线,不进买入区)")
 
     # 回避者把「为什么不买」放最前
     if s.gate and s.gate_flags:
@@ -450,7 +489,11 @@ def _to_item(s, sec, q, val_row, cov, today, negeq: bool = False) -> PickItem:
     ds, dg, disc, anchor = _discounts(price, s.buy_schloss, s.buy_graham_def)
     pb, pb_days = _fresh_pctile(val_row, s.trade_date)
     late = _report_late(s.report_date, today)
-    core = _synth(s, price, mcap_cny, disc, anchor, pb, late, negeq=negeq)
+    # 净有息负债/市值:分子(财报本币)÷分母(行情同币种原币),比率天然币种中性,
+    # 不可用 mcap_cny——HKD 换算会把比率整体抬高 8%
+    ncw = (float(s.net_cash_w) / float(q.market_cap)
+           if s.net_cash_w is not None and q.market_cap else None)
+    core = _synth(s, price, mcap_cny, disc, anchor, pb, late, negeq=negeq, ncw=ncw)
     it = PickItem(
         sid=sec.sid, code=sec.code, name=sec.name, market=sec.market,
         currency=sec.currency, industry=sec.industry,
