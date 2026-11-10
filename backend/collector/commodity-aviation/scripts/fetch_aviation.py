@@ -19,21 +19,31 @@
     航司月报(7家 ASK/RPK/客公里收益)、波音交付、机场吞吐量、支线补贴公示
         均记 P1(公告解析/官网无稳定免费 API)。
 
-序列清单(11,展示顺序即写入顺序,code 稳定不宜再改;共码序列 AV_ 前缀防互灌):
-    需求  AV_PAX 民航客运量(月) / AV_PAX_YOY 同比 / AV_RPK 旅客周转量 /
-          AV_TAT 运输总周转量(含货运,全口径总温度计) / AV_PLF 正班客座率 /
-          AV_LF 正班载运率(含货运装载)
+序列清单(19,展示顺序即写入顺序,code 稳定不宜再改;共码序列 AV_ 前缀防互灌):
+    需求  AV_PAX 民航客运量(月) / AV_PAX_YOY 同比 / AV_PAX_INT 国际航线旅客(月,
+          2017.4→民航局月度统计PDF) / AV_PAX_INT_YOY 国际同比 / AV_PAX_INT_SHR
+          国际占比(自算) / AV_PAX_DOM 国内旅客 / AV_RPK 旅客周转量 / AV_RPK_INT
+          国际周转量(距离加权,国际线扭亏弹性核心) / AV_TAT 运输总周转量 /
+          AV_TAT_INT 国际总周转量 / AV_PLF 正班客座率 / AV_LF 正班载运率 /
+          AV_UTIL 飞机日利用率 / AV_APT_PAX 机场旅客吞吐量
     成本  AV_JF_CN 国内航煤现货(生意社交易商报价中位数,元/吨) /
           AV_JETFUEL 美湾航煤现货(×42=美元/桶,占航司成本30-40%的燃油锚) /
           AV_JF_CL 航煤/原油比价(自算,馏分油裂解利润代理)
     宏观  AV_DGS10 美债10Y(经营租赁租金锚) / AV_USDCNY 美元兑人民币(美元负债敞口)
 
-用法(backend/ 目录): python -m collector.run aviation  (调度:每天 07:35)
-        首次/补史: python collector/commodity-aviation/scripts/fetch_aviation.py --backfill-jf
+民航局月度统计PDF(mot.gov.cn 转载列表页静态可爬,85 个月 2017.4→):总/国内/港澳台/
+    国际四拆分(旅客/周转量/货邮/RPK)+日利用率+机场吞吐量+起降架次,一份PDF全给;
+    官方全口径含全部承运人。中航信(travelskyir)IR 运营资料页 JS 渲染+GDS 离港量
+    口径,增量价值边际低于官方四拆分,记 P2 不采集。
+
+用法(backend/ 目录): python -m collector.run aviation  (调度:每天 07:35,日度组)
+        python -m collector.run aviation-monthly  (每月 12/15 日,月度组含CAAC PDF)
+        首次/补史: fetch_aviation.py --backfill-jf / --monthly-only(CAAC断点续传自动补)
 产物: commodity-aviation/data/aviation.json → import_legacy --only-aviation。
 """
 import argparse
 import calendar
+import io
 import json
 import re
 import ssl
@@ -50,6 +60,7 @@ for _k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"
     os.environ.pop(_k, None)
 
 import akshare as ak  # noqa: E402
+import pdfplumber     # noqa: E402
 import requests       # noqa: E402
 
 BACKEND = Path(__file__).resolve().parents[3]
@@ -167,6 +178,93 @@ def _sunsirs_detail_price(url):
     return round(med, 1), n
 
 
+# ---- 民航局月度统计 PDF(交通运输部转载列表页,静态可爬) ----
+# 一份 PDF 给全:总/国内/港澳台/国际四拆分(运输总周转量/旅客/货邮/RPK)+
+# 日利用率+客座率+机场吞吐量+起降架次,2017.4→ 85 个月。行格式:
+# 「国际航线 万人 674.4 4.4 6194.8 4.7」=名称 单位 本月值 同比 累计 累计同比。
+# 「国际航线」同名行出现 5 处,靠段落标题(旅客运输量/旅客周转量/...)分派。
+MOT_LIST = "https://www.mot.gov.cn/shuju/tongjishuju/minhang/"
+_CAAC_SECTIONS = {"运输总周转量": "tat", "旅客运输量": "pax", "货邮运输量": "cargo",
+                  "旅客周转量": "rpk", "货邮周转量": "cargo_rp"}
+
+
+def _caac_list_items():
+    html = _sunsirs_fetch(MOT_LIST)  # 同款 urllib+ssl ctx 直连
+    items = []
+    for rel, y, m in re.findall(
+            r'href="(\./\d+/[^"]+\.pdf)"[^>]*>\s*中国民航(\d{4})年(\d{1,2})月份主要生产指标统计',
+            html):
+        items.append((int(y), int(m), "https://www.mot.gov.cn/shuju/tongjishuju/minhang/" + rel[2:]))
+    return sorted(set(items))
+
+
+def _caac_parse_pdf(pdf_bytes):
+    """首页固定表格 → {code: (本月值, 当月同比)}。段落状态机分派「国际航线」同名行。"""
+    out = {}
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        text = (pdf.pages[0].extract_text() or "")
+    section = None
+    for raw in text.split("\n"):
+        line = re.sub(r"\s+", " ", raw.strip())
+        if re.match(r"^[一二三四五六七八九十]+、", line):
+            section = None  # 大节切换(航班效率/机场完成),清段落归属
+            continue
+        head = line.split(" ")[0].rstrip("：:")
+        if head in _CAAC_SECTIONS:
+            section = _CAAC_SECTIONS[head]
+            continue
+        m = re.match(r"^(国际航线|国内航线|飞机日利用率|正班客座率|正班载运率|旅客吞吐量)"
+                     r"\s+\S+\s+(-?[\d.]+)\s+(-?[\d.]+)", line)
+        if not m:
+            continue
+        name, val, yoy = m.group(1), float(m.group(2)), float(m.group(3))
+        code = {
+            ("pax", "国际航线"): "AV_PAX_INT", ("pax", "国内航线"): "AV_PAX_DOM",
+            ("rpk", "国际航线"): "AV_RPK_INT", ("tat", "国际航线"): "AV_TAT_INT",
+            (None, "飞机日利用率"): "AV_UTIL", (None, "旅客吞吐量"): "AV_APT_PAX",
+        }.get((section, name))
+        if code:
+            out[code] = (val, yoy)
+    return out
+
+
+def fetch_caac(existing_months=None, max_items=100):
+    """民航局月度统计 PDF → {code: [(月末日期, 值)]}+独立同比序列。断点续传:已有月跳过。"""
+    existing_months = existing_months or set()
+    items = _caac_list_items()
+    if not items:
+        raise ValueError("民航局列表页无条目(改版?)")
+    want = [(y, m, u) for y, m, u in items if "%04d-%02d" % (y, m) not in existing_months]
+    if not want:
+        return {}
+    if len(want) > max_items:
+        want = want[-max_items:]  # 最新的 N 个月(列表按新→旧,反转取尾部)
+    acc = {}
+    fails = []
+    for y, m, url in want:
+        d = "%04d-%02d-%02d" % (y, m, calendar.monthrange(y, m)[1])
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": _SUNSIRS_UA})
+            data = urllib.request.urlopen(req, timeout=30, context=_SUNSIRS_CTX).read()
+            row = _caac_parse_pdf(data)
+            if not row:
+                raise ValueError("首页无匹配行")
+            acc.setdefault("_months", set()).add("%04d-%02d" % (y, m))
+            for code, (val, yoy) in row.items():
+                acc.setdefault(code, []).append((d, val))
+                if code in ("AV_PAX_INT", "AV_TAT_INT"):
+                    acc.setdefault(code + "_YOY", []).append((d, yoy))
+        except Exception as e:  # noqa: BLE001 单月失败不终止
+            fails.append("%04d-%02d:%s" % (y, m, type(e).__name__))
+        time.sleep(0.35)
+    if fails:
+        print("[aviation] CAAC 失败 %d 月(%s)" % (len(fails), ",".join(fails[:8])), flush=True)
+    for code in list(acc):
+        if code != "_months":
+            acc[code] = sorted(acc[code])
+    return acc
+
+
 def fetch_jf_cn(existing=None, backfill=False, max_pages=29):
     """国内航煤现货(生意社) → [(date, price)]。
 
@@ -225,8 +323,8 @@ def fetch_wti():
 
 
 def derive(series_map):
-    """自算派生:航煤/原油比价(无量纲)。航煤美元/加仑×42=美元/桶,与WTI同单位;
-    >1=航煤溢价(馏分油裂解利润强=航空燃油需求旺),<1=折价。日度交集对齐。"""
+    """自算派生:航煤/原油比价(无量纲)、国际旅客占比(%)。
+    占比=国际/(国际+国内),同源 CAAC PDF 自洽(不受新浪总量口径微差影响)。"""
     out, notes = {}, []
     jf, wti = series_map.get("AV_JETFUEL"), series_map.get("AV_CL")
     if jf and wti:
@@ -235,6 +333,15 @@ def derive(series_map):
             (d, round(v * 42.0 / m[d], 4)) for d, v in jf if d in m and m[d])
     else:
         notes.append("航煤/原油比价缺原料(AV_JETFUEL/AV_CL)")
+    pint, pdom = series_map.get("AV_PAX_INT"), series_map.get("AV_PAX_DOM")
+    if pint and pdom:
+        md = dict(pdom)
+        shr = [(d, round(v / (v + md[d]) * 100, 2)) for d, v in pint
+               if d in md and (v + md[d])]
+        if shr:
+            out["AV_PAX_INT_SHR"] = sorted(shr)
+    else:
+        notes.append("国际占比缺原料(AV_PAX_INT/AV_PAX_DOM)")
     return out, notes
 
 
@@ -257,6 +364,8 @@ def main():
     plan_monthly = [
         ("需求", "AV_PAX/AV_PAX_YOY/AV_RPK/AV_TAT 民航行月度(新浪宏观库,1949→)"),
         ("需求", "AV_PLF/AV_LF 正班客座率/载运率(2006.2→,20年)"),
+        ("需求", "AV_PAX_INT/同比/占比/AV_PAX_DOM/AV_RPK_INT/AV_TAT_INT/同比/"
+                 "AV_UTIL/AV_APT_PAX 民航局月度统计PDF(2017.4→,断点续传)"),
     ]
     plan_daily = [
         ("成本", "AV_JF_CN 国内航煤现货(生意社交易商中位数,增量/可回填)"),
@@ -309,10 +418,56 @@ def main():
         for k, v in {**traf, **plf}.items():
             raw[k] = v or None
     if a.daily_only:
-        expected_skip |= monthly_codes
+        expected_skip |= monthly_codes | {"AV_PAX_INT", "AV_PAX_INT_YOY", "AV_PAX_DOM",
+                                          "AV_PAX_INT_SHR", "AV_RPK_INT", "AV_TAT_INT",
+                                          "AV_TAT_INT_YOY", "AV_UTIL", "AV_APT_PAX"}
     if a.monthly_only:
         expected_skip |= {"AV_JF_CN", "AV_JETFUEL", "AV_DGS10", "AV_USDCNY",
                           "AV_CL", "AV_JF_CL"}
+
+    if not a.daily_only:
+        # CAAC 月度统计 PDF 组(国际线四拆分/日利用率/机场吞吐;断点续传,首次 85 PDF)
+        try:
+            _old_caac = {}
+            if OUT.exists():
+                try:
+                    _prev0 = json.loads(OUT.read_text(encoding="utf-8"))
+                    for s0 in _prev0.get("series", []):
+                        if s0["code"].startswith("AV_") and (
+                                s0["code"] in {"AV_PAX_INT", "AV_PAX_INT_YOY", "AV_PAX_DOM",
+                                               "AV_RPK_INT", "AV_TAT_INT", "AV_TAT_INT_YOY",
+                                               "AV_UTIL", "AV_APT_PAX"}):
+                            _old_caac[s0["code"]] = s0["points"]
+                except Exception:  # noqa: BLE001
+                    pass
+            have_m = {p[0][:7] for pts in _old_caac.values() for p in pts}
+            # 断点续传按「月」判断,但若旧档缺任一目标码(如首版解析漏 UTIL/APT)
+            # 则该码全月缺——退化为全量重抓(下载+合并幂等,~85 PDF 3 分钟)
+            _target = {"AV_PAX_INT", "AV_PAX_INT_YOY", "AV_PAX_DOM", "AV_RPK_INT",
+                       "AV_TAT_INT", "AV_TAT_INT_YOY", "AV_UTIL", "AV_APT_PAX"}
+            if _target - set(_old_caac):
+                print("[aviation] CAAC 缺序列 %s,全量重抓" % sorted(_target - set(_old_caac)), flush=True)
+                have_m = set()
+            caac = fetch_caac(have_m)
+            caac_codes = [c for c in caac if c != "_months"]
+            for code in caac_codes:
+                old_set = {(p[0], p[1]) for p in _old_caac.get(code, [])}
+                new_set = {(d, v) for d, v in caac[code]}
+                merged = sorted(old_set | new_set)
+                raw[code] = [list(x) for x in merged]
+                if old_set >= new_set:
+                    print("[aviation] %s: CAAC 无新月,继承 %d 点" % (code, len(merged)), flush=True)
+                else:
+                    print("[aviation] %s: CAAC %d 点 %s~%s" % (
+                        code, len(merged), merged[0][0], merged[-1][0]), flush=True)
+            if not caac_codes:
+                print("[aviation] CAAC: 无新月(全跳过)", flush=True)
+        except Exception as e:  # noqa: BLE001 CAAC 整链失败继承旧档,不阻断月度组
+            warnings.append("CAAC: %s(%s)" % (type(e).__name__, str(e)[:80]))
+            print("[aviation] CAAC 失败(继承旧档): %s %s" % (
+                type(e).__name__, str(e)[:100]), flush=True)
+            for code, pts in _old_caac.items():
+                raw[code] = pts
 
     if not a.monthly_only:
         # AV_JF_CN(生意社):增量合并语义(本轮新点+本地旧点),不走 grab 的组失败降级
@@ -359,14 +514,32 @@ def main():
                         S_SINA_MAC_TRAF + "(月度,全口径含未上市航司)"),
         "AV_PAX_YOY":  ("民航客运量同比", "客运量同比", "需求", "总量", "%", "月",
                         S_SINA_MAC_TRAF),
+        "AV_PAX_DOM":  ("国内航线旅客运输量", "国内旅客", "需求", "国际线", "万人", "月",
+                        "民航局月度统计PDF(2017.4→;与新浪总量口径微差,分项用CAAC同源)"),
+        "AV_PAX_INT":  ("国际航线旅客运输量", "国际旅客", "需求", "国际线", "万人", "月",
+                        "民航局月度统计PDF(2017.4→,含2020断崖-恢复全程;三大航国际线扭亏弹性核心)"),
+        "AV_PAX_INT_YOY": ("国际航线旅客同比", "国际同比", "需求", "国际线", "%", "月",
+                        "民航局月度统计PDF(当月同比)"),
+        "AV_PAX_INT_SHR": ("国际旅客占比", "国际占比", "需求", "国际线", "%", "月",
+                        "自算(国际/(国际+国内),CAAC同源自洽;2019年峰值约13%)"),
         "AV_RPK":      ("民航旅客周转量", "旅客周转量RPK", "需求", "周转量", "亿人公里", "月",
                         S_SINA_MAC_TRAF),
+        "AV_RPK_INT":  ("国际航线旅客周转量", "国际RPK", "需求", "国际线", "亿人公里", "月",
+                        "民航局月度统计PDF(距离加权,国际线恢复的真口径)"),
         "AV_TAT":      ("民航运输总周转量", "总周转量", "需求", "周转量", "亿吨公里", "月",
                         S_SINA_MAC_TRAF + "(含货运,全口径景气总温度计)"),
+        "AV_TAT_INT":  ("国际航线运输总周转量", "国际周转量", "需求", "国际线", "亿吨公里", "月",
+                        "民航局月度统计PDF(当月值)"),
+        "AV_TAT_INT_YOY": ("国际周转量同比", "国际周转同比", "需求", "国际线", "%", "月",
+                        "民航局月度统计PDF(当月同比)"),
         "AV_PLF":      ("正班客座率", "客座率", "需求", "效率", "%", "月",
                         S_SINA_MAC + "(2006.2→,20年;83%一线为供需平衡经验线)"),
         "AV_LF":       ("正班载运率", "载运率", "需求", "效率", "%", "月",
                         S_SINA_MAC + "(含货运装载)"),
+        "AV_UTIL":     ("飞机日利用率", "日利用率", "需求", "效率", "小时/日", "月",
+                        "民航局月度统计PDF(运力投放强度,供给利用端的温度计)"),
+        "AV_APT_PAX":  ("机场旅客吞吐量", "机场吞吐量", "需求", "机场", "万人次", "月",
+                        "民航局月度统计PDF(全国机场口径,机场股与航空需求交叉验证)"),
         "AV_JF_CN":    ("国内航煤现货(生意社)", "国内航煤", "成本", "燃油", "元/吨", "日",
                         "生意社商品动态(3号航空煤油交易商报价中位数,2024-07→;月度锚点"
                         "+日频累积。⚠弱源:当前仅山东智恒达单一交易商长期挂单 8000 元/吨"
