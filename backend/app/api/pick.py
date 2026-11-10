@@ -30,6 +30,10 @@ buy vs 研报回避-轻),有深度覆盖处以研报结论为准对 tier 收紧�
 - buy    值得买:pick≥65;
 - watch  观察:pick≥45 或施洛斯烟蒂通道入围但未达标;
 - na     不构成买入信号(无分或分低)。
+资不抵债分两道(2026-11-10):最新**年报**权益为负走 gate 硬门槛进 avoid;
+只在中报/三季报转负、年报仍为正的不进硬门槛(披露面尚无年报级定性事实),
+但强制封顶 watch(只降不升,na 本就低于 watch 不回灌)——PB 锚在负权益下
+已失效,分数照给、分歧亮在风险旗,与研报裁决层同一套「只降不升」语法。
 无 R 的标的不直接出局:施洛斯分≥70 且现价较买点折 ≥10% 走烟蒂通道,
 分数封顶 65(烟蒂按定义到不了「强推」)。
 """
@@ -46,7 +50,7 @@ from sqlalchemy.orm import Session, aliased
 from app.db import get_session
 from app.api.research import coverage as _research_cov, coverage_stamp as _research_stamp
 from app.api.securities import RECENT_DATES, _age_months
-from app.models import QuoteDaily, ScoreDaily, Security, SentimentDaily, ValuationPctile
+from app.models import FinBalance, QuoteDaily, ScoreDaily, Security, SentimentDaily, ValuationPctile
 from collector.scripts import sentiment_score
 
 # scoring.py 是 collector 侧的平铺 import（from equity import ...），API 进程里要先把
@@ -254,8 +258,13 @@ def _discounts(price, buy_s, buy_g):
     return ds, dg, dg, "graham_def"
 
 
-def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late) -> dict:
-    """pick/tier/理由合成。入参都是纯量,验证脚本可直接离线复用。"""
+def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late,
+           negeq: bool = False) -> dict:
+    """pick/tier/理由合成。入参都是纯量,验证脚本可直接离线复用。
+
+    negeq=最新披露期归母权益为负(中报/三季报转负、年报仍为正的盲区):
+    强制封顶 watch 并亮旗,不没收 pick 分数。
+    """
     reasons: list[str] = []
     risks: list[str] = []
     fraud = s.fraud
@@ -365,6 +374,15 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late) -> dic
     else:
         tier = "na"
 
+    # 最新披露期资不抵债(2026-11-10):年报口径已走 gate 硬门槛一票回避,这里接的是
+    # 「中报/三季报才转负、年报仍为正」的盲区——PB 锚在负权益下失效,但披露面尚无
+    # 年报级定性事实,不进硬门槛;强制封顶观察(只降不升:na 本就低于 watch 不回灌、
+    # avoid 不回灌),pick 分数照给、分歧亮在风险旗——与研报裁决层同一套只降不升语法。
+    if negeq and not avoid:
+        if _TIER_ORDER.index(tier) < _TIER_ORDER.index("watch"):
+            tier = "watch"
+        risks.insert(0, "最新披露期资不抵债(归母权益为负)")
+
     # 回避者把「为什么不买」放最前
     if s.gate and s.gate_flags:
         risks.insert(0, "硬门槛:" + "、".join(GATE_LABELS.get(f, f) for f in s.gate_flags))
@@ -426,13 +444,13 @@ def _apply_research_verdict(it: PickItem, rv: dict | None, today: date) -> None:
     it.risks = it.risks[:4]
 
 
-def _to_item(s, sec, q, val_row, cov, today) -> PickItem:
+def _to_item(s, sec, q, val_row, cov, today, negeq: bool = False) -> PickItem:
     price = float(q.price) if q.price is not None else None
     mcap_cny = float(q.market_cap) * (HK_TO_CNY if sec.market == "HK" else 1.0) if q.market_cap else None
     ds, dg, disc, anchor = _discounts(price, s.buy_schloss, s.buy_graham_def)
     pb, pb_days = _fresh_pctile(val_row, s.trade_date)
     late = _report_late(s.report_date, today)
-    core = _synth(s, price, mcap_cny, disc, anchor, pb, late)
+    core = _synth(s, price, mcap_cny, disc, anchor, pb, late, negeq=negeq)
     it = PickItem(
         sid=sec.sid, code=sec.code, name=sec.name, market=sec.market,
         currency=sec.currency, industry=sec.industry,
@@ -500,6 +518,35 @@ def _hk_connect_codes() -> set[str] | None:
         return None
 
 
+def _neg_equity_latest_sids(db: Session) -> set[int]:
+    """最新披露期归母权益为负的 sid 集——掘金台软封顶(封顶 watch)的判定域。
+
+    口径与 import_legacy.GATE_EQUITY_SQL 同源:COALESCE(equity_parent,
+    equity_total)< 0,两列皆 NULL 视为不可判、不进集合。区别在报告期:硬门槛
+    只认最新**年报**(定性事实以年报为准,一年只动一次),这里认**任意最新披露期**,
+    接住「中报/三季报才转负、年报仍为正」的盲区。fin_balance 主键 (sid,
+    report_date) 上按 sid 取 MAX 走松索引扫描,全表一次查询进内存集合,
+    消费侧逐行 O(1)——与 ValuationPctile 全表装载同一模式。数据新鲜度随周六
+    deep 全量重抓,三季报披露到入集合最长滞后约一周,与 gate 同一节奏。
+    """
+    latest = (
+        select(FinBalance.sid, func.max(FinBalance.report_date).label("md"))
+        .group_by(FinBalance.sid)
+        .subquery()
+    )
+    rows = db.execute(
+        select(FinBalance.sid, FinBalance.equity_parent, FinBalance.equity_total)
+        .join(latest, and_(latest.c.sid == FinBalance.sid,
+                           latest.c.md == FinBalance.report_date))
+    ).all()
+    out: set[int] = set()
+    for sid, parent, total in rows:
+        eq = parent if parent is not None else total
+        if eq is not None and float(eq) < 0:
+            out.add(sid)
+    return out
+
+
 def _load_base(db: Session, fresh: bool = False):
     """全量合成行 + meta。缓存键 = (评分日, 该日行数, 最新行情日, 该日行数)。
 
@@ -537,9 +584,11 @@ def _load_base(db: Session, fresh: bool = False):
                or_(Security.list_date.is_(None), Security.list_date < _listed_cutoff(today)))
     ).all()
     vals = {v.sid: v for v in db.execute(select(ValuationPctile)).scalars()}
+    negeq = _neg_equity_latest_sids(db)
     cov = _research_cov()
 
-    items = [_to_item(s, sec, q, vals.get(sec.sid), cov, today) for s, sec, q in rows]
+    items = [_to_item(s, sec, q, vals.get(sec.sid), cov, today,
+                      negeq=sec.sid in negeq) for s, sec, q in rows]
     hk_conn = _hk_connect_codes()
     if hk_conn is not None:
         items = [it for it in items if it.market != "HK" or it.code in hk_conn]
