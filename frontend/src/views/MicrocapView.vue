@@ -309,20 +309,30 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             <div class="bt-hint">红盘率 ≥60% 赚钱效应在可打板；≤40% 退潮期只低吸不追高</div>
           </div>
           <div class="bt-block">
-            <div class="bt-title">连板梯队 <span class="bt-sub">全市场 {{ overview.battle?.ladder?.total ?? 0 }} 家涨停</span></div>
+            <div class="bt-title">连板梯队 <span class="bt-sub">全市场 {{ overview.battle?.ladder?.total ?? 0 }} 家涨停 · 近{{ overview.battle?.ladder?.trail?.length ?? 0 }}日高度轨迹</span></div>
             <div class="ladder-row">
               <span v-for="(cnt, lv) in overview.battle?.ladder?.dist || {}" :key="lv" class="lv-chip"
                 :class="{ top: +lv === overview.battle?.ladder?.max }">{{ lv }}板×{{ cnt }}</span>
               <span v-if="!overview.battle?.ladder?.total" class="bt-hint">今日榜单未出</span>
             </div>
+            <div v-if="overview.battle?.ladder?.trail?.length" class="trail-row" title="近15个榜单日的全市场最高连板数——空间龙高度图(80课):周期龙目标=超越前周期高度">
+              <span v-for="(h, i) in overview.battle.ladder.trail" :key="i" class="trail-bar">
+                <i class="tb-col" :class="{ top: h === overview.battle.ladder.max }" :style="{ height: (h * 7 + 3) + 'px' }"></i>
+                <em>{{ h }}</em>
+              </span>
+            </div>
             <div class="bt-hint">
-              最高 {{ overview.battle?.ladder?.max ?? '—' }} 板——空间板的身位参照，高位断板=题材退潮信号
+              <template v-if="overview.battle?.ladder?.cycle_note">{{ overview.battle.ladder.cycle_note }}。 </template>
+              <template v-else>最高 {{ overview.battle?.ladder?.max ?? '—' }} 板——空间板的身位参照，高位断板=题材退潮信号。 </template>
               <template v-if="overview.battle?.dt_side?.n">
                 · 跌停 {{ overview.battle.dt_side.n }}（一字 {{ overview.battle.dt_side.oneword }}）
               </template>
             </div>
-            <div class="bt-trap" v-if="overview.battle?.dt_side?.negative_spiro">
-              ⚠ 负螺旋：一字跌停 ≥3 家——10A 一字梯队正在带 5000B 补跌，一字梯队打开=正螺旋反弹起点（39课）
+            <div class="bt-trap" v-if="overview.battle?.dt_side?.level === 2">
+              ⚠ 极弱判定：一字跌停 ≥5 家（答疑口径：早盘 5 个以上开盘一字跌停=极弱）——负螺旋黑洞，防守等一字梯队打开
+            </div>
+            <div class="bt-trap warn2" v-else-if="overview.battle?.dt_side?.level === 1">
+              ⚠ 负螺旋预警：一字跌停 ≥3 家——一字梯队开始带全场补跌，梯队打开=正螺旋反弹起点
             </div>
           </div>
         </div>
@@ -351,7 +361,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
         <div class="preset-row">
           <span class="preset-label">快捷</span>
           <button class="chip" :class="{ on: preset === 'zt' }" title="今日涨停池内的票(含晋级),打板/接力视角" @click="setPreset('zt')">今日涨停</button>
-          <button class="chip" :class="{ on: preset === 'broke' }" title="昨日涨停今日未再板——断板观察:强承接低吸 or 出货规避,看当日涨幅分辨" @click="setPreset('broke')">断板观察</button>
+          <button class="chip" :class="{ on: preset === 'broke' }" title="昨日涨停今日未再板——94课口径:2板封不死,次日正股多低开~8%;强承接低吸 or 出货规避,看当日涨幅分辨" @click="setPreset('broke')">断板观察</button>
           <button class="chip" :class="{ on: preset === 'turn' }" title="年报亏损或已ST,最新披露期净利润转正——ST即摘帽博弈候选,非ST即困境反转候选(业绩面信号,非交易所认定)" @click="setPreset('turn')">扭亏/摘帽候</button>
           <button v-if="preset" class="chip" @click="setPreset(preset)">清除</button>
         </div>
@@ -420,7 +430,10 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
               </td>
               <td class="l">
                 <span v-if="ztTxt(s)" :class="ztClass(s)">{{ ztTxt(s) }}</span>
-                <span v-if="s.seal_amt" class="seal" title="封板资金">封{{ sealTxt(s) }}</span>
+                <span v-if="s.seal_amt" class="seal"
+                  :title="`封板资金 ${sealTxt(s)} · 占流通市值 ${s.seal_strength != null ? (s.seal_strength * 100).toFixed(1) + '%' : '—'}（封单大≠强,看占盘子比例）`">
+                  封{{ sealTxt(s) }}<template v-if="s.seal_strength != null">/{{ (s.seal_strength * 100).toFixed(1) }}%</template>
+                </span>
                 <span v-if="!ztTxt(s) && !s.seal_amt" class="flat">—</span>
               </td>
               <td :title="s.inflow_strength != null ? `占流通市值 ${(s.inflow_strength * 100).toFixed(1)}%` : ''">
@@ -503,6 +516,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           雷区旗子+高热度同时命中会标「雷上加热」。
         </p>
         <p class="note-fine">
+          交易损耗提醒（第1课）：一次满仓往返 ≈ 0.1~0.32%（佣金+印花税+盘口冲击），账号寿命只有约
+          300~500 次满仓交易——出手有效率用乘法衰减（20%胜率出手2次仅4%全赢），管住手比找票难。
           涨停生态来自东财涨停池(连板数/封板资金为交易所口径;炸板警示含黑名单,实测次日溢价 -1.6%);
           概念映射只覆盖热榜前 15 板(成分 7 天复用,新进榜当日补);换手分位窗=近 120 交易日(表内现约 43 日,随数据加深自动受益);
           「营收/线」用营业总收入代替扣除后营收(口径偏宽松=宁漏勿错);市值退市线用单日快照+20% 提前量近似连续 20 日口径;
@@ -577,6 +592,13 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .ladder-row { display: flex; gap: 5px; flex-wrap: wrap; }
 .lv-chip { font-size: 11.5px; color: #5a6472; background: #f4f5f7; border-radius: 4px; padding: 2px 7px; }
 .lv-chip.top { color: #c0392b; background: #fdeeee; font-weight: 700; }
+/* 高度轨迹迷你图:近15榜各日最高连板数 */
+.trail-row { display: flex; align-items: flex-end; gap: 3px; margin-top: 7px; height: 60px; }
+.trail-bar { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; width: 16px; }
+.trail-bar .tb-col { display: block; width: 10px; background: #dfe6f2; border-radius: 2px 2px 0 0; }
+.trail-bar .tb-col.top { background: #c0392b; }
+.trail-bar em { font-style: normal; font-size: 9.5px; color: #8a94a6; margin-top: 2px; }
+.bt-trap.warn2 { background: #fff7e6; color: #b8860b; }
 /* 快捷预设行 */
 .preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .preset-label { font-size: 12px; color: #8a94a6; }

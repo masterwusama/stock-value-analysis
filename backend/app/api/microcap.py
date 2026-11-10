@@ -447,6 +447,7 @@ class MicrocapItem(BaseModel):
     turn_pctile: float | None = None
     streak: int | None = None              # 今日连板数(非涨停日为 None)
     seal_amt: float | None = None          # 封板资金(元)
+    seal_strength: float | None = None     # 封板强度=封单/流通市值(答疑口径:封单大≠强,看盘子)
     zt_5d: int = 0                         # 近 5 个榜单日涨停次数
     zt_yesterday: bool = False             # 上一榜单日在涨停池(今日晋级/断板的判定底)
     zha_flag: bool = False                 # 昨日炸板/黑名单
@@ -655,7 +656,7 @@ def _load_base(db: Session, fresh: bool = False):
     boards: list = heat["boards"] if heat["latest"] and heat["latest"].get("boards") else []
     members: dict = heat["members"] or {}
     member_sets = {b: set(m.get("codes") or []) for b, m in members.items()}
-    zt_snaps = _pool_csv_map("zt", 6)
+    zt_snaps = _pool_csv_map("zt", 16)   # 近16榜:5日频次窗 + 高度轨迹(榜单池只留15日)
     zha_snaps = _pool_csv_map("zha", 2)
     dt_snaps = _pool_csv_map("dt", 2)
     qd_compact = qd_max.strftime("%Y%m%d") if qd_max else ""
@@ -721,6 +722,7 @@ def _load_base(db: Session, fresh: bool = False):
             "r5": r5, "r20": r20,
             "hot_concept": bool(concepts),
         })
+        seal_strength = (seal / fm) if (seal is not None and fm) else None
         price, bs, bg = rec["price"], rec["buy_schloss"], rec["buy_graham_def"]
         _ds, _dg, disc, anchor = _discounts(price, bs, bg)
         pool = "micro" if (rec["mcap"] or 0) < MICRO_CAP_MAX else "small"
@@ -748,6 +750,7 @@ def _load_base(db: Session, fresh: bool = False):
             inflow_d5=d5,
             turn_rate=rec["turn_rate"], turn_pctile=round(turn_pctile, 3) if turn_pctile is not None else None,
             streak=streak, seal_amt=seal,
+            seal_strength=round(seal_strength, 4) if seal_strength is not None else None,
             zt_5d=zt_hist.get(rec["code"], 0),
             zt_yesterday=zt_prev,
             zha_flag=rec["code"] in zha_yesterday or rec["code"] in blacklist,
@@ -794,8 +797,10 @@ def _load_base(db: Session, fresh: bool = False):
         ladder_max = max(ladder_max, lv)
     ladder = {"max": ladder_max, "total": sum(ladder_dist.values()),
               "dist": {str(k): ladder_dist[k] for k in sorted(ladder_dist, reverse=True)}}
-    # 跌停侧(大A大B 负螺旋监控,出处:桃子课 39「业绩雷引发大跌」+120 案例复盘:
-    # 一字跌停梯队带全体补跌=负螺旋;一字梯队打开=正螺旋反弹起点)
+    # 跌停侧(大A大B 负螺旋监控,出处:桃子课 39「业绩雷引发大跌」+59「股市黑洞」+答疑:
+    # 一字跌停梯队带全体补跌=负螺旋;≥3 家=预警(10A 开团量级),≥5 家=极弱判定
+    # (答疑文档口径:「极弱周期就是由是否出现早盘 5 个以上开盘一字跌停来判断」);
+    # 一字梯队打开=正螺旋反弹起点)
     dt_rows = list(dt_snaps[0][1].values()) if dt_snaps and dt_snaps[0][0] == qd_compact else []
     dt_n = len(dt_rows)
     dt_oneword = 0
@@ -805,8 +810,34 @@ def _load_base(db: Session, fresh: bool = False):
                 dt_oneword += 1
         except (TypeError, ValueError):
             pass
-    # 负螺旋预警:一字跌停 ≥3 家(10A 一字梯队开始带 5000B 补跌的量级)
-    negative_spiro = dt_oneword >= 3
+    spiro_level = 2 if dt_oneword >= 5 else (1 if dt_oneword >= 3 else 0)
+
+    # 高度轨迹(80-90课空间龙图:周期龙目标=超越前周期高度;「二板一定冰点」=高度压到
+    # 2 板即情绪冰点反转观察信号)。从近 16 个榜单日各取当日最高连板数,旧→新
+    def _snap_max(rows: dict) -> int:
+        mx = 0
+        for r in rows.values():
+            try:
+                mx = max(mx, int(r.get("连板数") or 0))
+            except (TypeError, ValueError):
+                pass
+        return mx
+
+    height_trail = [_snap_max(m) for _d, m in zt_snaps]
+    height_trail.reverse()   # 旧→新,末位=今日
+    prev_cycle_max = None
+    cycle_note = None
+    if len(height_trail) >= 4 and height_trail[-1] > 0:
+        cur = height_trail[-1]
+        trough_i = height_trail.index(min(height_trail[:-1])) if len(height_trail) > 2 else 0
+        before = height_trail[:trough_i + 1]
+        prev_cycle_max = max(before) if before else None
+        if prev_cycle_max and cur > prev_cycle_max:
+            cycle_note = f"刷新周期新高(前周期 {prev_cycle_max} 板)——情绪周期开启新空间"
+        elif cur <= 2:
+            cycle_note = "高度压到 2 板=二板冰点——情绪冰点反转观察信号,首板晋级率是关键"
+        elif prev_cycle_max:
+            cycle_note = f"前周期高度 {prev_cycle_max} 板,周期龙目标=超越它"
 
     # ---- meta:环境/日历/分布/热榜 ----
     sent = db.execute(
@@ -852,13 +883,15 @@ def _load_base(db: Session, fresh: bool = False):
         "premium_hint": premium_hint,
         "trap": bool(daily_json.get("trap")) if daily_fresh else False,
         "zt_yd": zt_yd_perf,
-        "ladder": ladder,
+        "ladder": {**ladder, "trail": height_trail[-15:], "cycle_note": cycle_note,
+                   "prev_cycle_max": prev_cycle_max},
         "regime": {"month": today.month, "label": regime_label,
                    "advice": regime_advice, "small_ok": small_ok},
         "calibration": {"median_chg": median_chg,
                         "expect_red": _red_rate_expect(median_chg),
                         "actual_red": (sum(1 for c in chgs if c > 0) / len(chgs)) if chgs else None},
-        "dt_side": {"n": dt_n, "oneword": dt_oneword, "negative_spiro": negative_spiro},
+        "dt_side": {"n": dt_n, "oneword": dt_oneword, "negative_spiro": dt_oneword >= 3,
+                    "level": spiro_level},
     }
     top_boards = []
     for b in boards:
@@ -909,7 +942,7 @@ def _sentiment_t(db: Session, row) -> float | None:
 SORT_KEYS = {
     "heat", "inflow_t", "inflow_strength", "turn_rate", "r5", "r20", "streak",
     "market_cap", "chg_pct", "discount", "recommend", "div_yield", "risk_level",
-    "rev_line_ratio", "value",
+    "rev_line_ratio", "value", "seal_strength",
 }
 
 

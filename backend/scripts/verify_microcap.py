@@ -248,6 +248,14 @@ def test_live():
     ds = ov["battle"]["dt_side"]
     check("跌停侧自洽", ds["oneword"] <= ds["n"] and isinstance(ds["negative_spiro"], bool), str(ds))
     check("负螺旋口径=一字≥3", ds["negative_spiro"] == (ds["oneword"] >= 3))
+    check("负螺旋分级口径", ds["level"] == (2 if ds["oneword"] >= 5 else 1 if ds["oneword"] >= 3 else 0),
+          str(ds))
+    lad2 = ov["battle"]["ladder"]
+    trail = lad2.get("trail") or []
+    check("高度轨迹≤15且界内", len(trail) <= 15 and all(isinstance(h, int) and h >= 0 for h in trail),
+          str(trail))
+    if trail:
+        check("轨迹末位=当日最高板", trail[-1] == lad2["max"], f"{trail[-1]} vs {lad2['max']}")
 
 
 if __name__ == "__main__":
