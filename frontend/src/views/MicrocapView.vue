@@ -191,6 +191,8 @@ const calibText = computed(() => {
   if (d <= -5) return '——弱于分布(亏钱效应超统计)'
   return '——符合分布'
 })
+// 移动端短日期:2026-11-10 → 11/10
+const shortD = (d) => (d ? d.slice(5).replace('-', '/') : '—')
 const calLabel = computed(() => {
   const c = overview.value?.calendar
   if (!c) return ''
@@ -249,9 +251,15 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           <div>
             <h2 class="head-title">小微盘 · 投机雷达</h2>
             <div class="head-sub">
-              微盘 {{ overview.pools.micro }} · 小票 {{ overview.pools.small }} 只
-              · 评分 {{ overview.trade_date }} · 行情 {{ overview.quote_date }}
-              <template v-if="overview.heat?.date"> · 资金流 {{ overview.heat.date }}</template>
+              <template v-if="!isMobile">
+                微盘 {{ overview.pools.micro }} · 小票 {{ overview.pools.small }} 只
+                · 评分 {{ overview.trade_date }} · 行情 {{ overview.quote_date }}
+                <template v-if="overview.heat?.date"> · 资金流 {{ overview.heat.date }}</template>
+              </template>
+              <template v-else>
+                微盘{{ overview.pools.micro }}·小票{{ overview.pools.small }}<br />
+                评{{ shortD(overview.trade_date) }}·情{{ shortD(overview.quote_date) }}<template v-if="overview.heat?.date">·资{{ shortD(overview.heat.date) }}</template>
+              </template>
             </div>
           </div>
           <div v-if="overview.env?.state" class="senti"
@@ -262,7 +270,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           <div class="cal-pill" :class="overview.calendar?.state === 'revealing' ? 'cal-hot' : 'cal-ok'"
             :title="overview.calendar?.state === 'revealing' ? '披露窗内:雷还没炸完,小微盘整体承压' : '雷暴出清窗口:小微盘历史超额时段'">
             {{ overview.calendar?.state === 'revealing' ? '⚡ 雷暴进行中' : '✅ 出清窗口' }}
-            <span class="cal-sub">{{ calLabel }}</span>
+            <span class="cal-sub" :title="calLabel">{{ isMobile ? calLabel.split(' · ')[0] : calLabel }}</span>
           </div>
         </div>
         <div v-if="overview.battle?.friday_note" class="friday-note" title="109课+北京炒家回测(周五单日利润为平日2~7倍)">📅 {{ overview.battle.friday_note }}</div>
@@ -854,6 +862,23 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 @media (max-width: 600px) {
   .head-title { font-size: 17px; }
   .head-row { gap: 8px; }
+  /* 头部胶囊单行化:长文案省略号(悬浮/完整版在桌面),防撑高 */
+  .cal-pill { max-width: 100%; font-size: 12px; padding: 5px 10px; }
+  .cal-sub { display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+  .senti { font-size: 12px; padding: 5px 10px; }
+  .friday-note { font-size: 11.5px; line-height: 1.5; padding: 5px 9px; }
+  .head-sub { font-size: 11.5px; line-height: 1.55; }
+  /* 区块与卡片间距收紧 */
+  .mc-page { gap: 10px; }
+  .card { padding: 10px; }
+  .plan-grid { gap: 8px; }
+  .plan-item { padding: 8px 9px; }
+  .battle-grid { gap: 8px; }
+  /* 高度轨迹:柱距收紧防挤爆 */
+  .trail-row { gap: 2px; }
+  .trail-bar { width: 14px; }
+  .trail-bar .tb-col { width: 8px; }
+  .ladder-row { gap: 4px; }
   /* 作战面板纵叠:三问各成块,梯队横滑 */
   .battle-grid { grid-template-columns: 1fr; gap: 10px; }
   .ladder-row {
