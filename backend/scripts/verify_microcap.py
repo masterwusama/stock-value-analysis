@@ -242,7 +242,15 @@ def test_checkpoints():
         cks = plan_checkpoints(arch, LV, auc)
         check(f"{arch}四时点齐", [c["time"] for c in cks] == list(_CK_TIMES),
               str([c["time"] for c in cks]))
-        check(f"{arch}每时点2~4行", all(2 <= len(c["rows"]) <= 4 for c in cks))
+        check(f"{arch}每时点2~5行", all(2 <= len(c["rows"]) <= 5 for c in cks))
+        # 条件覆盖完备性(2026-11-12 审计补):9:30 须含一字/高开>7 与低开2~5 的归属,
+        # 10:00 须含「站上开盘价但破5日线」中间态,14:30 须含常态持有,14:55 须含弱势收盘
+        by_t = {c["time"]: " ".join(r["c"] for r in c["rows"]) for c in cks}
+        check(f"{arch}9:30覆盖一字高开", "高开>7%" in by_t["9:30"])
+        check(f"{arch}9:30覆盖低开<5", "低开<5%" in by_t["9:30"])
+        check(f"{arch}10:00覆盖中间态", "已破" in by_t["10:00"])
+        check(f"{arch}14:30覆盖常态持有", "常态" in by_t["14:30"])
+        check(f"{arch}14:55覆盖弱势收盘", "下方" in by_t["14:55"])
         for ck in cks:
             for r in ck["rows"]:
                 if not (r["c"] and r["n"] and r["h"]):
