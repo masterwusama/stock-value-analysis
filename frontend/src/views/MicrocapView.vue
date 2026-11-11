@@ -451,7 +451,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
                 </div>
               </div>
             </div>
-            <details class="ck-more">
+            <details class="ck-more" @click.stop>
               <summary>盘中突发场景(炸板/断板/涨停)</summary>
               <div v-if="p.auction" class="pi-auction" style="margin-top:6px"
                 :title="`竞价阈值=5日均换手 ${p.auction.tma5}% 的占比纲(强≥15%/枯竭≤3%),经验参数待竞价快照校准`">
