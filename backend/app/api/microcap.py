@@ -41,6 +41,7 @@ _ex 后缀),与 scoring._st_risk 同一豁免口径。
 """
 import csv
 import json
+import os
 import sys
 import time
 from collections import Counter, defaultdict
@@ -70,6 +71,7 @@ router = APIRouter(prefix="/api/microcap", tags=["microcap"])
 BACKEND = Path(__file__).resolve().parents[2]
 HEAT_DIR = BACKEND / "collector" / "data" / "heat"
 SENT_DIR = BACKEND / "collector" / "data" / "sentiment"
+SNAP_DIR = BACKEND / "collector" / "data" / "microcap"   # 每日 spec 快照(复盘底座)
 
 # ---- 池子口径(改口径只动这一处) ----
 MICRO_CAP_MAX = 25e8      # 微盘上界:总市值 <25 亿
@@ -552,6 +554,12 @@ class MicrocapItem(BaseModel):
     latest_period: str | None = None
     latest_np: float | None = None
     avg20: float | None = None
+    # 价位锚点(预案引擎用;均含今日收盘,前高特意排除今日——连板日创新高时前高才有压力含义)
+    ma5: float | None = None
+    ma10: float | None = None
+    lo20: float | None = None
+    hi20_ex: float | None = None   # 20日高(不含今日)——明日压力参照
+    limit_up: float | None = None  # 明日涨停价(10/20/5cm 分板)
     # 热度
     heat: float | None = None
     heat_band: str | None = None
@@ -805,6 +813,10 @@ def _load_base(db: Session, fresh: bool = False):
         prices = [p for _d, p, _t in series if p is not None][-(TURN_WIN_MAX + 1):]
         turns = [t for _d, _p, t in series if t is not None][-TURN_WIN_MAX:]
         avg20 = (sum(prices[-20:]) / len(prices[-20:])) if len(prices) >= 5 else None
+        ma5 = round(sum(prices[-5:]) / len(prices[-5:]), 3) if len(prices) >= 5 else None
+        ma10 = round(sum(prices[-10:]) / len(prices[-10:]), 3) if len(prices) >= 10 else None
+        lo20 = min(prices[-20:]) if len(prices) >= 5 else None
+        hi20_ex = max(prices[-21:-1]) if len(prices) >= 6 else None   # 不含今日
         r5 = r20 = None
         if len(prices) > 5 and prices[-6] > 0:
             r5 = prices[-1] / prices[-6] - 1
@@ -875,6 +887,10 @@ def _load_base(db: Session, fresh: bool = False):
             latest_period=rec["latest_period"].isoformat() if rec["latest_period"] else None,
             latest_np=rec["latest_np"],
             avg20=round(avg20, 3) if avg20 else None,
+            ma5=ma5, ma10=ma10, lo20=lo20, hi20_ex=hi20_ex,
+            limit_up=(round(price * (1.05 if "ST" in str(rec["name"]).upper()
+                                      else (1.20 if rec["code"][:2] == "30" or rec["code"][:3] == "688" else 1.10)), 2)
+                      if price else None),
             heat=hscore, heat_band=heat_band(hscore),
             danger=dscore, danger_flags=dflags,
             danger_labels=[DANGER_LABELS[f] for f in dflags if f in DANGER_LABELS],
@@ -1058,6 +1074,7 @@ def _load_base(db: Session, fresh: bool = False):
             "boards": top_boards,
         },
     }
+    _persist_snapshot(items, meta)
     _cache.update(key=key, at=time.time(), items=items, meta=meta)
     return items, meta
 
@@ -1075,6 +1092,170 @@ def _sentiment_t(db: Session, row) -> float | None:
          "dt_count": row.dt_count, "yz_dt_count": row.yz_dt_count, "r5": row.r5},
         row.state, streak)
     return sc["t"] if sc else None
+
+
+# ---------------------------------------------------------------------------
+# 每日 spec 快照(复盘底座) + 复盘/预案引擎(2026-11-11)
+# ---------------------------------------------------------------------------
+
+def _persist_snapshot(items: list, meta: dict):
+    """_load_base 重算后惰性落盘当日快照(spec≥45 的紧凑行)。已存在则跳过——
+    保护「当日终态」:清晨误算(行情/资金流未更新)不会覆盖昨晚的完整状态。
+    快照是次日复盘的唯一数据源:昨日可上手名单+当时的价位锚点。"""
+    qd = meta.get("quote_date")
+    if not qd:
+        return
+    SNAP_DIR.mkdir(parents=True, exist_ok=True)
+    path = SNAP_DIR / f"spec_{qd.replace('-', '')}.json"
+    if path.exists():
+        return
+    rows = []
+    for it in items:
+        if it.spec is None or it.spec < 45:
+            continue
+        rows.append({"code": it.code, "name": it.name, "pool": it.pool,
+                     "spec": it.spec, "heat": it.heat, "danger": it.danger,
+                     "spec_band": it.spec_band, "streak": it.streak,
+                     "zt_yesterday": it.zt_yesterday, "turn_profit": it.turn_profit,
+                     "risk_level": it.risk_level, "danger_flags": it.danger_flags,
+                     "price": it.price, "ma5": it.ma5, "ma10": it.ma10,
+                     "lo20": it.lo20, "hi20_ex": it.hi20_ex})
+    payload = {"date": qd, "written_at": date.today().isoformat(), "n": len(rows), "items": rows}
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+    for old in sorted(SNAP_DIR.glob("spec_*.json"))[:-40]:
+        old.unlink(missing_ok=True)
+
+
+def _prior_snapshot(quote_date: str | None) -> dict | None:
+    """复盘用的上一份快照:日期严格早于当前行情日的最新一份。"""
+    if not quote_date:
+        return None
+    for p in sorted(SNAP_DIR.glob("spec_*.json"), reverse=True):
+        d = p.stem.replace("spec_", "")
+        if d < quote_date.replace("-", ""):
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+    return None
+
+
+# ---- 预案引擎:场景×动作(动作=加仓/低吸/持有/减半/清仓/不追;全部有课程/回测出处) ----
+# 形态三分:连板型(断板/晋级规则主导)/低位启动型(回踩低吸主导)/基础型。
+# 月历从严:防守月(1/4/10)破5日线直接清,极强月(2/5/11)容忍到10日线。
+_ACT_KEYS = {"add", "dip", "hold", "half", "cut", "clear", "stop", "wait"}
+
+
+def plan_moves(streak, r20, regime_small) -> tuple[str, list[dict]]:
+    """→ (archetype, moves[7])。move = {t:触发场景, k:动作键(前端色标), x:动作与依据}。"""
+    board_type = (streak or 0) >= 1
+    low_type = r20 is not None and r20 < 0.15
+    archetype = "board" if board_type else ("low" if low_type else "base")
+    strict = regime_small is False   # 防守月(1/4/10)从严一档
+    if archetype == "board":
+        moves = [
+            {"t": "一字/高开>7%", "k": "wait", "x": "不追;持有者盯封单,开板即减半(断板次日-8%,94课)"},
+            {"t": "高开2~7%", "k": "half", "x": "持有;冲高回落跌破开盘价→减半(竞价强转弱,64课)"},
+            {"t": "平开±2%", "k": "hold", "x": "以5日线为准:站上持,跌破减"},
+            {"t": "低开2~5%", "k": "half", "x": "反弹收复开盘价→持;收复不了→减半"},
+            {"t": "断板(开板未回封)", "k": "half", "x": "减半防核按钮;巨量回封可接回"},
+            {"t": "破5日线", "k": "clear" if strict else "half",
+             "x": ("防守月从严:直接清仓" if strict else "减半(短线生命线)")},
+            {"t": "炸板", "k": "cut", "x": "减仓——次日-1.6%/胜率20%(回测)"},
+        ]
+    elif archetype == "low":
+        moves = [
+            {"t": "高开>7%/一字", "k": "wait", "x": "不追;低位启动看持续性,不看单日冲高"},
+            {"t": "高开2~7%", "k": "half", "x": "持有;冲高回落破开盘价→减半"},
+            {"t": "平开±2%", "k": "hold", "x": "持有;低位启动的常态,5日线上方都是安全区"},
+            {"t": "回踩5/10日线缩量企稳", "k": "dip", "x": "低吸加仓点(缩量=抛压枯竭)"},
+            {"t": "放量破5日线", "k": "clear" if strict else "half",
+             "x": ("防守月从严:直接清仓" if strict else "减半;缩量回踩不算破")},
+            {"t": "放量破10日线/前低", "k": "stop", "x": "清仓止损,形态破坏"},
+            {"t": "放量冲前高", "k": "add", "x": "突破前高可加仓;滞涨回落减仓兑现"},
+        ]
+    else:
+        moves = [
+            {"t": "一字/高开>7%", "k": "wait", "x": "不追;持有者看封单,开板减半"},
+            {"t": "高开2~7%", "k": "half", "x": "持有;冲高回落破开盘价→减半"},
+            {"t": "平开±2%", "k": "hold", "x": "以5日线为准:站上持,跌破减"},
+            {"t": "低开2~5%", "k": "half", "x": "反弹收复开盘价→持;收复不了→减半"},
+            {"t": "低开>5%", "k": "dip", "x": "恐慌位=前低/10日线:缩量企稳低吸;放量破前低清仓(111课)"},
+            {"t": "破5日线", "k": "clear" if strict else "half",
+             "x": ("防守月从严:直接清仓" if strict else "减半(短线生命线)")},
+            {"t": "破10日线/前低", "k": "stop", "x": "清仓止损,形态已坏"},
+        ]
+    return archetype, moves
+
+
+_CHEATSHEET = [
+    {"t": "高开>7%/一字", "x": "不追;开板即减半", "src": "94课·断板次日-8%"},
+    {"t": "高开2~7%", "x": "冲高回落破开盘价→减半", "src": "64课·竞价强转弱"},
+    {"t": "低开2~5%", "x": "收复开盘价→持,收复不了→减半", "src": "64课·弱转强确认"},
+    {"t": "低开>5%", "x": "前低/10日线缩量企稳低吸,放量破位清", "src": "111课·恐慌点低吸"},
+    {"t": "盘中破5日线", "x": "减半(防守月直接清)", "src": "短线生命线·月历从严"},
+    {"t": "盘中破10日线/前低", "x": "清仓止损", "src": "形态破坏"},
+    {"t": "冲前高/压力", "x": "放量突破加仓,滞涨回落减", "src": "压力兑现"},
+    {"t": "涨停封板", "x": "持有;封单<流通1%尾盘减", "src": "封板强度口径"},
+    {"t": "炸板", "x": "减仓", "src": "回测·次日-1.6%胜率20%"},
+    {"t": "断板(连板股)", "x": "减半防核按钮", "src": "80课·高位断板"},
+]
+
+_VERDICT_META = {
+    "ok": ("达标", "up"), "hold": ("持平观察", "flat"), "weak": ("走弱减仓", "warn"),
+    "half": ("破5日线·减半执行", "warn"), "stop": ("止损触发", "down"), "promo": ("晋级·持有", "up"),
+    "dt": ("跌停·止损", "down"), "na": ("已出池", "flat"),
+}
+
+
+def _build_review(prior: dict | None, by_code: dict, quote_date):
+    """昨日可上手(spec≥65)逐只对今天:涨跌/破线/断板晋级 → 判定+统计。"""
+    if not prior:
+        return {"available": False, "note": "无昨日快照——次日起可用(每日首次访问自动落盘)",
+                "date": None, "items": [], "stats": None}
+    rows = []
+    chgs, red, broken5, stops = [], 0, 0, 0
+    for s in prior.get("items") or []:
+        if (s.get("spec") or 0) < 65:
+            continue
+        cur = by_code.get(s["code"])
+        if cur is None:
+            rows.append({"code": s["code"], "name": s["name"], "y_spec": s["spec"],
+                         "chg": None, "verdict": "na", "note": "已出池(市值/次新变动)"})
+            continue
+        chg = cur.chg_pct
+        chgs.append(chg if chg is not None else 0.0)
+        if chg is not None and chg > 0:
+            red += 1
+        y5, y10 = s.get("ma5"), s.get("ma10")
+        broke5 = y5 is not None and (cur.price or 0) < y5
+        broke10 = y10 is not None and (cur.price or 0) < y10
+        if broke5:
+            broken5 += 1
+        if cur.dt_today or (chg is not None and chg <= -7) or broke10:
+            v, stops = "dt" if cur.dt_today else "stop", stops + 1
+            note = "今日跌停" if cur.dt_today else (f"收 {chg:+.1f}%·破10日线" if broke10 else f"收 {chg:+.1f}%")
+        elif broke5:
+            v = "half"; stops_note = None
+            note = f"收 {chg:+.1f}%·破5日线({y5:.2f})"
+        elif s.get("streak") and cur.streak:
+            v = "promo"; note = f"{s['streak']}板→{cur.streak}板晋级"
+        elif chg is not None and chg >= 2:
+            v = "ok"; note = f"收 {chg:+.1f}%·守住5日线"
+        elif chg is not None and chg <= -3:
+            v = "weak"; note = f"收 {chg:+.1f}%·走弱"
+        else:
+            v = "hold"; note = f"收 {chg:+.1f}%" if chg is not None else "今无行情"
+        rows.append({"code": s["code"], "name": s["name"], "y_spec": s["spec"],
+                     "chg": chg, "verdict": v, "note": note})
+    rows.sort(key=lambda r: (r["chg"] is None, -(r["chg"] or 0)))
+    stats = {"n": len(rows),
+             "avg_chg": round(sum(chgs) / len(chgs), 2) if chgs else None,
+             "red_rate": (red / len(chgs)) if chgs else None,
+             "broken5": broken5, "stopped": stops}
+    return {"available": True, "date": prior.get("date"), "items": rows, "stats": stats}
 
 
 # ---------------------------------------------------------------------------
@@ -1116,6 +1297,50 @@ def microcap_overview(db: Session = Depends(get_session)):
         env=env, calendar=meta["calendar"], battle=meta["battle"],
         spec=meta["spec"], heat=meta["heat"], mine_stats=mine,
     )
+
+
+class PlanOut(BaseModel):
+    review: dict
+    header: dict
+    plans: list[dict]
+    cheatsheet: list[dict]
+
+
+@router.get("/plan", response_model=PlanOut)
+def microcap_plan(db: Session = Depends(get_session)):
+    """收盘复盘(昨日可上手×今日行情) + 明日预案(今日可上手逐只应对卡)。"""
+    items, meta = _load_base(db)
+    by_code = {it.code: it for it in items}
+    review = _build_review(_prior_snapshot(meta.get("quote_date")), by_code,
+                           meta.get("quote_date"))
+    # 预案:今日可上手(spec≥65)按 spec 降序,逐只生成
+    regime = meta["battle"]["regime"]
+    plans = []
+    for it in sorted((i for i in items if i.spec is not None and i.spec >= 65),
+                     key=lambda i: i.spec, reverse=True):
+        archetype, moves = plan_moves(it.streak, it.r20, regime.get("small_ok"))
+        top_danger = it.danger_labels[0] if it.danger_labels else None
+        plans.append({
+            "code": it.code, "name": it.name, "pool": it.pool,
+            "spec": it.spec, "heat": it.heat, "danger": it.danger,
+            "danger_top": top_danger, "streak": it.streak,
+            "turn_profit": it.turn_profit, "hot_concepts": it.hot_concepts[:2],
+            "archetype": archetype,
+            "levels": {"price": it.price, "ma5": it.ma5, "ma10": it.ma10,
+                       "lo20": it.lo20, "hi20": it.hi20_ex, "limit_up": it.limit_up},
+            "moves": moves,
+            "risk_note": f"{regime['month']}月{regime['label']}·{regime['advice'].split('·')[0]}"
+                         + (f" · 险源:{top_danger}" if top_danger else ""),
+        })
+    dt = meta["battle"]["dt_side"]
+    header = {
+        "regime": regime,
+        "position_hint": ("全场预警:负螺旋/极弱判定——隔夜仓先降半,预案动作全部从严一档"
+                          if dt.get("level", 0) >= 1 else
+                          f"隔夜总仓位参考:{regime['label']}月({'进攻' if regime.get('small_ok') else '防守' if regime.get('small_ok') is False else '只做主线'})"),
+        "trap": meta["battle"].get("trap"),
+    }
+    return PlanOut(review=review, header=header, plans=plans, cheatsheet=_CHEATSHEET)
 
 
 @router.get("/board", response_model=BoardOut)

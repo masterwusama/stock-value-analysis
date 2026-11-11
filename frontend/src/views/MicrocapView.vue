@@ -12,6 +12,7 @@ import { MOBILE_QUERY } from '../lib/useMediaQuery'
 const router = useRouter()
 
 const overview = ref(null)
+const plan = ref(null)
 const board = ref({ total: 0, items: [] })
 const industries = ref([])
 const loading = ref(true)
@@ -66,6 +67,12 @@ const SORTS = [
   { key: 'recommend', label: '推荐分R' },
 ]
 
+const ARCH_META = { board: '连板型', low: '低位启动', base: '基础' }
+const VERDICT = {
+  ok: ['达标', 'up'], hold: ['持平', 'flat'], weak: ['走弱', 'warn'],
+  half: ['破5日线', 'warn'], stop: ['止损', 'down'], promo: ['晋级', 'up'],
+  dt: ['跌停', 'down'], na: ['出池', 'flat'],
+}
 const RISK_META = {
   3: { label: '确定', cls: 'rb-3', tip: '已戴帽或年报已触线——披露后必然 ST/退市流程' },
   2: { label: '高危', cls: 'rb-2', tip: '审计非标/立案/逼近营收线或面值/市值线' },
@@ -100,6 +107,9 @@ async function loadBoard() {
 }
 async function loadOverview() {
   overview.value = await get('/microcap/overview')
+}
+async function loadPlan() {
+  plan.value = await get('/microcap/plan')
 }
 async function loadIndustries() {
   const indRes = await get('/securities/industries', { market: 'A' }).catch(() => [])
@@ -209,7 +219,7 @@ onMounted(async () => {
   if (q.get('page')) page.value = Math.max(1, Number(q.get('page')) || 1)
 
   try {
-    await Promise.all([loadOverview(), loadIndustries(), loadBoard()])
+    await Promise.all([loadOverview(), loadPlan(), loadIndustries(), loadBoard()])
     loading.value = false
   } catch (e) {
     error.value = e.message
@@ -354,6 +364,78 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- ── 收盘复盘 → 明日预案 ── -->
+      <div class="card plan-card">
+        <div class="plan-head">
+          <div>
+            <div class="sec-title">收盘复盘 → 明日预案
+              <span class="sec-sub">昨日可上手逐只复盘 · 今日可上手逐只应对卡(加仓/低吸/持有/减半/清仓)</span>
+            </div>
+            <div class="plan-hint">{{ plan?.header?.position_hint }}{{ plan?.header?.trap ? ' · ⚠陷阱日禁隔夜' : '' }}</div>
+          </div>
+        </div>
+
+        <!-- 复盘条 -->
+        <div class="review-strip" v-if="plan?.review?.available">
+          <b>{{ plan.review.date }}</b> 可上手 {{ plan.review.stats.n }} 只 →
+          今均涨 <b :class="chgClass(plan.review.stats.avg_chg)">{{ pctNum(plan.review.stats.avg_chg) }}</b>
+          · 红盘 <b>{{ Math.round((plan.review.stats.red_rate ?? 0) * 100) }}%</b>
+          · 破5日线 <b class="warn-amber">{{ plan.review.stats.broken5 }}</b>
+          · 止损触发 <b class="down">{{ plan.review.stats.stopped }}</b>
+          <details class="review-detail">
+            <summary>逐只</summary>
+            <div v-for="r in plan.review.items" :key="r.code" class="review-row">
+              <span class="cd">{{ r.code }}</span><b>{{ r.name }}</b>
+              <span :class="chgClass(r.chg)">{{ r.chg != null ? pctNum(r.chg) : '—' }}</span>
+              <span class="rv-verdict" :class="'v-' + (VERDICT[r.verdict]?.[1] || 'flat')">{{ VERDICT[r.verdict]?.[0] || r.verdict }}</span>
+              <span class="rv-note">{{ r.note }}</span>
+            </div>
+          </details>
+        </div>
+        <div class="review-strip" v-else>
+          <span class="flat">{{ plan?.review?.note || '复盘数据加载中…' }}</span>
+        </div>
+
+        <!-- 预案卡网格 -->
+        <div class="plan-grid" v-if="plan?.plans?.length">
+          <div v-for="p in plan.plans" :key="p.code" class="plan-item" @click="router.push(`/stock/${p.code}`)">
+            <div class="pi-head">
+              <b>{{ p.name }}</b><span class="cd">{{ p.code }}</span>
+              <span class="pi-spec">投{{ p.spec?.toFixed(0) }} 险{{ p.danger }}</span>
+              <span class="arch-tag" :class="'ar-' + p.archetype">{{ ARCH_META[p.archetype] }}</span>
+              <span v-if="p.streak" class="zt-hot">{{ p.streak }}板</span>
+            </div>
+            <div class="pi-levels" :title="'价位锚点:5日/10日线为动态生命线,前低=恐慌位,前高(不含今日)=压力,涨停价按板块幅度'">
+              <span>5日 <b>{{ p.levels.ma5?.toFixed(2) ?? '—' }}</b></span>
+              <span>10日 <b>{{ p.levels.ma10?.toFixed(2) ?? '—' }}</b></span>
+              <span>前低 <b class="down">{{ p.levels.lo20?.toFixed(2) ?? '—' }}</b></span>
+              <span>前高 <b class="warn-amber">{{ p.levels.hi20_ex?.toFixed(2) ?? '—' }}</b></span>
+              <span>涨停 <b class="zt-hot">{{ p.levels.limit_up?.toFixed(2) ?? '—' }}</b></span>
+            </div>
+            <div class="pi-moves">
+              <div v-for="m in p.moves" :key="m.t" class="mv-row">
+                <span class="mv-t">{{ m.t }}</span>
+                <span class="mv-a" :class="'act-' + m.k">{{ m.x }}</span>
+              </div>
+            </div>
+            <div class="pi-risk">{{ p.risk_note }}</div>
+          </div>
+        </div>
+        <div v-else class="review-strip"><span class="flat">今日无「可上手」标的——空仓也是仓位,等信号。</span></div>
+
+        <details class="cheat-box">
+          <summary>短线场景速查表(通用)</summary>
+          <table class="grid cheat-table">
+            <thead><tr><th class="l">场景</th><th class="l">应对</th><th>出处</th></tr></thead>
+            <tbody>
+              <tr v-for="c in plan?.cheatsheet || []" :key="c.t">
+                <td class="l">{{ c.t }}</td><td class="l">{{ c.x }}</td><td class="cd">{{ c.src }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </details>
       </div>
 
       <!-- ── 热门概念面板 ── -->
@@ -644,6 +726,40 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .trail-bar .tb-col.top { background: #c0392b; }
 .trail-bar em { font-style: normal; font-size: 9.5px; color: #8a94a6; margin-top: 2px; }
 .bt-trap.warn2 { background: #fff7e6; color: #b8860b; }
+/* —— 复盘·预案卡 —— */
+.plan-card { display: flex; flex-direction: column; gap: 10px; }
+.plan-hint { font-size: 12px; color: #8a94a6; margin-top: 3px; }
+.review-strip { font-size: 12.5px; color: #5a6472; background: #f7f8fa; border-radius: 8px; padding: 7px 10px; }
+.review-strip b { margin: 0 2px; }
+.review-detail { margin-top: 4px; }
+.review-detail summary { cursor: pointer; color: #2d6cdf; font-size: 12px; }
+.review-row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-size: 12px; border-top: 1px dashed #e8ebf0; }
+.rv-verdict { font-weight: 600; }
+.rv-verdict.v-up { color: var(--up); } .rv-verdict.v-down { color: var(--down); }
+.rv-verdict.v-warn { color: #b8860b; } .rv-verdict.v-flat { color: #8a94a6; }
+.rv-note { color: #8a94a6; font-size: 11.5px; }
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 10px; }
+.plan-item { border: 1px solid #e8ebf0; border-radius: 10px; padding: 9px 11px; cursor: pointer; background: #fff; }
+.plan-item:hover { border-color: #b9a3e8; }
+.pi-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pi-spec { font-size: 11px; color: #6c3fc5; background: #f4eefd; border-radius: 4px; padding: 1px 5px; }
+.arch-tag { font-size: 10.5px; border-radius: 4px; padding: 1px 5px; }
+.arch-tag.ar-board { background: #fdeeee; color: #a93226; }
+.arch-tag.ar-low { background: #edf7ee; color: #1e7e34; }
+.arch-tag.ar-base { background: #f4f5f7; color: #5a6472; }
+.pi-levels { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: #8a94a6; margin: 6px 0; }
+.pi-levels b { color: #5a6472; font-weight: 600; }
+.pi-moves { display: flex; flex-direction: column; gap: 3px; }
+.mv-row { display: flex; gap: 8px; font-size: 11.8px; line-height: 1.45; }
+.mv-t { flex: 0 0 128px; color: #5a6472; }
+.mv-a { flex: 1; color: #3c4552; }
+.mv-a.act-add, .mv-a.act-dip { color: var(--up); font-weight: 600; }
+.mv-a.act-half, .mv-a.act-cut, .mv-a.act-clear, .mv-a.act-stop { color: var(--down); font-weight: 600; }
+.mv-a.act-hold { color: #5a6472; }
+.mv-a.act-wait { color: #b8860b; }
+.pi-risk { margin-top: 6px; font-size: 11px; color: #8a94a6; border-top: 1px dashed #e8ebf0; padding-top: 5px; }
+.cheat-box summary { cursor: pointer; font-size: 12.5px; color: #2d6cdf; }
+.cheat-table { font-size: 12px; margin-top: 8px; }
 /* 快捷预设行 */
 .preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .preset-label { font-size: 12px; color: #8a94a6; }
@@ -688,6 +804,11 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
   }
   .ladder-row::-webkit-scrollbar { display: none; }
   .lv-chip { flex: none; }
+  /* 预案卡纵叠;复盘条横滑 */
+  .plan-grid { grid-template-columns: 1fr; }
+  .review-strip { white-space: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  .review-strip::-webkit-scrollbar { display: none; }
+  .mv-t { flex-basis: 104px; }
   /* 快捷预设单行横滑 */
   .preset-row {
     flex-wrap: nowrap;

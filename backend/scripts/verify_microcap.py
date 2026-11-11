@@ -24,8 +24,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.microcap import (  # noqa: E402
-    DANGER_CAP, HEAT_BANDS, MICRO_CAP_MAX, SMALL_CAP_MAX, _calendar, _classify,
-    danger_score, heat_band, heat_score, spec_band, spec_score,
+    DANGER_CAP, HEAT_BANDS, MICRO_CAP_MAX, SMALL_CAP_MAX, _ACT_KEYS, _calendar,
+    _classify, danger_score, heat_band, heat_score, plan_moves, spec_band, spec_score,
 )
 
 PASS = FAIL = 0
@@ -172,6 +172,31 @@ def test_danger_spec():
           and spec_band(20) == "rest" and spec_band(None) is None)
 
 
+def test_plan_moves():
+    for args, want_arch in [((3, 0.4, True), "board"), ((None, 0.05, True), "low"),
+                            ((None, 0.3, False), "base"), ((1, 0.2, None), "board")]:
+        arch, moves = plan_moves(*args)
+        check(f"形态判定{args}→{want_arch}", arch == want_arch, arch)
+        check(f"预案{arch}条数4~9", 4 <= len(moves) <= 9, str(len(moves)))
+        for m in moves:
+            if m["k"] not in _ACT_KEYS:
+                check(f"动作键合法{m['k']}", False, str(m))
+            if not m["t"] or not m["x"]:
+                check("预案字段非空", False, str(m))
+    # 从严参数:防守月破5日线=clear,其余=half
+    _, mv_strict = plan_moves(None, 0.3, False)
+    _, mv_norm = plan_moves(None, 0.3, True)
+    s5 = next(m for m in mv_strict if "5日线" in m["t"])
+    n5 = next(m for m in mv_norm if "5日线" in m["t"])
+    check("防守月破5日=清仓", s5["k"] == "clear", s5["k"])
+    check("极强月破5日=减半", n5["k"] == "half", n5["k"])
+    # 连板型有断板规则,低位型有回踩低吸
+    _, mv_b = plan_moves(2, 0.4, True)
+    _, mv_l = plan_moves(None, 0.04, True)
+    check("连板型含断板", any("断板" in m["t"] for m in mv_b))
+    check("低位型含回踩低吸", any("回踩" in m["t"] and m["k"] == "dip" for m in mv_l))
+
+
 def test_calendar():
     cal = _calendar(date(2026, 11, 10), None, 0.999)
     check("11月=出清窗口", cal["state"] == "cleared")
@@ -294,6 +319,32 @@ def test_live():
     check("投机分降序单调", sps == sorted(sps, reverse=True))
     ok3 = all((it["danger"] >= 30) for it in dg["items"] if it["risk_level"] == 3)
     check("确定级危险度≥30", ok3, str([(i['name'], i['danger']) for i in dg['items'] if i['risk_level'] == 3][:3]))
+
+    # 复盘·预案端点(2026-11-11)
+    pl = get("/api/microcap/plan")
+    check("plan四段齐", all(k in pl for k in ("review", "header", "plans", "cheatsheet")))
+    check("速查表≥8行", len(pl["cheatsheet"]) >= 8, str(len(pl["cheatsheet"])))
+    check("头注含仓位提示", bool(pl["header"]["position_hint"]))
+    if pl["review"]["available"]:
+        rs = pl["review"]["stats"]
+        check("复盘统计字段齐", all(k in rs for k in ("n", "avg_chg", "red_rate", "broken5", "stopped")))
+        check("复盘样本>0", rs["n"] > 0, str(rs))
+        check("止损计数≤样本", rs["stopped"] <= rs["n"] and rs["broken5"] <= rs["n"])
+    else:
+        check("无快照时诚实降级", bool(pl["review"]["note"]), str(pl["review"]))
+    tr_n = sp["trade"]
+    if tr_n > 0:
+        check("预案数=可上手数", len(pl["plans"]) == tr_n, f"{len(pl['plans'])} vs {tr_n}")
+        p0 = pl["plans"][0]
+        check("预案字段齐", all(k in p0 for k in ("code", "name", "spec", "archetype", "levels", "moves", "risk_note")))
+        check("预案全部spec≥65", all((p["spec"] or 0) >= 65 for p in pl["plans"]))
+        check("预案按spec降序", [p["spec"] for p in pl["plans"]]
+              == sorted((p["spec"] for p in pl["plans"]), reverse=True))
+        check("价位锚点齐且涨停>现价", all(
+            p["levels"]["limit_up"] is None or p["levels"]["limit_up"] >= (p["levels"]["price"] or 0)
+            for p in pl["plans"]))
+    else:
+        check("无预案时空态", len(pl["plans"]) == 0)
     lad2 = ov["battle"]["ladder"]
     trail = lad2.get("trail") or []
     check("高度轨迹≤15且界内", len(trail) <= 15 and all(isinstance(h, int) and h >= 0 for h in trail),
@@ -307,6 +358,7 @@ if __name__ == "__main__":
     test_classify_exemption()
     test_heat_score()
     test_danger_spec()
+    test_plan_moves()
     test_calendar()
     if "--live" in sys.argv:
         test_live()
