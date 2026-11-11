@@ -446,8 +446,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
                   <span v-if="ri === 0" class="ck-time"><b>{{ ck.time }}</b><i>{{ ck.label }}</i></span>
                   <span v-else class="ck-time"></span>
                   <span class="ck-c">{{ r.c }}</span>
-                  <span class="ck-a" :class="actClassOf(r.n)">{{ r.n }}</span>
-                  <span class="ck-a" :class="actClassOf(r.h)">{{ r.h }}</span>
+                  <span class="ck-a" :class="actClassOf(r.n)" data-l="未持仓">{{ r.n }}</span>
+                  <span class="ck-a" :class="actClassOf(r.h)" data-l="持仓">{{ r.h }}</span>
                 </div>
               </div>
             </div>
@@ -647,7 +647,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 
       <!-- ── 口径说明 ── -->
       <div class="card note-card">
-        <b>怎么读这块看板</b>
+        <details class="note-fold" :open="!isMobile">
+          <summary>怎么读这块看板</summary>
         <p>
           <b>作战面板四问四答</b>:①今天什么打法——按大盘情绪状态的历史校准(极强日涨停股次日竞价 +3.6%/胜率73%,
           炸板股 -1.6% 应回避,极弱转普通的「陷阱日」禁隔夜);②今天在年历的哪一段——12个月大环境各不相同,
@@ -687,6 +688,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           每交易日 16:45 heat 任务更新资金流/概念(sentiment 16:30 榜单池)。
           本页是投机环境合成,不构成投资建议。
         </p>
+        </details>
       </div>
     </template>
   </div>
@@ -879,6 +881,9 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
   .trail-bar { width: 14px; }
   .trail-bar .tb-col { width: 8px; }
   .ladder-row { gap: 4px; }
+  /* 口径说明移动端默认折叠(桌面 open 由 isMobile 初始态控制) */
+  .note-fold summary { cursor: pointer; font-size: 13px; }
+  .note-fold summary b { color: #2a3340; }
   /* 作战面板纵叠:三问各成块,梯队横滑 */
   .battle-grid { grid-template-columns: 1fr; gap: 10px; }
   .ladder-row {
@@ -890,10 +895,13 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
   }
   .ladder-row::-webkit-scrollbar { display: none; }
   .lv-chip { flex: none; }
-  /* 四时点表两行式:时点+条件一行,未持仓/持仓并排第二行 */
-  .ck-head, .ck-row { grid-template-columns: 40px 1fr 1fr; }
-  .ck-c { grid-column: 2 / 4; }
-  .ck-head .ck-c { grid-column: 2 / 4; }
+  /* 四时点表块状卡片式:三列挤压会文字竖排,移动端全部全宽+行内标签 */
+  .ck-head { display: none; }
+  .ck-row { grid-template-columns: 1fr; gap: 2px; padding: 6px 9px; }
+  .ck-row .ck-time { margin-bottom: 1px; }
+  .ck-row .ck-c { font-weight: 600; color: #2a3340; }
+  .ck-row .ck-a { padding-left: 9px; position: relative; line-height: 1.5; }
+  .ck-row .ck-a::before { content: attr(data-l) " · "; color: #8a94a6; }
   /* 预案卡纵叠;复盘条横滑 */
   .plan-grid { grid-template-columns: 1fr; }
   .review-strip { white-space: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
