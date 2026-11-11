@@ -258,6 +258,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             <span class="cal-sub">{{ calLabel }}</span>
           </div>
         </div>
+        <div v-if="overview.battle?.friday_note" class="friday-note" title="109课+北京炒家回测(周五单日利润为平日2~7倍)">📅 {{ overview.battle.friday_note }}</div>
         <div class="env-row">
           <span v-if="overview.env?.r5 != null" class="env-item" title="国证2000指数近5日涨幅——小票风格锚">国证2000 5日 <b :class="chgClass(overview.env.r5)">{{ pctNum(overview.env.r5 * 100) }}</b></span>
           <span v-if="overview.env?.zt_count != null" class="env-item" title="全市场涨停家数(东财涨停池口径)">全市场涨停 <b>{{ overview.env.zt_count }}</b></span>
@@ -524,7 +525,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
                 <div v-if="s.hot_concepts.length" class="concept-tags">
                   <span v-for="c in s.hot_concepts.slice(0, 2)" :key="c" class="ctag"
                     :class="{ lead: s.concept_lead?.includes(c) }"
-                    :title="s.concept_lead?.includes(c) ? c + ' 的池内身位最高(连板/热度)' : ''">{{ (s.concept_lead?.includes(c) ? '👑' : '') + c }}</span>
+                    :title="s.concept_lead?.includes(c) ? c + ' 的日内龙1(首次封板 ' + (s.concept_lead_time || '—') + ')——108课:最早封板者领涨跟风' : ''">{{ (s.concept_lead?.includes(c) ? '👑' : '') + c }}</span>
+                  <span v-if="s.concept_lead_time && s.concept_lead?.length" class="lead-time">{{ s.concept_lead_time }}封</span>
                   <span v-if="s.hot_concepts.length > 2" class="ctag more" :title="s.hot_concepts.join(' · ')">+{{ s.hot_concepts.length - 2 }}</span>
                 </div>
               </td>
@@ -664,6 +666,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .cal-pill.cal-hot { background: #fff7e6; color: #b8860b; border-color: #f0dcb0; }
 .cal-sub { margin-left: 6px; opacity: 0.85; font-size: 12px; }
 .env-row { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted, #8a94a6); }
+.friday-note { font-size: 12px; color: #b05e10; background: #fdf3e7; border: 1px solid #ecc99b; border-radius: 8px; padding: 5px 10px; }
+.lead-time { font-size: 10px; color: #b05e10; white-space: nowrap; }
 .env-item b { margin-left: 4px; font-size: 13px; }
 /* 涨跌色走全站令牌(红涨绿跌),不再本页硬编码——与列表页/掘金台同一根色管 */
 .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--sub-deep, #8a94a6); }

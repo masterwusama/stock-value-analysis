@@ -587,6 +587,7 @@ class MicrocapItem(BaseModel):
     dt_today: bool = False
     turn_profit: bool = False              # 扭亏/摘帽候:年报亏损(或已ST)且最新披露期转正
     concept_lead: list[str] = []           # 此股是其龙头(身位最高)的热门概念名
+    concept_lead_time: str | None = None   # 龙1的首次封板时间(HH:MM)——日内龙1=最早封板(108课)
     r5: float | None = None
     r20: float | None = None
     hot_concepts: list[str] = []
@@ -922,7 +923,19 @@ def _load_base(db: Session, fresh: bool = False):
         ))
 
     # ---- 投机作战素材:概念龙头(身位) + 昨日涨停今日表现(池内) + 全市场连板梯队 ----
+    # 龙1判定(108课):日内龙1=该概念里**首次封板时间最早**的今日涨停股——封板时间
+    # 是身位的硬指标,连板数/热度只是次序参考;非涨停股不争龙1。池内股多概念可兼多冠。
+    def _seal_time(code: str):
+        zt = zt_today.get(code)
+        if not zt:
+            return None
+        try:
+            return int(str(zt.get("首次封板时间") or "235959")[:6])
+        except (TypeError, ValueError):
+            return 235959
+
     lead_by_code: dict[str, list[str]] = {}
+    lead_time: dict[str, str] = {}
     for b in boards:
         name = b["name"]
         if not member_sets.get(name):
@@ -930,11 +943,21 @@ def _load_base(db: Session, fresh: bool = False):
         cands = [it for it in items if name in it.hot_concepts]
         if not cands:
             continue
-        # 身位=今日连板,次序=热度(无板时热度高者也算「资金身位」)
-        top = max(cands, key=lambda it: (it.streak or 0, it.heat or 0))
-        lead_by_code.setdefault(top.code, []).append(name)
+        zt_cands = [it for it in cands if it.streak]
+        if zt_cands:
+            # 首次封板时间最早者优先;同刻(一字板同秒)再比连板数、热度
+            top = min(zt_cands, key=lambda it: (_seal_time(it.code) or 235959,
+                                                -(it.streak or 0), -(it.heat or 0)))
+            st = _seal_time(top.code)
+            lead_by_code.setdefault(top.code, []).append(name)
+            if st is not None:
+                lead_time[top.code] = f"{st // 10000:02d}:{st % 10000 // 100:02d}"
+        else:
+            top = max(cands, key=lambda it: (it.heat or 0))
+            lead_by_code.setdefault(top.code, []).append(name)
     for it in items:
         it.concept_lead = lead_by_code.get(it.code, [])
+        it.concept_lead_time = lead_time.get(it.code)
 
     yd = [it for it in items if it.zt_yesterday]
     yd_chgs = [it.chg_pct for it in yd if it.chg_pct is not None]
@@ -1045,6 +1068,8 @@ def _load_base(db: Session, fresh: bool = False):
                    "prev_cycle_max": prev_cycle_max},
         "regime": {"month": today.month, "label": regime_label,
                    "advice": regime_advice, "small_ok": small_ok},
+        "friday_note": ("周五隔夜=博弈周末发酵日(消息面周末发酵,周一竞价兑现——北京炒家回测:周五单日"
+                        "利润为平日的2~7倍);不接高位,只做低位首板/容量龙头" if today.weekday() == 4 else None),
         "calibration": {"median_chg": median_chg,
                         "expect_red": _red_rate_expect(median_chg),
                         "actual_red": (sum(1 for c in chgs if c > 0) / len(chgs)) if chgs else None},
