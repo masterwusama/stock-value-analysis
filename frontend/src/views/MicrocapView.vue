@@ -158,6 +158,13 @@ const chgClass = (v) => v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'fl
 // 营收/线着色是「危险度」语义不是涨跌方向:<1 触线=红(危险),1~2 边缘=琥珀
 const lineClass = (r) => r == null ? '' : r < 1 ? 'line-hit' : r < 2 ? 'warn-amber' : ''
 const turnPctileTxt = (it) => it.turn_pctile == null ? '—' : `${Math.round(it.turn_pctile * 100)}%`
+// 四时点表动作列色标:按动作关键词判买/减/持(买=红 减/清=绿 持/等=灰 放弃=琥珀)
+const actClassOf = (t) => {
+  if (/首仓|低吸|加2成|\+2成|建首仓/.test(t)) return 'ak-buy'
+  if (/减半|清仓|减仓/.test(t)) return 'ak-cut'
+  if (/放弃|不动|严禁|等/.test(t)) return 'ak-wait'
+  return 'ak-hold'
+}
 const ztTxt = (it) => {
   if (it.streak) return (it.zt_yesterday ? '晋级↑' : '') + `${it.streak}板`
   if (it.zt_yesterday) return '断板↓'
@@ -420,20 +427,39 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
               </span>
             </div>
             <div class="pi-sizing" :title="'加仓纪律:分批建仓,每笔独立止损——加仓部分错了只出加仓部分,不动底仓'">{{ p.sizing }}</div>
-            <div v-if="p.auction" class="pi-auction"
-              :title="`明日 9:25 竞价换手率对号入座——阈值=5日均换手 ${p.auction.tma5}% 相对化(强≥×5%/枯竭≤×1%,经验参数待竞价快照校准)。预案是收盘后写的,实际竞价次日揭晓,所以给阈值给动作不给结论`">
-              <b class="au-t">竞价锚(9:25 对号入座)</b>
-              <div v-for="r in p.auction.rows" :key="r.t" class="mv-row">
-                <span class="mv-t">{{ r.t }}</span>
-                <span class="mv-a" :class="'act-' + r.k">{{ r.x }}</span>
+            <!-- 四时点决策表:用户只在 开盘/10:00/14:30/14:55 出手 -->
+            <div class="ck-table" title="四时点检查表:条件满足即执行对应列动作;价位锚见上方锚点行,尾盘买入逻辑=吃次日竞价溢价(回测+2.3%/胜率66%)">
+              <div class="ck-head">
+                <span class="ck-time">时点</span><span class="ck-c">条件</span>
+                <span class="ck-a">未持仓</span><span class="ck-a">持仓</span>
+              </div>
+              <div v-for="ck in p.checkpoints" :key="ck.time" class="ck-group">
+                <div v-for="(r, ri) in ck.rows" :key="ri" class="ck-row">
+                  <span v-if="ri === 0" class="ck-time"><b>{{ ck.time }}</b><i>{{ ck.label }}</i></span>
+                  <span v-else class="ck-time"></span>
+                  <span class="ck-c">{{ r.c }}</span>
+                  <span class="ck-a" :class="actClassOf(r.n)">{{ r.n }}</span>
+                  <span class="ck-a" :class="actClassOf(r.h)">{{ r.h }}</span>
+                </div>
               </div>
             </div>
-            <div class="pi-moves">
-              <div v-for="m in p.moves" :key="m.t" class="mv-row">
-                <span class="mv-t">{{ m.t }}</span>
-                <span class="mv-a" :class="'act-' + m.k">{{ m.x }}</span>
+            <details class="ck-more">
+              <summary>盘中突发场景(炸板/断板/涨停)</summary>
+              <div v-if="p.auction" class="pi-auction" style="margin-top:6px"
+                :title="`竞价阈值=5日均换手 ${p.auction.tma5}% 的占比纲(强≥15%/枯竭≤3%),经验参数待竞价快照校准`">
+                <b class="au-t">竞价锚明细(9:25)</b>
+                <div v-for="r in p.auction.rows" :key="r.t" class="mv-row">
+                  <span class="mv-t">{{ r.t }}</span>
+                  <span class="mv-a" :class="'act-' + r.k">{{ r.x }}</span>
+                </div>
               </div>
-            </div>
+              <div class="pi-moves" style="margin-top:6px">
+                <div v-for="m in p.moves" :key="m.t" class="mv-row">
+                  <span class="mv-t">{{ m.t }}</span>
+                  <span class="mv-a" :class="'act-' + m.k">{{ m.x }}</span>
+                </div>
+              </div>
+            </details>
             <div class="pi-risk">{{ p.risk_note }}</div>
           </div>
         </div>
@@ -767,6 +793,20 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .pi-levels { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: #8a94a6; margin: 6px 0; }
 .pi-levels b { color: #5a6472; font-weight: 600; }
 .pi-sizing { font-size: 11px; color: #6c3fc5; background: #f8f5fe; border-radius: 5px; padding: 3px 7px; margin-bottom: 5px; }
+/* 四时点决策表 */
+.ck-table { border: 1px solid #e8ebf0; border-radius: 8px; overflow: hidden; font-size: 11.5px; margin-bottom: 5px; }
+.ck-head, .ck-row { display: grid; grid-template-columns: 52px 1fr 1fr 1fr; gap: 6px; padding: 3px 8px; align-items: baseline; }
+.ck-head { background: #f4f6f9; font-weight: 600; color: #5a6472; }
+.ck-row { border-top: 1px dashed #eef0f3; }
+.ck-group:nth-child(odd) .ck-row { background: #fbfcfd; }
+.ck-time b { font-size: 11.5px; color: #2a3340; }
+.ck-time i { font-style: normal; display: block; font-size: 9.5px; color: #8a94a6; }
+.ck-c { color: #3c4552; }
+.ck-a.ak-buy { color: var(--up); font-weight: 600; }
+.ck-a.ak-cut { color: var(--down); font-weight: 600; }
+.ck-a.ak-wait { color: #b8860b; }
+.ck-a.ak-hold { color: #5a6472; }
+.ck-more summary { cursor: pointer; font-size: 11.5px; color: #2d6cdf; margin: 2px 0; }
 .q-line { font-style: normal; color: #8a94a6; font-size: 10.5px; margin-left: 3px; }
 .pi-auction { background: #f0f7f4; border: 1px solid #cfe6da; border-radius: 6px; padding: 5px 8px; margin-bottom: 5px; }
 .pi-auction .au-t { display: block; font-size: 11px; color: #1e7e34; margin-bottom: 3px; }
@@ -825,6 +865,10 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
   }
   .ladder-row::-webkit-scrollbar { display: none; }
   .lv-chip { flex: none; }
+  /* 四时点表两行式:时点+条件一行,未持仓/持仓并排第二行 */
+  .ck-head, .ck-row { grid-template-columns: 40px 1fr 1fr; }
+  .ck-c { grid-column: 2 / 4; }
+  .ck-head .ck-c { grid-column: 2 / 4; }
   /* 预案卡纵叠;复盘条横滑 */
   .plan-grid { grid-template-columns: 1fr; }
   .review-strip { white-space: nowrap; overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }

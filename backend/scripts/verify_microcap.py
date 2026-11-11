@@ -24,8 +24,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.microcap import (  # noqa: E402
-    DANGER_CAP, HEAT_BANDS, MICRO_CAP_MAX, SMALL_CAP_MAX, _ACT_KEYS, _calendar,
-    _classify, danger_score, heat_band, heat_score, plan_moves, spec_band, spec_score,
+    DANGER_CAP, HEAT_BANDS, MICRO_CAP_MAX, SMALL_CAP_MAX, _ACT_KEYS, _CK_TIMES, _calendar,
+    _classify, danger_score, heat_band, heat_score, plan_checkpoints, plan_moves,
+    spec_band, spec_score,
 )
 
 PASS = FAIL = 0
@@ -232,6 +233,33 @@ def test_plan_moves():
     check("低位型突破加仓带量能数字", any("站上前高" in m["t"] and "6.7" in m["t"] and m["k"] == "add" for m in mv_l))
 
 
+def test_checkpoints():
+    LV = {"ma5": 31.79, "ma10": 31.09, "lo20": 27.57, "hi20": 31.94,
+          "shrink": 3.1, "surge": 6.7, "tma5": 4.5}
+    auc = {"strong": 0.68, "weak": 0.14, "tma5": 4.5, "rows": []}
+    import re
+    for arch in ("low", "base"):
+        cks = plan_checkpoints(arch, LV, auc)
+        check(f"{arch}四时点齐", [c["time"] for c in cks] == list(_CK_TIMES),
+              str([c["time"] for c in cks]))
+        check(f"{arch}每时点2~4行", all(2 <= len(c["rows"]) <= 4 for c in cks))
+        for ck in cks:
+            for r in ck["rows"]:
+                if not (r["c"] and r["n"] and r["h"]):
+                    check(f"{arch}字段非空@{ck['time']}", False, str(r))
+                # 每行至少一处(条件或动作)含数字——兜底分支(仍低于开盘价/尾盘跳水)条件
+                # 本身定性,但动作列须可执行;全部无数字即视为模糊话
+                if not any(re.search(r"\d", r[k]) for k in ("c", "n", "h")):
+                    check(f"{arch}行含数字@{ck['time']}", False, str(r))
+        # 关键价位在场:9:30有竞价阈值、10:00有5日线、14:30有前高或5日、14:55有次日竞价逻辑
+        all_c = " ".join(r["c"] for ck in cks for r in ck["rows"])
+        all_n = " ".join(r["n"] for ck in cks for r in ck["rows"])
+        check(f"{arch}条件含5日线", "31.79" in all_c, all_c[:80])
+        check(f"{arch}尾盘吃次日竞价", "次日竞价" in all_n, all_n[:120])
+    cks_noauc = plan_checkpoints("low", LV, None)
+    check("无量能锚时9:30退定性", all(r["c"] and r["n"] for r in cks_noauc[0]["rows"]))
+
+
 def test_calendar():
     cal = _calendar(date(2026, 11, 10), None, 0.999)
     check("11月=出清窗口", cal["state"] == "cleared")
@@ -386,6 +414,8 @@ def test_live():
         check("竞价锚三档单调", all(
             p["auction"] is None or (p["auction"]["strong"] > p["auction"]["weak"]
                                      and len(p["auction"]["rows"]) == 3) for p in pl["plans"]))
+        check("live四时点齐", all([c["time"] for c in p["checkpoints"]] == list(_CK_TIMES)
+                                  for p in pl["plans"]))
         check("预案全部spec≥65", all((p["spec"] or 0) >= 65 for p in pl["plans"]))
         check("预案按spec降序", [p["spec"] for p in pl["plans"]]
               == sorted((p["spec"] for p in pl["plans"]), reverse=True))
@@ -408,6 +438,7 @@ if __name__ == "__main__":
     test_heat_score()
     test_danger_spec()
     test_plan_moves()
+    test_checkpoints()
     test_calendar()
     if "--live" in sys.argv:
         test_live()

@@ -1225,6 +1225,60 @@ _ACT_KEYS = {"add", "dip", "hold", "half", "cut", "clear", "stop", "wait", "flat
 
 _SIZING = "仓位阶梯:首仓≤3成,确认信号后+2成,单票上限7成;加仓部分独立止损——破加仓日5日线只出加仓部分"
 
+# 用户操作习惯:只在 开盘(9:30)/10:00/14:30/收盘竞价(14:55) 四个时点出手——
+# 预案卡因此输出「四时点检查表」:每时点给条件分支×(未持仓/持仓)双列动作,
+# 原连续时间语义(半小时不再新低/10:00前站稳/守住至14:30)全部收敛到这四个时刻。
+# 14:55 尾盘买入的底层逻辑=吃次日竞价溢价(回测锚:自然涨停次日竞价均值+2.29%/胜率66%)。
+_CK_TIMES = ("9:30", "10:00", "14:30", "14:55")
+
+
+def plan_checkpoints(archetype: str, lv: dict, auction: dict | None) -> list[dict]:
+    """四时点决策表。行={c:条件(含数字), n:未持仓动作, h:持仓动作};n/h 文案含动作键色标词。
+
+    出卡前提已含 dip/add(买入预案语义),这里不再做月历门控;价位锚全部来自 lv。
+    """
+    m5, m10 = _f2(lv.get("ma5")), _f2(lv.get("ma10"))
+    lo, hi = _f2(lv.get("lo20")), _f2(lv.get("hi20"))
+    if auction:
+        strong = f"竞价换手≥{auction['strong']:g}%"
+        weak_lt = f"竞价换手<{auction['weak']:g}%"
+        mid = f"{auction['weak']:g}%~{auction['strong']:g}%"
+    else:
+        strong, mid, weak_lt = "竞价明显放量", "竞价正常", "竞价近乎无量"
+    # 低位启动型与基础型共用骨架,差异在第二时点的低吸区与突破参照
+    dip_zone = f"{m10}~{m5}" if archetype == "low" else f"{lo}/{m10}"
+    rows_930 = [
+        {"c": f"{strong}且高开2~7%", "n": "首仓≤3成(竞价有人抢,开盘即买)",
+         "h": "持有,防守也放宽到10日线"},
+        {"c": f"平开±2%({mid})", "n": "不动,等10:00确认", "h": "持有"},
+        {"c": f"低开>5%杀向{lo if archetype != 'low' else lo}", "n": f"挂{lo}附近等10:00确认,不接刀",
+         "h": "开盘先减半"},
+        {"c": weak_lt, "n": "今日放弃(无人接)", "h": "开盘减半,不等反弹"},
+    ]
+    rows_1000 = [
+        {"c": f"站上开盘价且守住{m5}", "n": "首仓3成", "h": "持有"},
+        {"c": f"回踩{dip_zone}企稳(半小时不再新低)", "n": "低吸首仓3成",
+         "h": "低吸+2成(独立止损)"},
+        {"c": "10:00仍低于开盘价", "n": "不动", "h": "减半"},
+    ]
+    rows_1430 = [
+        {"c": f"放量站上{hi}(前高)" if archetype == "low" else f"放量收复{m5}",
+         "n": "突破确认,首仓2成" if archetype == "low" else "首仓3成", "h": "+2成(独立止损)"},
+        {"c": f"无力收复{m5}", "n": "放弃(隔夜风险)", "h": "减半过夜"},
+        {"c": f"破{m10}/{lo}", "n": "严禁接", "h": "清仓,不留隔夜"},
+    ]
+    rows_1455 = [
+        {"c": f"收盘站稳{m5}且收红", "n": "建首仓3成过夜——吃明日竞价(涨停股次日竞价+2.3%/胜率66%回测)",
+         "h": "持满过夜"},
+        {"c": "尾盘跳水/炸板", "n": "放弃", "h": "减半(炸板次日-1.6%)"},
+    ]
+    return [
+        {"time": "9:30", "label": "开盘", "rows": rows_930},
+        {"time": "10:00", "label": "半小时确认", "rows": rows_1000},
+        {"time": "14:30", "label": "隔夜决策", "rows": rows_1430},
+        {"time": "14:55", "label": "尾盘竞价", "rows": rows_1455},
+    ]
+
 
 def _f2(v):
     return f"{v:.2f}" if v is not None else "—"
@@ -1464,6 +1518,7 @@ def microcap_plan(db: Session = Depends(get_session)):
         if not any(m["k"] in ("dip", "add") for m in moves):
             skipped_no_buy += 1
             continue
+        checkpoints = plan_checkpoints(archetype, lv, auction)
         top_danger = it.danger_labels[0] if it.danger_labels else None
         plans.append({
             "code": it.code, "name": it.name, "pool": it.pool,
@@ -1478,6 +1533,7 @@ def microcap_plan(db: Session = Depends(get_session)):
             "moves": moves,
             "sizing": sizing,
             "auction": auction,
+            "checkpoints": checkpoints,
             "risk_note": f"{regime['month']}月{regime['label']}·{regime['advice'].split('·')[0]}"
                          + (f" · 险源:{top_danger}" if top_danger else ""),
         })
