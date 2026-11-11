@@ -36,6 +36,7 @@ events;valuation 要走 Wind 手动加 --source wind(游标/批上限逻辑在 f
     schtasks /Create /TN va-stock /SC WEEKLY /D MON,TUE,WED,THU,FRI,SAT /ST 16:05 ^
       /TR "cmd /c cd /d <项目目录>\\backend && python -m collector.run stock >> collector.log 2>&1"
 """
+import json
 import logging
 import subprocess
 import sys
@@ -103,6 +104,35 @@ def _sweep_zombie_runs():
         db.close()
 
 
+def _heat_catchup():
+    """heat 缺日自愈:work 日 16:55/21:35 双保险。heat latest 落后最近交易日时补跑
+    (16:35 正跑被重启窗口撞掉/东财失败等场景)。判定读 data/heat/latest.json 的
+    date vs quote_daily 最近交易日;补跑走 subprocess 异步,不阻塞调度器。"""
+    heat_latest = BACKEND / "collector" / "data" / "heat" / "latest.json"
+    try:
+        want = ""
+        if heat_latest.exists():
+            want = (json.loads(heat_latest.read_text(encoding="utf-8")).get("date") or "").replace("-", "")
+        sys.path.insert(0, str(BACKEND))
+        from sqlalchemy import text as _t
+
+        from app.db import SessionLocal
+
+        db = SessionLocal()
+        try:
+            row = db.execute(_t("SELECT MAX(trade_date) FROM quote_daily")).scalar()
+        finally:
+            db.close()
+        need = bool(row) and row.strftime("%Y%m%d") != want
+    except Exception as e:  # noqa: BLE001 判定失败不补跑,下轮再判
+        print(f"[scheduler] heat 自愈判定失败(下轮再试): {e}", flush=True)
+        return
+    if not need:
+        return
+    print(f"[scheduler] heat 缺日自愈: latest={want or '无'} < 交易日 {row},补跑", flush=True)
+    subprocess.Popen([sys.executable, "-m", "collector.run", "heat"], cwd=str(BACKEND))
+
+
 def main():
     # misfire_grace_time 默认只有 1 秒:机器休眠/进程被卡超 1 秒,本轮触发就被静默丢弃。
     # 对本链「晚跑」永远优于「不跑」——宽限 1 小时,同一 job 错过多次只补跑一次(coalesce)。
@@ -127,11 +157,12 @@ def main():
     # 榜单池数据源只留 15 个交易日,中断超两周记得手动补跑
     s.add_job(run_job, "cron", args=["sentiment"], day_of_week="mon-fri",
               hour=16, minute=30, id="sentiment")
-    # 资金热度每个交易日 16:45(sentiment 16:30 之后错峰 15 分钟;东财资金流排行
-    # 收盘后数据才定盘,16:45 已稳)。给小微盘投机池(#/microcap)补资金热度/概念
-    # 题材维度;JSON-only 无回灌,休市/盘中/当日已生成三重跳过在采集器内部
+    # 资金热度每个交易日 16:35(sentiment 16:30 后 5 分钟;东财资金流收盘后即定盘,
+    # 提前到 16:35 是为了用户盘后立即访问 #/microcap 时资金流已是当日——16:45 那版
+    # 实测存在 16:30~16:45 的窗口期数据滞后感)。JSON-only 无回灌,休市/盘中/当日
+    # 已生成三重跳过在采集器内部;缺日自愈见 _heat_catchup
     s.add_job(run_job, "cron", args=["heat"], day_of_week="mon-fri",
-              hour=16, minute=45, id="heat")
+              hour=16, minute=35, id="heat")
     # 立案/处罚公告每周一次(周日 10:05,在 agro 早场之后,互不挤时段)。
     # 立案是低频事件,周更足够;回灌 --only-case 顺带单刷 score_daily 把「正在立案」
     # 抬成 ST 高危旗(旗发生在 score 行重建里,只灌 case_event 看不到)
@@ -178,10 +209,14 @@ def main():
     # 僵尸 running 行清扫:启动即扫一次,之后每小时扫(见 _sweep_zombie_runs 头注)
     s.add_job(_sweep_zombie_runs, "interval", hours=1,
               next_run_time=datetime.now(), id="zombie-sweep")
+    # heat 缺日自愈:工作日 16:55 / 21:35 双保险——heat latest 落后最近交易日
+    # (重启窗口撞掉 16:35 / 东财失败等场景)则补跑;与正跑同一份幂等,当日已生成即跳过
+    s.add_job(_heat_catchup, "cron", day_of_week="mon-fri",
+              hour="16,21", minute="55,35", id="heat-catchup")
     print("[scheduler] 已注册: stock(周一~六 16:05/22:05 估值快照) "
           "deep(周六 09:05 全市场财务) agro(每天 09:05/21:05 农化制品,不碰 Wind) "
           "valuation(每天 03:35 估值分位,免费源刷全 A) "
-          "sentiment(交易日 16:30 情绪日报) heat(交易日 16:45 资金热度/概念题材) case(周日 10:05 立案/处罚公告) "
+          "sentiment(交易日 16:30 情绪日报) heat(交易日 16:35 资金热度/概念题材) heat-catchup(工作日 16:55/21:35 heat 缺日自愈) case(周日 10:05 立案/处罚公告) "
           "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
           "zombie-sweep(启动+每小时 清扫僵尸 running 行) "
           "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报) aviation(每天 07:35 民航日度组) aviation-monthly(每月 12/15 日 07:45 民航月度组)。"
