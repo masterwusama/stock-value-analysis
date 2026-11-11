@@ -193,14 +193,18 @@ def test_plan_moves():
         # 竞价锚:tma5 在阈值必出且单调(强>枯竭)、含绝对地板
         if args[2] is not None:
             check(f"竞价锚{arch}", auc is not None and auc["strong"] > auc["weak"]
-                  and auc["strong"] >= 0.2 and auc["weak"] >= 0.03, str(auc))
-            check("竞价锚含tma5相对化", abs(auc["strong"] - max(4.5 * 0.05, 0.2)) < 0.05
-                  or auc["strong"] >= 0.2, str(auc))
+                  and auc["strong"] >= 0.05 and auc["weak"] >= 0.01, str(auc))
+            check("竞价锚占日均比口径", abs(auc["strong"] - round(max(4.5 * 0.15, 0.05), 2)) < 0.01,
+                  str(auc))
             check("竞价锚三行", len(auc["rows"]) == 3
                   and all(re.search(r"\d", r["t"]) and r["x"] for r in auc["rows"]))
-    # 冷票地板:tma5=0.1 时强承接=0.2(绝对地板生效)
+            check("竞价行键合法", all(r["k"] in _ACT_KEYS for r in auc["rows"]))
+    # 冷票地板:tma5=0.1 时强承接=0.05(绝对地板生效,占比纲)
     _, _, _, auc_cold = plan_moves(None, 0.05, True, {**LV, "tma5": 0.1}, True)
-    check("冷票竞价地板", auc_cold["strong"] == 0.2 and auc_cold["weak"] == 0.03, str(auc_cold))
+    check("冷票竞价地板", auc_cold["strong"] == 0.05 and auc_cold["weak"] == 0.01, str(auc_cold))
+    # 热票系数生效:tma5=10 时强=1.5/弱=0.3(占日均15%/3%)
+    _, _, _, auc_hot = plan_moves(None, 0.05, True, {**LV, "tma5": 10}, True)
+    check("热票竞价系数生效", auc_hot["strong"] == 1.5 and auc_hot["weak"] == 0.3, str(auc_hot))
     # tma5 缺失:auction=None 不冒充
     _, _, _, auc_none = plan_moves(None, 0.05, True, {k: v for k, v in LV.items() if k != "tma5"}, True)
     check("无量能基准无竞价锚", auc_none is None)

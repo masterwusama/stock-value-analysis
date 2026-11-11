@@ -776,7 +776,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .mv-a { flex: 1; color: #3c4552; }
 .mv-a.act-add, .mv-a.act-dip { color: var(--up); font-weight: 600; }
 .mv-a.act-half, .mv-a.act-cut, .mv-a.act-clear, .mv-a.act-stop { color: var(--down); font-weight: 600; }
-.mv-a.act-hold { color: #5a6472; }
+.mv-a.act-hold, .mv-a.act-flat { color: #5a6472; }
 .mv-a.act-wait { color: #b8860b; }
 .pi-risk { margin-top: 6px; font-size: 11px; color: #8a94a6; border-top: 1px dashed #e8ebf0; padding-top: 5px; }
 .cheat-box summary { cursor: pointer; font-size: 12.5px; color: #2d6cdf; }
