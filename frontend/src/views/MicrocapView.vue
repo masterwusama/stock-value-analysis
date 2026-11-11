@@ -420,6 +420,14 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
               </span>
             </div>
             <div class="pi-sizing" :title="'加仓纪律:分批建仓,每笔独立止损——加仓部分错了只出加仓部分,不动底仓'">{{ p.sizing }}</div>
+            <div v-if="p.auction" class="pi-auction"
+              :title="`明日 9:25 竞价换手率对号入座——阈值=5日均换手 ${p.auction.tma5}% 相对化(强≥×5%/枯竭≤×1%,经验参数待竞价快照校准)。预案是收盘后写的,实际竞价次日揭晓,所以给阈值给动作不给结论`">
+              <b class="au-t">竞价锚(9:25 对号入座)</b>
+              <div v-for="r in p.auction.rows" :key="r.t" class="mv-row">
+                <span class="mv-t">{{ r.t }}</span>
+                <span class="mv-a" :class="'act-' + r.k">{{ r.x }}</span>
+              </div>
+            </div>
             <div class="pi-moves">
               <div v-for="m in p.moves" :key="m.t" class="mv-row">
                 <span class="mv-t">{{ m.t }}</span>
@@ -760,6 +768,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .pi-levels b { color: #5a6472; font-weight: 600; }
 .pi-sizing { font-size: 11px; color: #6c3fc5; background: #f8f5fe; border-radius: 5px; padding: 3px 7px; margin-bottom: 5px; }
 .q-line { font-style: normal; color: #8a94a6; font-size: 10.5px; margin-left: 3px; }
+.pi-auction { background: #f0f7f4; border: 1px solid #cfe6da; border-radius: 6px; padding: 5px 8px; margin-bottom: 5px; }
+.pi-auction .au-t { display: block; font-size: 11px; color: #1e7e34; margin-bottom: 3px; }
 .pi-moves { display: flex; flex-direction: column; gap: 3px; }
 .mv-row { display: flex; gap: 8px; font-size: 11.8px; line-height: 1.45; }
 .mv-t { flex: 0 0 128px; color: #5a6472; }

@@ -173,11 +173,12 @@ def test_danger_spec():
 
 
 def test_plan_moves():
-    LV = {"ma5": 31.79, "ma10": 31.09, "lo20": 27.57, "hi20": 31.94, "shrink": 3.1, "surge": 6.7}
+    LV = {"ma5": 31.79, "ma10": 31.09, "lo20": 27.57, "hi20": 31.94, "shrink": 3.1,
+          "surge": 6.7, "tma5": 4.5}
     import re
     for args, want_arch in [((3, 0.4, True, LV, True), "board"), ((None, 0.05, True, LV, True), "low"),
                             ((None, 0.3, False, LV, True), "base"), ((1, 0.2, None, LV, True), "board")]:
-        arch, moves, sizing = plan_moves(*args)
+        arch, moves, sizing, auc = plan_moves(*args)
         check(f"形态判定{want_arch}→{want_arch}", arch == want_arch, arch)
         check(f"预案{arch}条数4~9", 4 <= len(moves) <= 9, str(len(moves)))
         check(f"sizing含仓位阶梯", "首仓" in sizing and "独立止损" in sizing)
@@ -189,23 +190,38 @@ def test_plan_moves():
             # 加仓类指引必须可执行:t+x 含数字(价位/量能/仓位/时间)——防回到定性模糊话
             if m["k"] in ("dip", "add") and not re.search(r"\d", m["t"] + m["x"]):
                 check(f"加仓指引含数字({m['t']})", False, str(m))
+        # 竞价锚:tma5 在阈值必出且单调(强>枯竭)、含绝对地板
+        if args[2] is not None:
+            check(f"竞价锚{arch}", auc is not None and auc["strong"] > auc["weak"]
+                  and auc["strong"] >= 0.2 and auc["weak"] >= 0.03, str(auc))
+            check("竞价锚含tma5相对化", abs(auc["strong"] - max(4.5 * 0.05, 0.2)) < 0.05
+                  or auc["strong"] >= 0.2, str(auc))
+            check("竞价锚三行", len(auc["rows"]) == 3
+                  and all(re.search(r"\d", r["t"]) and r["x"] for r in auc["rows"]))
+    # 冷票地板:tma5=0.1 时强承接=0.2(绝对地板生效)
+    _, _, _, auc_cold = plan_moves(None, 0.05, True, {**LV, "tma5": 0.1}, True)
+    check("冷票竞价地板", auc_cold["strong"] == 0.2 and auc_cold["weak"] == 0.03, str(auc_cold))
+    # tma5 缺失:auction=None 不冒充
+    _, _, _, auc_none = plan_moves(None, 0.05, True, {k: v for k, v in LV.items() if k != "tma5"}, True)
+    check("无量能基准无竞价锚", auc_none is None)
     # 月历门控:防守月只减不加;长征月非主线不加;主线可加
-    _, mv_strict, _ = plan_moves(None, 0.05, False, LV, True)
-    _, mv_march_no, _ = plan_moves(None, 0.05, None, LV, False)
-    _, mv_march_yes, _ = plan_moves(None, 0.05, None, LV, True)
+    _, mv_strict, _, _ = plan_moves(None, 0.05, False, LV, True)
+    _, mv_march_no, _, _ = plan_moves(None, 0.05, None, LV, False)
+    _, mv_march_yes, _, _ = plan_moves(None, 0.05, None, LV, True)
     check("防守月无dip/add", not any(m["k"] in ("dip", "add") for m in mv_strict))
     check("防守月门控文案", any("只减不加" in m["x"] for m in mv_strict))
     check("长征月非主线无dip/add", not any(m["k"] in ("dip", "add") for m in mv_march_no))
     check("长征月主线可低吸", any(m["k"] == "dip" for m in mv_march_yes))
     # 从严参数:防守月破5日线=clear,其余=half
-    _, mv_norm, _ = plan_moves(None, 0.3, True, LV, True)
+    _, mv_strict, _, _ = plan_moves(None, 0.05, False, LV, True)
+    _, mv_norm, _, _ = plan_moves(None, 0.3, True, LV, True)
     s5 = next(m for m in mv_strict if "5日线" in m["t"] and "破" in m["t"])
     n5 = next(m for m in mv_norm if "5日线" in m["t"] and "破" in m["t"])
     check("防守月破5日=清仓", s5["k"] == "clear", s5["k"])
     check("极强月破5日=减半", n5["k"] == "half", n5["k"])
     # 连板型有断板与加仓窗口(原则不加),低位型有回踩低吸与突破加仓
-    _, mv_b, _ = plan_moves(2, 0.4, True, LV, True)
-    _, mv_l, _ = plan_moves(None, 0.04, True, LV, True)
+    _, mv_b, _, _ = plan_moves(2, 0.4, True, LV, True)
+    _, mv_l, _, _ = plan_moves(None, 0.04, True, LV, True)
     check("连板型含断板", any("断板" in m["t"] for m in mv_b))
     check("连板型含加仓窗口(原则不加)", any("加仓窗口" in m["t"] and "原则上不加" in m["x"] for m in mv_b))
     check("低位型回踩低吸带区间数字", any("回踩" in m["t"] and "31" in m["t"] and m["k"] == "dip" for m in mv_l))
@@ -358,6 +374,11 @@ def test_live():
         check("量能锚存在(历史够时)", all(
             p["levels"]["turn_ma5"] is None or p["levels"]["shrink"] is not None
             for p in pl["plans"]))
+        check("竞价锚与量能锚同存同缺", all(
+            (p["auction"] is None) == (p["levels"]["turn_ma5"] is None) for p in pl["plans"]))
+        check("竞价锚三档单调", all(
+            p["auction"] is None or (p["auction"]["strong"] > p["auction"]["weak"]
+                                     and len(p["auction"]["rows"]) == 3) for p in pl["plans"]))
         check("预案全部spec≥65", all((p["spec"] or 0) >= 65 for p in pl["plans"]))
         check("预案按spec降序", [p["spec"] for p in pl["plans"]]
               == sorted((p["spec"] for p in pl["plans"]), reverse=True))

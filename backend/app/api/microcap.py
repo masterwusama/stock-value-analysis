@@ -1192,18 +1192,38 @@ def _f2(v):
 
 
 def plan_moves(streak, r20, regime_small, lv: dict | None = None,
-               has_hot: bool = True) -> tuple[str, list[dict], str]:
-    """→ (archetype, moves[7~8], sizing)。
+               has_hot: bool = True) -> tuple[str, list[dict], str, dict | None]:
+    """→ (archetype, moves[7~8], sizing, auction)。
 
     lv: {ma5, ma10, lo20, hi20, shrink, surge, tma5} 价位量能锚(数字直接进文案);
     缺项时该指引退化为定性表述。加仓类动作(dip/add)的文案必须含数字——
     verify 有对应不变量,防回到「缩量企稳可低吸」式的模糊话。
+    auction: 明日竞价锚(9:25 对号入座的三档承接阈值表)——预案是收盘后生成的,
+    实际竞价换手次日才揭晓,所以给阈值不给结论。阈值=5日均换手相对化(答疑Q23:
+    换手越大筹码越活跃,阈值必须个性化):强承接≥tma5×5%、枯竭≤tma5×1%,另设
+    绝对地板防冷票阈值失真。系数为经验参数,待竞价快照积累后校准。
     """
     lv = lv or {}
     m5, m10 = _f2(lv.get("ma5")), _f2(lv.get("ma10"))
     lo, hi = _f2(lv.get("lo20")), _f2(lv.get("hi20"))
     shrink = f"{lv['shrink']:g}%" if lv.get("shrink") is not None else "5日均×0.7"
     surge = f"{lv['surge']:g}%" if lv.get("surge") is not None else "5日均×1.5"
+    tma5 = lv.get("tma5")
+    auction = None
+    if tma5:
+        s_thr = round(max(tma5 * 0.05, 0.2), 2)    # 强承接线(地板0.2%)
+        w_thr = round(max(tma5 * 0.01, 0.03), 2)   # 枯竭线(地板0.03%;不抹零——0.045 的承接差异真实存在)
+        auction = {
+            "strong": s_thr, "weak": w_thr, "tma5": tma5,
+            "rows": [
+                {"t": f"竞价换手≥{s_thr:g}%(强承接)", "k": "hold",
+                 "x": "有人抢筹:高开顺延持有(防守也放宽到10日线);低开按低吸预案执行,首仓那笔可提前"},
+                {"t": f"{w_thr:g}%~{s_thr:g}%(正常)", "k": "flat",
+                 "x": "按本卡标准预案走,竞价幅度只作开场参考"},
+                {"t": f"竞价换手<{w_thr:g}%(承接枯竭)", "k": "half",
+                 "x": "无人接:低开直接执行减半,不等反弹收复;高开也只减不加(无承接的高开是出货窗)"},
+            ],
+        }
     board_type = (streak or 0) >= 1
     low_type = r20 is not None and r20 < 0.15
     archetype = "board" if board_type else ("low" if low_type else "base")
@@ -1262,7 +1282,7 @@ def plan_moves(streak, r20, regime_small, lv: dict | None = None,
              "x": ("防守月从严:直接清仓" if strict else "减半(短线生命线)")},
             {"t": "破10日线/前低", "k": "stop", "x": "清仓止损,形态已坏"},
         ]
-    return archetype, moves, _SIZING
+    return archetype, moves, _SIZING, auction
 
 
 _CHEATSHEET = [
@@ -1394,9 +1414,9 @@ def microcap_plan(db: Session = Depends(get_session)):
     for it in sorted((i for i in items if i.spec is not None and i.spec >= 65),
                      key=lambda i: i.spec, reverse=True):
         lv = {"ma5": it.ma5, "ma10": it.ma10, "lo20": it.lo20, "hi20": it.hi20_ex,
-              "shrink": it.turn_shrink, "surge": it.turn_surge}
-        archetype, moves, sizing = plan_moves(it.streak, it.r20, regime.get("small_ok"),
-                                              lv=lv, has_hot=bool(it.hot_concepts))
+              "shrink": it.turn_shrink, "surge": it.turn_surge, "tma5": it.turn_ma5}
+        archetype, moves, sizing, auction = plan_moves(it.streak, it.r20, regime.get("small_ok"),
+                                                       lv=lv, has_hot=bool(it.hot_concepts))
         top_danger = it.danger_labels[0] if it.danger_labels else None
         plans.append({
             "code": it.code, "name": it.name, "pool": it.pool,
@@ -1410,6 +1430,7 @@ def microcap_plan(db: Session = Depends(get_session)):
                        "shrink": it.turn_shrink, "surge": it.turn_surge},
             "moves": moves,
             "sizing": sizing,
+            "auction": auction,
             "risk_note": f"{regime['month']}月{regime['label']}·{regime['advice'].split('·')[0]}"
                          + (f" · 险源:{top_danger}" if top_danger else ""),
         })
