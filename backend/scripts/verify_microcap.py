@@ -361,6 +361,9 @@ def test_live():
     check("校准字段齐", all(k in cal for k in ("median_chg", "expect_red", "actual_red")))
     check("预期红盘率界内", cal["expect_red"] is None or 0 <= cal["expect_red"] <= 1,
           str(cal["expect_red"]))
+    # 量纲不变量:median_chg 是比率(涨跌幅单日不可能 >50%)
+    check("池内中位量纲=比率", cal["median_chg"] is None or abs(cal["median_chg"]) <= 0.5,
+          str(cal["median_chg"]))
     ds = ov["battle"]["dt_side"]
     check("跌停侧自洽", ds["oneword"] <= ds["n"] and isinstance(ds["negative_spiro"], bool), str(ds))
     check("负螺旋口径=一字≥3", ds["negative_spiro"] == (ds["oneword"] >= 3))
@@ -393,6 +396,18 @@ def test_live():
         check("复盘统计字段齐", all(k in rs for k in ("n", "avg_chg", "red_rate", "broken5", "stopped")))
         check("复盘样本>0", rs["n"] > 0, str(rs))
         check("止损计数≤样本", rs["stopped"] <= rs["n"] and rs["broken5"] <= rs["n"])
+        # 量纲不变量(2026-11-12 修):avg_chg 必须是比率——涨跌幅类字段若被按百分数
+        # 写/读会整体错 100 倍。上界 |avg|≤0.35(单票涨跌停 ±10/20%,均值不可能超)
+        check("复盘avg_chg量纲=比率", rs["avg_chg"] is None or abs(rs["avg_chg"]) <= 0.35,
+              str(rs["avg_chg"]))
+        check("复盘判定分布非单档", len({r["verdict"] for r in pl["review"]["items"]}) >= 2
+              or rs["n"] <= 2, str({r["verdict"] for r in pl["review"]["items"]}))
+        # 判定与涨跌幅一致:verdict=ok 的必有 chg≥2%,weak 的必有 chg≤-3%(比率)
+        for r in pl["review"]["items"]:
+            if r["verdict"] == "ok":
+                check(f"ok判定量纲({r['name']})", (r["chg"] or 0) >= 0.02, str(r["chg"]))
+            if r["verdict"] == "weak":
+                check(f"weak判定量纲({r['name']})", (r["chg"] or 0) <= -0.03, str(r["chg"]))
     else:
         check("无快照时诚实降级", bool(pl["review"]["note"]), str(pl["review"]))
     tr_n = sp["trade"]

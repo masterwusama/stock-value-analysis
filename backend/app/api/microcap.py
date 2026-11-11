@@ -1401,7 +1401,12 @@ _VERDICT_META = {
 
 
 def _build_review(prior: dict | None, by_code: dict, quote_date):
-    """昨日可上手(spec≥65)逐只对今天:涨跌/破线/断板晋级 → 判定+统计。"""
+    """昨日可上手(spec≥65)逐只对今天:涨跌/破线/断板晋级 → 判定+统计。
+
+    chg 量纲=小数比率(quote_daily.change_pct 保真口径,0.0861=8.61%)——判定阈值
+    一律比率:达标≥+2%、走弱≤-3%、止损≤-7%;展示层百分比由前端 ×100。
+    (2026-11-12 修:首版曾按百分数写阈值与文案,判定全走 hold、涨幅显示小 100 倍。)
+    """
     if not prior:
         return {"available": False, "note": "无昨日快照——次日起可用(每日首次访问自动落盘)",
                 "date": None, "items": [], "stats": None}
@@ -1424,25 +1429,26 @@ def _build_review(prior: dict | None, by_code: dict, quote_date):
         broke10 = y10 is not None and (cur.price or 0) < y10
         if broke5:
             broken5 += 1
-        if cur.dt_today or (chg is not None and chg <= -7) or broke10:
-            v, stops = "dt" if cur.dt_today else "stop", stops + 1
-            note = "今日跌停" if cur.dt_today else (f"收 {chg:+.1f}%·破10日线" if broke10 else f"收 {chg:+.1f}%")
+        if cur.dt_today or (chg is not None and chg <= -0.07) or broke10:
+            v = "dt" if cur.dt_today else "stop"
+            stops += 1
+            note = "今日跌停" if cur.dt_today else (f"收 {chg * 100:+.1f}%·破10日线" if broke10 else f"收 {chg * 100:+.1f}%")
         elif broke5:
-            v = "half"; stops_note = None
-            note = f"收 {chg:+.1f}%·破5日线({y5:.2f})"
+            v = "half"
+            note = f"收 {chg * 100:+.1f}%·破5日线({y5:.2f})"
         elif s.get("streak") and cur.streak:
             v = "promo"; note = f"{s['streak']}板→{cur.streak}板晋级"
-        elif chg is not None and chg >= 2:
-            v = "ok"; note = f"收 {chg:+.1f}%·守住5日线"
-        elif chg is not None and chg <= -3:
-            v = "weak"; note = f"收 {chg:+.1f}%·走弱"
+        elif chg is not None and chg >= 0.02:
+            v = "ok"; note = f"收 {chg * 100:+.1f}%·守住5日线"
+        elif chg is not None and chg <= -0.03:
+            v = "weak"; note = f"收 {chg * 100:+.1f}%·走弱"
         else:
-            v = "hold"; note = f"收 {chg:+.1f}%" if chg is not None else "今无行情"
+            v = "hold"; note = f"收 {chg * 100:+.1f}%" if chg is not None else "今无行情"
         rows.append({"code": s["code"], "name": s["name"], "y_spec": s["spec"],
                      "chg": chg, "verdict": v, "note": note})
     rows.sort(key=lambda r: (r["chg"] is None, -(r["chg"] or 0)))
     stats = {"n": len(rows),
-             "avg_chg": round(sum(chgs) / len(chgs), 2) if chgs else None,
+             "avg_chg": round(sum(chgs) / len(chgs), 4) if chgs else None,
              "red_rate": (red / len(chgs)) if chgs else None,
              "broken5": broken5, "stopped": stops}
     return {"available": True, "date": prior.get("date"), "items": rows, "stats": stats}

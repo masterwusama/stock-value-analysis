@@ -278,7 +278,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           <span v-if="overview.env?.r5 != null" class="env-item" title="国证2000指数近5日涨幅——小票风格锚">国证2000 5日 <b :class="chgClass(overview.env.r5)">{{ pctNum(overview.env.r5 * 100) }}</b></span>
           <span v-if="overview.env?.zt_count != null" class="env-item" title="全市场涨停家数(东财涨停池口径)">全市场涨停 <b>{{ overview.env.zt_count }}</b></span>
           <span class="env-item" title="池内今日红盘占比/平均涨幅/涨停家数">池内红盘 <b :class="chgClass(overview.env?.pool_effect?.red_rate ? 1 : 0)">{{ overview.env?.pool_effect?.red_rate != null ? Math.round(overview.env.pool_effect.red_rate * 100) + '%' : '—' }}</b></span>
-          <span class="env-item">池内均涨 <b :class="chgClass(overview.env?.pool_effect?.avg_chg)">{{ pctNum(overview.env?.pool_effect?.avg_chg) }}</b></span>
+          <span class="env-item">池内均涨 <b :class="chgClass(overview.env?.pool_effect?.avg_chg)">{{ pctS(overview.env?.pool_effect?.avg_chg) }}</b></span>
           <span class="env-item">池内涨停 <b class="zt-hot">{{ overview.env?.pool_effect?.zt_count ?? '—' }}</b></span>
         </div>
         <div v-if="flowMissing" class="flow-warn">⚠ 资金流源未更新——热度分与资金列只含涨停/动量/换手因子,题材面板无净流入</div>
@@ -328,7 +328,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
               ⚠ 陷阱日：昨日极弱今日普通——该形态次日仅 +0.55%/胜率50%，全局禁隔夜
             </div>
             <div class="bt-hint" v-if="overview.battle?.calibration?.expect_red != null">
-              分布校准：池内中位 {{ pctNum(overview.battle.calibration.median_chg) }} → 预期红盘
+              分布校准：池内中位 {{ pctS(overview.battle.calibration.median_chg) }} → 预期红盘
               ~{{ Math.round(overview.battle.calibration.expect_red * 100) }}%，实际
               <b :class="calibDev >= 0 ? 'up' : 'down'">{{ overview.battle.calibration.actual_red != null ? Math.round(overview.battle.calibration.actual_red * 100) + '%' : '—' }}</b>
               {{ calibText }}
@@ -346,7 +346,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             <div class="bt-title">池内昨日涨停 → 今日 <span class="bt-sub">打板赚钱效应</span></div>
             <div class="bt-row">
               <b>{{ overview.battle?.zt_yd?.n ?? '—' }}</b> 只
-              · 均涨 <b :class="chgClass(overview.battle?.zt_yd?.avg_chg)">{{ pctNum(overview.battle?.zt_yd?.avg_chg) }}</b>
+              · 均涨 <b :class="chgClass(overview.battle?.zt_yd?.avg_chg)">{{ pctS(overview.battle?.zt_yd?.avg_chg) }}</b>
               · 红盘 <b>{{ overview.battle?.zt_yd?.red_rate != null ? Math.round(overview.battle.zt_yd.red_rate * 100) + '%' : '—' }}</b>
               · 晋级 <b class="zt-hot">{{ overview.battle?.zt_yd?.promo ?? '—' }}</b>
             </div>
@@ -396,7 +396,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
         <!-- 复盘条 -->
         <div class="review-strip" v-if="plan?.review?.available">
           <b>{{ plan.review.date }}</b> 可上手 {{ plan.review.stats.n }} 只 →
-          今均涨 <b :class="chgClass(plan.review.stats.avg_chg)">{{ pctNum(plan.review.stats.avg_chg) }}</b>
+          今均涨 <b :class="chgClass(plan.review.stats.avg_chg)">{{ pctS(plan.review.stats.avg_chg) }}</b>
           · 红盘 <b>{{ Math.round((plan.review.stats.red_rate ?? 0) * 100) }}%</b>
           · 破5日线 <b class="warn-amber">{{ plan.review.stats.broken5 }}</b>
           · 止损触发 <b class="down">{{ plan.review.stats.stopped }}</b>
@@ -404,7 +404,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             <summary>逐只</summary>
             <div v-for="r in plan.review.items" :key="r.code" class="review-row">
               <span class="cd">{{ r.code }}</span><b>{{ r.name }}</b>
-              <span :class="chgClass(r.chg)">{{ r.chg != null ? pctNum(r.chg) : '—' }}</span>
+              <span :class="chgClass(r.chg)">{{ r.chg != null ? pctS(r.chg) : '—' }}</span>
               <span class="rv-verdict" :class="'v-' + (VERDICT[r.verdict]?.[1] || 'flat')">{{ VERDICT[r.verdict]?.[0] || r.verdict }}</span>
               <span class="rv-note">{{ r.note }}</span>
             </div>
@@ -603,7 +603,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
               </td>
               <td :class="chgClass(s.r5)">{{ pctS(s.r5) }}</td>
               <td :class="chgClass(s.r20)">{{ pctS(s.r20) }}</td>
-              <td>{{ s.price?.toFixed(2) ?? '—' }} <span class="cd" :class="chgClass(s.chg_pct)">{{ pctNum(s.chg_pct) }}</span></td>
+              <td>{{ s.price?.toFixed(2) ?? '—' }} <span class="cd" :class="chgClass(s.chg_pct)">{{ pctS(s.chg_pct) }}</span></td>
               <td>{{ yi(s.float_mcap) }}</td>
               <td :class="lineClass(s.rev_line_ratio)" :title="s.annual_rev != null ? `年报营收 ${yi(s.annual_rev)} · 线 ${yi(s.rev_line)} · 年报净利 ${yi(s.annual_np)}` : ''">
                 {{ s.rev_line_ratio?.toFixed(2) ?? '—' }}
