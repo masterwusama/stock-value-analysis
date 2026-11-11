@@ -13,6 +13,43 @@ const list = ref(null)
 const report = ref(null)
 const error = ref('')
 
+// 列表检索 + 翻页:纯前端(全量列表本就一次拉回,74+ 份没必要再走后端分页)。
+// 检索字段=代码/名称/标题/结论/细分档/标签/摘要;空格分词取 AND,命中即留。
+const q = ref('')
+const page = ref(1)
+const PAGE_SIZE = 10
+
+const filtered = computed(() => {
+  const kw = q.value.trim().toLowerCase()
+  const all = list.value || []
+  if (!kw) return all
+  const words = kw.split(/\s+/)
+  return all.filter((m) => {
+    const hay = [m.code, m.name, m.title, m.conclusion, m.grade, m.summary, ...(m.tags || [])]
+      .join('\n').toLowerCase()
+    return words.every((w) => hay.includes(w))
+  })
+})
+const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)))
+const paged = computed(() => filtered.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+// 页码按钮序列:总数少全展示,多则围绕当前页开窗,断档处以 … 占位
+const pageList = computed(() => {
+  const t = totalPages.value, c = page.value
+  if (t <= 9) return Array.from({ length: t }, (_, i) => i + 1)
+  const set = new Set([1, 2, t - 1, t, c - 1, c, c + 1])
+  const arr = [...set].filter((p) => p >= 1 && p <= t).sort((a, b) => a - b)
+  const out = []
+  let prev = 0
+  for (const p of arr) {
+    if (p - prev > 1) out.push('…')
+    out.push(p)
+    prev = p
+  }
+  return out
+})
+// 新检索词或翻页动作可能把页码顶出界(列表刷新后变短),收敛回合法区间
+watch([q, totalPages], () => { if (page.value > totalPages.value) page.value = 1 })
+
 const slug = computed(() => route.params.slug)
 
 async function load() {
@@ -78,10 +115,16 @@ const tocGroups = computed(() => {
         <h2>投研库</h2>
         <p class="sub">深度研报:生意模式 · 护城河 · 财务拆骨 · 估值区间 · 反方证伪。
           每份研报自带数据来源附录;结构与写作纪律见 <code>docs/设计-投研库模块.md</code>。</p>
+        <div class="toolbar">
+          <input v-model="q" class="search" type="search" placeholder="检索:代码 / 名称 / 标题 / 标签 / 结论…"
+            aria-label="检索研报">
+          <span v-if="list" class="count">{{ q ? `筛得 ${filtered.length} / ${list.length} 份` : `共 ${list.length} 份` }}</span>
+        </div>
       </header>
 
       <p v-if="list && !list.length" class="empty">还没有研报。</p>
-      <section v-for="m in list" :key="m.slug" class="card" @click="$router.push('/research/' + m.slug)">
+      <p v-else-if="list && !filtered.length" class="empty">没有匹配「{{ q }}」的研报。</p>
+      <section v-for="m in paged" :key="m.slug" class="card" @click="$router.push('/research/' + m.slug)">
         <div class="row1">
           <router-link :to="'/stock/' + m.code" class="code-link" @click.stop>{{ m.code }} {{ m.name }}</router-link>
           <span class="conc" :class="'c-' + concTone(m.conclusion)">{{ m.conclusion || '未定' }}</span>
@@ -99,6 +142,16 @@ const tocGroups = computed(() => {
         <p v-if="m.summary" class="summary">{{ m.summary }}</p>
         <p class="tags"><span v-for="t in (m.tags || [])" :key="t" class="tag">{{ t }}</span></p>
       </section>
+
+      <!-- 翻页:多于一份才显示;按钮禁用态=当前页/边界 -->
+      <nav v-if="totalPages > 1" class="pager" aria-label="翻页">
+        <button type="button" :disabled="page <= 1" @click="page--">‹ 上一页</button>
+        <template v-for="(p, i) in pageList" :key="i">
+          <span v-if="p === '…'" class="dots">…</span>
+          <button v-else type="button" :class="{ cur: p === page }" @click="page = p">{{ p }}</button>
+        </template>
+        <button type="button" :disabled="page >= totalPages" @click="page++">下一页 ›</button>
+      </nav>
     </template>
 
     <!-- 阅读器 -->
@@ -153,6 +206,20 @@ const tocGroups = computed(() => {
 .page-head h2 { margin: 4px 0 6px; }
 .page-head .sub { color: #6b7280; font-size: 13px; margin: 0 0 14px; }
 .page-head code { background: #f3f4f6; border-radius: 4px; padding: 0 4px; font-size: 12px; }
+/* 检索条:输入框 + 计数,与卡片同宽 */
+.toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+.search { flex: 1; max-width: 420px; padding: 7px 12px; font-size: 13px;
+  border: 1px solid #e5e9f2; border-radius: 8px; background: #fff; color: #1f2937; }
+.search:focus { outline: none; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.25); }
+.count { color: #9ca3af; font-size: 12px; white-space: nowrap; }
+/* 翻页条:居中,按钮沿用 back 的轻描边风格;当前页实心 */
+.pager { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 18px 0 6px; flex-wrap: wrap; }
+.pager button { font-size: 13px; padding: 4px 11px; border: 1px solid #e5e7eb; background: #fff;
+  color: #374151; border-radius: 6px; cursor: pointer; }
+.pager button:hover:not(:disabled):not(.cur) { border-color: #2563eb; color: #2563eb; }
+.pager button:disabled { opacity: 0.45; cursor: default; }
+.pager button.cur { background: #2563eb; border-color: #2563eb; color: #fff; cursor: default; }
+.pager .dots { color: #9ca3af; padding: 0 2px; }
 
 section.card { cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
 section.card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(20, 30, 55, 0.07); }
@@ -236,6 +303,9 @@ section.card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(20, 30, 
 @media (max-width: 600px) {
   /* 研报卡:标题/区间换行、摘要行高收紧 */
   section.card { padding: 12px 12px; }
+  /* 检索条:窄屏占满整行,计数换行 */
+  .toolbar { flex-wrap: wrap; row-gap: 6px; }
+  .search { max-width: none; width: 100%; }
   .row1 { flex-wrap: wrap; row-gap: 4px; }
   .row1 .date { margin-left: 0; flex-basis: 100%; order: 9; }
   .row2 h3 { font-size: 15px; }
