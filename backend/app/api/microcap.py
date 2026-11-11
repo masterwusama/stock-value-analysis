@@ -574,6 +574,10 @@ class MicrocapItem(BaseModel):
     inflow_d5: float | None = None
     turn_rate: float | None = None
     turn_pctile: float | None = None
+    # 量能基准(加仓指引定量化用):5日均换手 + 缩量线(×0.7) + 放量线(×1.5)
+    turn_ma5: float | None = None
+    turn_shrink: float | None = None
+    turn_surge: float | None = None
     streak: int | None = None              # 今日连板数(非涨停日为 None)
     seal_amt: float | None = None          # 封板资金(元)
     seal_strength: float | None = None     # 封板强度=封单/流通市值(答疑口径:封单大≠强,看盘子)
@@ -826,6 +830,10 @@ def _load_base(db: Session, fresh: bool = False):
         if rec["turn_rate"] is not None and len(turns) >= TURN_MIN_ROWS:
             below = sum(1 for t in turns if t <= rec["turn_rate"])
             turn_pctile = below / len(turns)
+        # 量能基准:加仓指引的「缩量/放量」从这里拿到具体数
+        turn_ma5 = round(sum(turns[-5:]) / len(turns[-5:]), 2) if len(turns) >= 5 else None
+        turn_shrink = round(turn_ma5 * 0.7, 1) if turn_ma5 is not None else None
+        turn_surge = round(turn_ma5 * 1.5, 1) if turn_ma5 is not None else None
         # 涨停生态(榜单池口径:今日行 + 近 5 榜单日频次 + 上一榜单日 + 昨日炸板)
         zt = zt_today.get(rec["code"])
         streak = int(zt["连板数"]) if zt and zt.get("连板数") else None
@@ -898,6 +906,7 @@ def _load_base(db: Session, fresh: bool = False):
             inflow_t=inflow_t, inflow_strength=inflow_strength,
             inflow_d5=d5,
             turn_rate=rec["turn_rate"], turn_pctile=round(turn_pctile, 3) if turn_pctile is not None else None,
+            turn_ma5=turn_ma5, turn_shrink=turn_shrink, turn_surge=turn_surge,
             streak=streak, seal_amt=seal,
             seal_strength=round(seal_strength, 4) if seal_strength is not None else None,
             zt_5d=zt_hist.get(rec["code"], 0),
@@ -1144,20 +1153,54 @@ def _prior_snapshot(quote_date: str | None) -> dict | None:
 
 # ---- 预案引擎:场景×动作(动作=加仓/低吸/持有/减半/清仓/不追;全部有课程/回测出处) ----
 # 形态三分:连板型(断板/晋级规则主导)/低位启动型(回踩低吸主导)/基础型。
-# 月历从严:防守月(1/4/10)破5日线直接清,极强月(2/5/11)容忍到10日线。
+# 月历门控:防守月(1/4/10)只减不加、破5日线直接清;极强月(2/5/11)容忍到10日线;
+# 长征月(6-9)只有主线(热门概念)允许加仓。
+# 加仓指引四要素:价位(区间/锚) + 量能确认(缩量<5日均×0.7 / 放量>×1.5) +
+# 仓位阶梯(首仓3成/确认+2成/上限7成) + 独立止损(加仓部分破加仓日5日线即出)。
 _ACT_KEYS = {"add", "dip", "hold", "half", "cut", "clear", "stop", "wait"}
 
+_SIZING = "仓位阶梯:首仓≤3成,确认信号后+2成,单票上限7成;加仓部分独立止损——破加仓日5日线只出加仓部分"
 
-def plan_moves(streak, r20, regime_small) -> tuple[str, list[dict]]:
-    """→ (archetype, moves[7])。move = {t:触发场景, k:动作键(前端色标), x:动作与依据}。"""
+
+def _f2(v):
+    return f"{v:.2f}" if v is not None else "—"
+
+
+def plan_moves(streak, r20, regime_small, lv: dict | None = None,
+               has_hot: bool = True) -> tuple[str, list[dict], str]:
+    """→ (archetype, moves[7~8], sizing)。
+
+    lv: {ma5, ma10, lo20, hi20, shrink, surge, tma5} 价位量能锚(数字直接进文案);
+    缺项时该指引退化为定性表述。加仓类动作(dip/add)的文案必须含数字——
+    verify 有对应不变量,防回到「缩量企稳可低吸」式的模糊话。
+    """
+    lv = lv or {}
+    m5, m10 = _f2(lv.get("ma5")), _f2(lv.get("ma10"))
+    lo, hi = _f2(lv.get("lo20")), _f2(lv.get("hi20"))
+    shrink = f"{lv['shrink']:g}%" if lv.get("shrink") is not None else "5日均×0.7"
+    surge = f"{lv['surge']:g}%" if lv.get("surge") is not None else "5日均×1.5"
     board_type = (streak or 0) >= 1
     low_type = r20 is not None and r20 < 0.15
     archetype = "board" if board_type else ("low" if low_type else "base")
-    strict = regime_small is False   # 防守月(1/4/10)从严一档
+    strict = regime_small is False        # 防守月:只减不加
+    long_march = regime_small is None and not has_hot   # 长征月非主线:不加
+    no_add = strict or long_march
+    add_gate = ("防守月(1/4/10)只减不加——等 2/5/11 窗口再谈加仓" if strict
+                else "长征月只加主线核心,此股无热门概念——不加,持有即可" if long_march else "")
+
+    def _dip(t, x):
+        return {"t": t, "k": "wait", "x": add_gate} if no_add else {"t": t, "k": "dip", "x": x}
+
+    def _add(t, x):
+        return {"t": t, "k": "wait", "x": add_gate} if no_add else {"t": t, "k": "add", "x": x}
+
     if archetype == "board":
         moves = [
             {"t": "一字/高开>7%", "k": "wait", "x": "不追;持有者盯封单,开板即减半(断板次日-8%,94课)"},
             {"t": "高开2~7%", "k": "half", "x": "持有;冲高回落跌破开盘价→减半(竞价强转弱,64课)"},
+            {"t": "加仓窗口", "k": "wait",
+             "x": add_gate or ("连板股原则上不加(加仓=接力,风险翻倍);唯一时点=晋级日竞价弱转强"
+                               "(9:25价>9:20)且封单/流通≥2%,加仓部分破当日开盘价即出")},
             {"t": "平开±2%", "k": "hold", "x": "以5日线为准:站上持,跌破减"},
             {"t": "低开2~5%", "k": "half", "x": "反弹收复开盘价→持;收复不了→减半"},
             {"t": "断板(开板未回封)", "k": "half", "x": "减半防核按钮;巨量回封可接回"},
@@ -1167,37 +1210,44 @@ def plan_moves(streak, r20, regime_small) -> tuple[str, list[dict]]:
         ]
     elif archetype == "low":
         moves = [
+            _dip(f"回踩 5日线{m5}~10日线{m10} 区间",
+                 f"分时企稳(半小时不再新低)且换手<{shrink}→首仓≤3成;"
+                 f"再杀到前低{lo}为第二笔(每笔独立,跌破当日低点即出)"),
+            _add(f"放量(换手>{surge})站上前高{hi}",
+                 f"10:00前站稳或回踩{hi}不破→+2成;跌回{hi}之下=假突破,当日不加"),
             {"t": "高开>7%/一字", "k": "wait", "x": "不追;低位启动看持续性,不看单日冲高"},
-            {"t": "高开2~7%", "k": "half", "x": "持有;冲高回落破开盘价→减半"},
-            {"t": "平开±2%", "k": "hold", "x": "持有;低位启动的常态,5日线上方都是安全区"},
-            {"t": "回踩5/10日线缩量企稳", "k": "dip", "x": "低吸加仓点(缩量=抛压枯竭)"},
+            {"t": "平开±2%", "k": "hold", "x": "持有;5日线上方都是安全区"},
             {"t": "放量破5日线", "k": "clear" if strict else "half",
-             "x": ("防守月从严:直接清仓" if strict else "减半;缩量回踩不算破")},
+             "x": ("防守月从严:直接清仓" if strict else f"减半;换手<{shrink}的缩量回踩不算破")},
             {"t": "放量破10日线/前低", "k": "stop", "x": "清仓止损,形态破坏"},
-            {"t": "放量冲前高", "k": "add", "x": "突破前高可加仓;滞涨回落减仓兑现"},
+            {"t": "冲高滞涨(上影>5%)", "k": "cut", "x": "减仓兑现——低位启动的第一目标位是前高"},
         ]
     else:
         moves = [
+            _dip(f"低开>5%杀到前低{lo}/10日线{m10}",
+                 f"换手<{shrink}且分时企稳→首仓≤3成(111课恐慌点);"
+                 f"第二笔=回抽站上开盘价+2成;放量破{lo}禁接"),
+            _add(f"放量(换手>{surge})收复5日线{m5}",
+                 f"站上并守住至14:30→+2成;跌回{m5}下方当日不加"),
             {"t": "一字/高开>7%", "k": "wait", "x": "不追;持有者看封单,开板减半"},
             {"t": "高开2~7%", "k": "half", "x": "持有;冲高回落破开盘价→减半"},
             {"t": "平开±2%", "k": "hold", "x": "以5日线为准:站上持,跌破减"},
             {"t": "低开2~5%", "k": "half", "x": "反弹收复开盘价→持;收复不了→减半"},
-            {"t": "低开>5%", "k": "dip", "x": "恐慌位=前低/10日线:缩量企稳低吸;放量破前低清仓(111课)"},
             {"t": "破5日线", "k": "clear" if strict else "half",
              "x": ("防守月从严:直接清仓" if strict else "减半(短线生命线)")},
             {"t": "破10日线/前低", "k": "stop", "x": "清仓止损,形态已坏"},
         ]
-    return archetype, moves
+    return archetype, moves, _SIZING
 
 
 _CHEATSHEET = [
     {"t": "高开>7%/一字", "x": "不追;开板即减半", "src": "94课·断板次日-8%"},
     {"t": "高开2~7%", "x": "冲高回落破开盘价→减半", "src": "64课·竞价强转弱"},
     {"t": "低开2~5%", "x": "收复开盘价→持,收复不了→减半", "src": "64课·弱转强确认"},
-    {"t": "低开>5%", "x": "前低/10日线缩量企稳低吸,放量破位清", "src": "111课·恐慌点低吸"},
+    {"t": "低开>5%", "x": "杀到前低/10日线,换手<5日均×0.7且分时企稳→首仓≤3成;放量破前低禁接", "src": "111课·恐慌点低吸"},
     {"t": "盘中破5日线", "x": "减半(防守月直接清)", "src": "短线生命线·月历从严"},
     {"t": "盘中破10日线/前低", "x": "清仓止损", "src": "形态破坏"},
-    {"t": "冲前高/压力", "x": "放量突破加仓,滞涨回落减", "src": "压力兑现"},
+    {"t": "冲前高/压力", "x": "放量(换手>5日均×1.5)站上且10:00前站稳/回踩不破→+2成;跌回=假突破不加", "src": "突破-回踩-确认"},
     {"t": "涨停封板", "x": "持有;封单<流通1%尾盘减", "src": "封板强度口径"},
     {"t": "炸板", "x": "减仓", "src": "回测·次日-1.6%胜率20%"},
     {"t": "断板(连板股)", "x": "减半防核按钮", "src": "80课·高位断板"},
@@ -1318,7 +1368,10 @@ def microcap_plan(db: Session = Depends(get_session)):
     plans = []
     for it in sorted((i for i in items if i.spec is not None and i.spec >= 65),
                      key=lambda i: i.spec, reverse=True):
-        archetype, moves = plan_moves(it.streak, it.r20, regime.get("small_ok"))
+        lv = {"ma5": it.ma5, "ma10": it.ma10, "lo20": it.lo20, "hi20": it.hi20_ex,
+              "shrink": it.turn_shrink, "surge": it.turn_surge}
+        archetype, moves, sizing = plan_moves(it.streak, it.r20, regime.get("small_ok"),
+                                              lv=lv, has_hot=bool(it.hot_concepts))
         top_danger = it.danger_labels[0] if it.danger_labels else None
         plans.append({
             "code": it.code, "name": it.name, "pool": it.pool,
@@ -1327,8 +1380,11 @@ def microcap_plan(db: Session = Depends(get_session)):
             "turn_profit": it.turn_profit, "hot_concepts": it.hot_concepts[:2],
             "archetype": archetype,
             "levels": {"price": it.price, "ma5": it.ma5, "ma10": it.ma10,
-                       "lo20": it.lo20, "hi20": it.hi20_ex, "limit_up": it.limit_up},
+                       "lo20": it.lo20, "hi20": it.hi20_ex, "limit_up": it.limit_up,
+                       "turn_today": it.turn_rate, "turn_ma5": it.turn_ma5,
+                       "shrink": it.turn_shrink, "surge": it.turn_surge},
             "moves": moves,
+            "sizing": sizing,
             "risk_note": f"{regime['month']}月{regime['label']}·{regime['advice'].split('·')[0]}"
                          + (f" · 险源:{top_danger}" if top_danger else ""),
         })

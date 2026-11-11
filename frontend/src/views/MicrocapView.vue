@@ -413,7 +413,12 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
               <span>前低 <b class="down">{{ p.levels.lo20?.toFixed(2) ?? '—' }}</b></span>
               <span>前高 <b class="warn-amber">{{ p.levels.hi20_ex?.toFixed(2) ?? '—' }}</b></span>
               <span>涨停 <b class="zt-hot">{{ p.levels.limit_up?.toFixed(2) ?? '—' }}</b></span>
+              <span v-if="p.levels.turn_ma5 != null" :title="`量能锚:今日换手 ${p.levels.turn_today?.toFixed(1) ?? '—'}% vs 5日均 ${p.levels.turn_ma5}%——加仓指引的缩量/放量线由此而来`">
+                量能 今<b>{{ p.levels.turn_today?.toFixed(1) ?? '—' }}</b>/均<b>{{ p.levels.turn_ma5 }}</b>
+                <i class="q-line">缩&lt;{{ p.levels.shrink }} 放&gt;{{ p.levels.surge }}</i>
+              </span>
             </div>
+            <div class="pi-sizing" :title="'加仓纪律:分批建仓,每笔独立止损——加仓部分错了只出加仓部分,不动底仓'">{{ p.sizing }}</div>
             <div class="pi-moves">
               <div v-for="m in p.moves" :key="m.t" class="mv-row">
                 <span class="mv-t">{{ m.t }}</span>
@@ -749,6 +754,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .arch-tag.ar-base { background: #f4f5f7; color: #5a6472; }
 .pi-levels { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: #8a94a6; margin: 6px 0; }
 .pi-levels b { color: #5a6472; font-weight: 600; }
+.pi-sizing { font-size: 11px; color: #6c3fc5; background: #f8f5fe; border-radius: 5px; padding: 3px 7px; margin-bottom: 5px; }
+.q-line { font-style: normal; color: #8a94a6; font-size: 10.5px; margin-left: 3px; }
 .pi-moves { display: flex; flex-direction: column; gap: 3px; }
 .mv-row { display: flex; gap: 8px; font-size: 11.8px; line-height: 1.45; }
 .mv-t { flex: 0 0 128px; color: #5a6472; }

@@ -173,28 +173,43 @@ def test_danger_spec():
 
 
 def test_plan_moves():
-    for args, want_arch in [((3, 0.4, True), "board"), ((None, 0.05, True), "low"),
-                            ((None, 0.3, False), "base"), ((1, 0.2, None), "board")]:
-        arch, moves = plan_moves(*args)
-        check(f"形态判定{args}→{want_arch}", arch == want_arch, arch)
+    LV = {"ma5": 31.79, "ma10": 31.09, "lo20": 27.57, "hi20": 31.94, "shrink": 3.1, "surge": 6.7}
+    import re
+    for args, want_arch in [((3, 0.4, True, LV, True), "board"), ((None, 0.05, True, LV, True), "low"),
+                            ((None, 0.3, False, LV, True), "base"), ((1, 0.2, None, LV, True), "board")]:
+        arch, moves, sizing = plan_moves(*args)
+        check(f"形态判定{want_arch}→{want_arch}", arch == want_arch, arch)
         check(f"预案{arch}条数4~9", 4 <= len(moves) <= 9, str(len(moves)))
+        check(f"sizing含仓位阶梯", "首仓" in sizing and "独立止损" in sizing)
         for m in moves:
             if m["k"] not in _ACT_KEYS:
                 check(f"动作键合法{m['k']}", False, str(m))
             if not m["t"] or not m["x"]:
                 check("预案字段非空", False, str(m))
+            # 加仓类指引必须可执行:t+x 含数字(价位/量能/仓位/时间)——防回到定性模糊话
+            if m["k"] in ("dip", "add") and not re.search(r"\d", m["t"] + m["x"]):
+                check(f"加仓指引含数字({m['t']})", False, str(m))
+    # 月历门控:防守月只减不加;长征月非主线不加;主线可加
+    _, mv_strict, _ = plan_moves(None, 0.05, False, LV, True)
+    _, mv_march_no, _ = plan_moves(None, 0.05, None, LV, False)
+    _, mv_march_yes, _ = plan_moves(None, 0.05, None, LV, True)
+    check("防守月无dip/add", not any(m["k"] in ("dip", "add") for m in mv_strict))
+    check("防守月门控文案", any("只减不加" in m["x"] for m in mv_strict))
+    check("长征月非主线无dip/add", not any(m["k"] in ("dip", "add") for m in mv_march_no))
+    check("长征月主线可低吸", any(m["k"] == "dip" for m in mv_march_yes))
     # 从严参数:防守月破5日线=clear,其余=half
-    _, mv_strict = plan_moves(None, 0.3, False)
-    _, mv_norm = plan_moves(None, 0.3, True)
-    s5 = next(m for m in mv_strict if "5日线" in m["t"])
-    n5 = next(m for m in mv_norm if "5日线" in m["t"])
+    _, mv_norm, _ = plan_moves(None, 0.3, True, LV, True)
+    s5 = next(m for m in mv_strict if "5日线" in m["t"] and "破" in m["t"])
+    n5 = next(m for m in mv_norm if "5日线" in m["t"] and "破" in m["t"])
     check("防守月破5日=清仓", s5["k"] == "clear", s5["k"])
     check("极强月破5日=减半", n5["k"] == "half", n5["k"])
-    # 连板型有断板规则,低位型有回踩低吸
-    _, mv_b = plan_moves(2, 0.4, True)
-    _, mv_l = plan_moves(None, 0.04, True)
+    # 连板型有断板与加仓窗口(原则不加),低位型有回踩低吸与突破加仓
+    _, mv_b, _ = plan_moves(2, 0.4, True, LV, True)
+    _, mv_l, _ = plan_moves(None, 0.04, True, LV, True)
     check("连板型含断板", any("断板" in m["t"] for m in mv_b))
-    check("低位型含回踩低吸", any("回踩" in m["t"] and m["k"] == "dip" for m in mv_l))
+    check("连板型含加仓窗口(原则不加)", any("加仓窗口" in m["t"] and "原则上不加" in m["x"] for m in mv_b))
+    check("低位型回踩低吸带区间数字", any("回踩" in m["t"] and "31" in m["t"] and m["k"] == "dip" for m in mv_l))
+    check("低位型突破加仓带量能数字", any("站上前高" in m["t"] and "6.7" in m["t"] and m["k"] == "add" for m in mv_l))
 
 
 def test_calendar():
@@ -336,7 +351,13 @@ def test_live():
     if tr_n > 0:
         check("预案数=可上手数", len(pl["plans"]) == tr_n, f"{len(pl['plans'])} vs {tr_n}")
         p0 = pl["plans"][0]
-        check("预案字段齐", all(k in p0 for k in ("code", "name", "spec", "archetype", "levels", "moves", "risk_note")))
+        check("预案字段齐", all(k in p0 for k in ("code", "name", "spec", "archetype", "levels", "moves", "risk_note", "sizing")))
+        check("live加仓指引含数字", all(
+            any(m["k"] not in ("dip", "add") or __import__("re").search(r"\d", m["t"] + m["x"])
+                for m in p["moves"]) for p in pl["plans"]))
+        check("量能锚存在(历史够时)", all(
+            p["levels"]["turn_ma5"] is None or p["levels"]["shrink"] is not None
+            for p in pl["plans"]))
         check("预案全部spec≥65", all((p["spec"] or 0) >= 65 for p in pl["plans"]))
         check("预案按spec降序", [p["spec"] for p in pl["plans"]]
               == sorted((p["spec"] for p in pl["plans"]), reverse=True))
