@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
+from threading import Thread
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +36,12 @@ app.add_middleware(
 app.include_router(securities.router)
 app.include_router(pick.router)
 app.include_router(microcap.router)
+
+
+# 小微盘读时合成的后台预热:启动立即+每30分钟——用户请求永远命中热缓存(冷合成~4s只在后台发生)
+@app.on_event("startup")
+def _microcap_warmup():
+    Thread(target=microcap.warmup_daemon, daemon=True, name="microcap-warmup").start()
 app.include_router(agro.router)
 app.include_router(commodity.router)
 app.include_router(forecast.router)

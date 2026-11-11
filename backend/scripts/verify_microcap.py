@@ -369,7 +369,10 @@ def test_live():
         check("无快照时诚实降级", bool(pl["review"]["note"]), str(pl["review"]))
     tr_n = sp["trade"]
     if tr_n > 0:
-        check("预案数=可上手数", len(pl["plans"]) == tr_n, f"{len(pl['plans'])} vs {tr_n}")
+        check("预案全部含可执行买入指引", all(
+            any(m["k"] in ("dip", "add") for m in p["moves"]) for p in pl["plans"]))
+        check("跳过计数与出卡数自洽", len(pl["plans"]) + pl["header"].get("skipped_no_buy", 0) <= tr_n,
+              f"{len(pl['plans'])}+{pl['header'].get('skipped_no_buy')} vs {tr_n}")
         p0 = pl["plans"][0]
         check("预案字段齐", all(k in p0 for k in ("code", "name", "spec", "archetype", "levels", "moves", "risk_note", "sizing")))
         check("live加仓指引含数字", all(

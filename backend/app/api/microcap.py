@@ -511,6 +511,10 @@ def _calendar(today: date, progress: float | None, last_progress: float | None) 
 
 _cache: dict = {"key": None, "at": 0.0, "items": None, "meta": None}
 _CACHE_TTL = 3600.0
+# 合成互斥锁:页面四路请求(overview/plan/board/industries)冷启动并发时,若无锁会
+# 同时触发 4 次全量重算(每次 ~4s,CPU 抖动 4 倍)——首路持锁算,其余排队等同一结果
+import threading  # noqa: E402
+_load_lock = threading.Lock()
 
 
 def _heat_stamp() -> tuple:
@@ -638,7 +642,20 @@ def _load_base(db: Session, fresh: bool = False):
     if (not fresh and _cache["items"] is not None and _cache["key"] == key
             and time.time() - _cache["at"] < _CACHE_TTL):
         return _cache["items"], _cache["meta"]
+    with _load_lock:
+        # 双检:排队等到锁时,首路可能已完成同 key 合成
+        if (not fresh and _cache["items"] is not None and _cache["key"] == key
+                and time.time() - _cache["at"] < _CACHE_TTL):
+            return _cache["items"], _cache["meta"]
 
+        items, meta = _synth_base(db, key, fresh)
+        return items, meta
+
+
+def _synth_base(db: Session, key, fresh: bool):
+    """全量合成本体(_load_base 持锁后进入)。key 已算好由调用方传入。"""
+    td = key[0] and date.fromisoformat(key[0]) or None
+    qd_max = key[2] and date.fromisoformat(key[2]) or None
     today = date.today()
     list_cutoff = date(today.year - LIST_AGE_MIN_YEARS, today.month, today.day)
 
@@ -1128,6 +1145,28 @@ def _sentiment_t(db: Session, row) -> float | None:
     return sc["t"] if sc else None
 
 
+def warmup_daemon():
+    """后台预热线程(main.py startup 拉起):启动立即预热一次,此后每 30 分钟刷一遍——
+    用户请求永远命中热缓存,冷启动 4s 的合成只在后台发生。DB 失败(如启动竞态)只打
+    日志下一轮再来,绝不让异常杀死线程。"""
+    from app.db import SessionLocal
+
+    while True:
+        db = None
+        try:
+            db = SessionLocal()
+            t0 = time.time()
+            _load_base(db)
+            # print 而非 logging:root logger 无 handler,INFO 会被吞(scheduler 同风格)
+            print(f"[microcap] warmup done in {time.time() - t0:.1f}s", flush=True)
+        except Exception as e:  # noqa: BLE001 预热失败不影响服务,下一轮重试
+            print(f"[microcap] warmup failed: {e}", flush=True)
+        finally:
+            if db is not None:
+                db.close()
+        time.sleep(1800)
+
+
 # ---------------------------------------------------------------------------
 # 每日 spec 快照(复盘底座) + 复盘/预案引擎(2026-11-11)
 # ---------------------------------------------------------------------------
@@ -1413,12 +1452,18 @@ def microcap_plan(db: Session = Depends(get_session)):
     # 预案:今日可上手(spec≥65)按 spec 降序,逐只生成
     regime = meta["battle"]["regime"]
     plans = []
+    skipped_no_buy = 0
     for it in sorted((i for i in items if i.spec is not None and i.spec >= 65),
                      key=lambda i: i.spec, reverse=True):
         lv = {"ma5": it.ma5, "ma10": it.ma10, "lo20": it.lo20, "hi20": it.hi20_ex,
               "shrink": it.turn_shrink, "surge": it.turn_surge, "tma5": it.turn_ma5}
         archetype, moves, sizing, auction = plan_moves(it.streak, it.r20, regime.get("small_ok"),
                                                        lv=lv, has_hot=bool(it.hot_concepts))
+        # 买入预案语义(2026-11-12):无可执行 dip/add 指引的卡不出——连板型(原则不加)
+        # 与月历门控型(防守月/长征非主线)对「买不买」的回答就是否,持有管理看复盘区
+        if not any(m["k"] in ("dip", "add") for m in moves):
+            skipped_no_buy += 1
+            continue
         top_danger = it.danger_labels[0] if it.danger_labels else None
         plans.append({
             "code": it.code, "name": it.name, "pool": it.pool,
@@ -1443,6 +1488,7 @@ def microcap_plan(db: Session = Depends(get_session)):
                           if dt.get("level", 0) >= 1 else
                           f"隔夜总仓位参考:{regime['label']}月({'进攻' if regime.get('small_ok') else '防守' if regime.get('small_ok') is False else '只做主线'})"),
         "trap": meta["battle"].get("trap"),
+        "skipped_no_buy": skipped_no_buy,
     }
     return PlanOut(review=review, header=header, plans=plans, cheatsheet=_CHEATSHEET)
 

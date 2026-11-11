@@ -437,7 +437,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             <div class="pi-risk">{{ p.risk_note }}</div>
           </div>
         </div>
-        <div v-else class="review-strip"><span class="flat">今日无「可上手」标的——空仓也是仓位,等信号。</span></div>
+        <div v-else class="review-strip"><span class="flat">今日无可执行买入计划{{ plan?.header?.skipped_no_buy ? `(${plan.header.skipped_no_buy} 只连板型/门控型未出卡——原则不加仓,持有管理看上方复盘)` : '(空仓也是仓位,等信号)' }}</span></div>
 
         <details class="cheat-box">
           <summary>短线场景速查表(通用)</summary>
