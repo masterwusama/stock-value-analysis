@@ -471,6 +471,10 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             <div class="pi-risk">{{ p.risk_note }}</div>
           </div>
         </div>
+        <div v-if="plan?.header?.skipped_stop?.length" class="review-strip stop-skip"
+          title="止损纪律:昨日触发止损/跌停的标的,今日不再出买入卡(即使 spec 反弹回可上手档)——想再买等它走出新的可上手形态">
+          🚫 止损互锁(昨日止损,今日禁入): {{ plan.header.skipped_stop.join('、') }}
+        </div>
         <div v-else class="review-strip"><span class="flat">今日无可执行买入计划{{ plan?.header?.skipped_no_buy ? `(${plan.header.skipped_no_buy} 只连板型/门控型未出卡——原则不加仓,持有管理看上方复盘)` : '(空仓也是仓位,等信号)' }}</span></div>
 
         <details class="cheat-box">
@@ -783,6 +787,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .plan-card { display: flex; flex-direction: column; gap: 10px; }
 .plan-hint { font-size: 12px; color: #8a94a6; margin-top: 3px; }
 .review-strip { font-size: 12.5px; color: #5a6472; background: #f7f8fa; border-radius: 8px; padding: 7px 10px; }
+.review-strip.stop-skip { background: #fdeeee; color: #a93226; border: 1px solid #f3c3c3; }
 .review-strip b { margin: 0 2px; }
 .review-detail { margin-top: 4px; }
 .review-detail summary { cursor: pointer; color: #2d6cdf; font-size: 12px; }

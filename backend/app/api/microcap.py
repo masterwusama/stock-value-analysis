@@ -1514,8 +1514,14 @@ def microcap_plan(db: Session = Depends(get_session)):
                            meta.get("quote_date"))
     # 预案:今日可上手(spec≥65)按 spec 降序,逐只生成
     regime = meta["battle"]["regime"]
+    # 止损互锁(2026-11-12,用户质询驱动):昨日复盘 verdict=stop/dt 的标的,今日预案
+    # 硬排除——止损纪律不被 spec 分数覆盖(昨日止损今日反弹+3% 且 spec 仍≥65 时,
+    # 「又出买入卡」有悖止损纪律;想再买等它重新走出新的可上手形态,而非抄旧卡)
+    stop_blacklist = {r["code"] for r in review.get("items") or []
+                      if r.get("verdict") in ("stop", "dt")}
     plans = []
     skipped_no_buy = 0
+    skipped_stop = []
     for it in sorted((i for i in items if i.spec is not None and i.spec >= 65),
                      key=lambda i: i.spec, reverse=True):
         lv = {"ma5": it.ma5, "ma10": it.ma10, "lo20": it.lo20, "hi20": it.hi20_ex,
@@ -1526,6 +1532,9 @@ def microcap_plan(db: Session = Depends(get_session)):
         # 与月历门控型(防守月/长征非主线)对「买不买」的回答就是否,持有管理看复盘区
         if not any(m["k"] in ("dip", "add") for m in moves):
             skipped_no_buy += 1
+            continue
+        if it.code in stop_blacklist:
+            skipped_stop.append(f"{it.name}(昨日止损)")
             continue
         checkpoints = plan_checkpoints(archetype, lv, auction)
         top_danger = it.danger_labels[0] if it.danger_labels else None
@@ -1554,6 +1563,7 @@ def microcap_plan(db: Session = Depends(get_session)):
                           f"隔夜总仓位参考:{regime['label']}月({'进攻' if regime.get('small_ok') else '防守' if regime.get('small_ok') is False else '只做主线'})"),
         "trap": meta["battle"].get("trap"),
         "skipped_no_buy": skipped_no_buy,
+        "skipped_stop": skipped_stop,
     }
     return PlanOut(review=review, header=header, plans=plans, cheatsheet=_CHEATSHEET)
 
