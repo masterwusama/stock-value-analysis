@@ -48,7 +48,7 @@ def S(**kw):
                 recommend=None, value=None, growth=None,
                 score_schloss=None, score_graham_def=None,
                 div_yield=None, net_cash_ratio=None,
-                cyclical=False, cycle_trend=None,
+                cyclical=False, cycle=None, cycle_trend=None, cycle_class=None,
                 bm_light=None, bm_pricing=None)
     base.update(kw)
     return SimpleNamespace(**base)
@@ -163,6 +163,28 @@ def test_synth_tiers():
     check("理由>=2", len(out["reasons"]) >= 2, str(out["reasons"]))
 
 
+def test_synth_cycle_flags():
+    # 周期位置旗三档(2026-11-13):strong 且 ≥75 高位旗 / ≤25 底部旗 / 其余「强周期」;非周期无旗
+    out = _synth(S(recommend=70, value=70, growth=70, cyclical=True, cycle=85, cycle_class="strong"),
+                 10.0, 100e8, *mk(None, None), pb_pctile=None, report_late=0)
+    check("周期顶旗", any("周期位置高位" in r for r in out["risks"]), str(out["risks"]))
+    check("周期顶旗不动分", out["pick"] == 70.0, str(out["pick"]))
+    out = _synth(S(recommend=70, value=70, growth=70, cyclical=True, cycle=85, cycle_class="semi"),
+                 10.0, 100e8, *mk(None, None), pb_pctile=None, report_late=0)
+    check("semi 位置高位不吃顶旗", all("周期位置高位" not in r for r in out["risks"]), str(out["risks"]))
+    out = _synth(S(recommend=70, value=70, growth=70, cyclical=True, cycle=15),
+                 10.0, 100e8, *mk(None, None), pb_pctile=None, report_late=0)
+    check("周期底部旗", any("周期底部区域" in r for r in out["risks"]), str(out["risks"]))
+    out = _synth(S(recommend=70, value=70, growth=70, cyclical=True, cycle=50, cycle_trend="rev"),
+                 10.0, 100e8, *mk(None, None), pb_pctile=None, report_late=0)
+    check("中段沿用强周期旗", any("强周期" in r and "周期位置高位" not in r for r in out["risks"]),
+          str(out["risks"]))
+    out = _synth(S(recommend=70, value=70, growth=70),
+                 10.0, 100e8, *mk(None, None), pb_pctile=None, report_late=0)
+    check("非周期无周期旗", all("强周期" not in r and "周期" not in r for r in out["risks"]),
+          str(out["risks"]))
+
+
 # ---------------------------------------------------------------------------
 # 在线验证(服务已在运行时)
 # ---------------------------------------------------------------------------
@@ -241,6 +263,7 @@ if __name__ == "__main__":
     test_discounts()
     test_synth_avoid()
     test_synth_tiers()
+    test_synth_cycle_flags()
     if "--live" in sys.argv:
         test_live()
     print(f"verify_pick: {PASS} passed, {FAIL} failed")

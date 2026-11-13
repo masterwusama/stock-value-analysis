@@ -184,7 +184,9 @@ class PickItem(BaseModel):
     net_cash_ratio: float | None = None
     interim_dip: float | None = None
     cyclical: bool | None = None
+    cycle: float | None = None             # 周期位置分 0~100（越低越近底部,≥75 周期顶嫌疑）
     cycle_trend: str | None = None
+    cycle_class: str | None = None         # 行业周期分类锚(strong/semi/defensive/financial)
     st_risk: int | None = None
     st_flags: str | None = None
     gate: bool | None = None
@@ -438,8 +440,17 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late,
             reasons.append("具备定价权")
         elif s.bm_light:
             reasons.append("轻资产")
+    # 周期位置旗（2026-11-13 三档语义）：高位旗只对行业锚 strong——利润峰值期低 PE 是
+    # 预定价象限的探测旗（semi 的「利润新高」是结构上行不是周期顶,沿用普通旗）;
+    # 底部只提示不加分（周期底≠买点,买点靠双锚与股息纪律）;中段沿用旧文案。
     if s.cyclical:
-        risks.append("强周期" + (f"(位置 {s.cycle_trend})" if s.cycle_trend else ""))
+        cv = s.cycle
+        if cv is not None and cv >= 75 and s.cycle_class == "strong":
+            risks.append(f"周期位置高位({cv:.0f}),利润峰值期低PE有预定价嫌疑")
+        elif cv is not None and cv <= 25:
+            risks.append(f"周期底部区域({cv:.0f})")
+        else:
+            risks.append("强周期" + (f"(位置 {s.cycle_trend})" if s.cycle_trend else ""))
 
     return {"pick": pick, "tier": tier, "channel": channel,
             "reasons": reasons[:5], "risks": risks[:4]}
@@ -465,6 +476,10 @@ def _apply_research_verdict(it: PickItem, rv: dict | None, today: date) -> None:
         stale = VERDICT_STALE_MONTHS + 1
     if stale > VERDICT_STALE_MONTHS:
         return
+    # 周期顶旗(2026-11-13):研报 frontmatter cycle=top → 置顶亮旗。不加 cap——裁决层权力
+    # 维持「只降不升」现状,旗只是把人工周期裁决强制披露给量化层(与回 避类同一置顶语法)。
+    if (rv.get("cycle") or "") == "top":
+        it.risks.insert(0, f"研报判周期顶({d})")
     grade = (rv.get("grade") or rv.get("conclusion") or "").strip()
     main = grade.split("-", 1)[0].strip()
     cap = VERDICT_CAP.get(main)
@@ -504,7 +519,8 @@ def _to_item(s, sec, q, val_row, cov, today, negeq: bool = False) -> PickItem:
         value=s.value, growth=s.growth, fraud=s.fraud, trap=s.trap, mgmt=s.mgmt,
         schloss=s.score_schloss, graham_def=s.score_graham_def,
         div_yield=s.div_yield, net_cash_ratio=s.net_cash_ratio, interim_dip=s.interim_dip,
-        cyclical=s.cyclical, cycle_trend=s.cycle_trend,
+        cyclical=s.cyclical, cycle=s.cycle, cycle_trend=s.cycle_trend,
+        cycle_class=s.cycle_class,
         st_risk=s.st_risk, st_flags=s.st_flags,
         gate=bool(s.gate) if s.gate is not None else None, gate_flags=s.gate_flags,
         buy_schloss=s.buy_schloss, buy_graham_def=s.buy_graham_def,

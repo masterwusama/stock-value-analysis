@@ -123,6 +123,8 @@ const govTone = (v) => {
   const n = parseInt(String(v || '').split('-').pop(), 10)
   return Number.isFinite(n) && n <= 3 ? 'g-good' : Number.isFinite(n) && n >= 6 ? 'g-bad' : 'g-mid'
 }
+// 周期位置(2026-11 周期股章):top/mid/bottom → 顶/中/底,悬停 title 里已写全语义
+const cycleLabel = (c) => ({ top: '顶', mid: '中', bottom: '底' }[c] || '')
 // 列表徽章一句话:结论 + 现价落在估值区间的哪一档
 const valNote = (m) => {
   if (m.val_low == null || m.val_high == null || !m.price_ref) return ''
@@ -188,6 +190,7 @@ const tocGroups = computed(() => {
           <span v-if="m.grade" class="rate" :class="'c-' + concTone(m.conclusion)" title="推荐细分档(评价体系v2)">{{ m.grade }}</span>
           <span v-if="m.ctrl" class="mini" :class="govTone(m.ctrl)" title="实际控制人评价(九级)">实控 {{ m.ctrl }}</span>
           <span v-if="m.mgmt" class="mini" :class="govTone(m.mgmt)" title="主要高管评价(九级)">高管 {{ m.mgmt }}</span>
+          <span v-if="m.cycle && m.cycle !== 'na'" class="mini" :class="{ 'mini-warn': m.cycle === 'top' }" title="研报判定的周期位置(2026-11 周期股章:top利润峰值期低PE疑预定价/mid/bottom)">周期{{ cycleLabel(m.cycle) }}</span>
           <span class="date">{{ m.date }}</span>
         </div>
         <div class="row2">
@@ -220,6 +223,7 @@ const tocGroups = computed(() => {
           <span v-if="report.meta.grade" class="rate" :class="'c-' + concTone(report.meta.conclusion)" title="推荐细分档(评价体系v2)">{{ report.meta.grade }}</span>
           <span v-if="report.meta.ctrl" class="mini" :class="govTone(report.meta.ctrl)" title="实际控制人评价(九级)">实控 {{ report.meta.ctrl }}</span>
           <span v-if="report.meta.mgmt" class="mini" :class="govTone(report.meta.mgmt)" title="主要高管评价(九级)">高管 {{ report.meta.mgmt }}</span>
+          <span v-if="report.meta.cycle && report.meta.cycle !== 'na'" class="mini" :class="{ 'mini-warn': report.meta.cycle === 'top' }" title="研报判定的周期位置(2026-11 周期股章:top利润峰值期低PE疑预定价/mid/bottom)">周期{{ cycleLabel(report.meta.cycle) }}</span>
           <span class="date">{{ report.meta.date }}</span>
           <button type="button" class="back" @click="$router.push('/research')">← 返回列表</button>
         </div>
@@ -298,6 +302,7 @@ section.card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(20, 30, 
 .rate.c-sell { background: #fff; }
 .rate.c-hold { background: #fff; }
 .mini { font-size: 11px; border-radius: 999px; padding: 0 8px; border-width: 1px; border-style: solid; }
+.mini-warn { color: #c2571a; border-color: #c2571a; font-weight: 600; }
 .g-good { background: #fef2f2; color: #dc2626; border-color: #fecaca; }
 .g-mid { background: #f9fafb; color: #6b7280; border-color: #e5e7eb; }
 .g-bad { background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; }

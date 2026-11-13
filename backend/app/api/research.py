@@ -42,6 +42,9 @@ class ReportMeta(BaseModel):
     grade: str = ""      # 增持-强..回避-强 九档,旧 conclusion 的细分
     ctrl: str = ""       # 实控人 9 级:典范-1..风险-9
     mgmt: str = ""       # 主要高管 9 级:卓越-1..风险-9
+    # 周期位置(2026-11-13,设计-周期位置评价改进-202611.md §3.5):top/mid/bottom/na,
+    # 只做披露与掘金台周期顶旗,不参与裁决层 cap——存量研报按体系惯例下次裁决补齐,不追溯
+    cycle: str = ""
     price_ref: float | None = None
     val_low: float | None = None
     val_high: float | None = None
@@ -149,6 +152,7 @@ def coverage() -> dict:
                 cov[m.code] = {"slug": m.slug, "title": m.title,
                                "conclusion": m.conclusion, "grade": m.grade,
                                "val_low": m.val_low, "val_high": m.val_high,
+                               "cycle": m.cycle,
                                "date": m.date}
         _cov_cache = (stamp, cov)
     return _cov_cache[1]

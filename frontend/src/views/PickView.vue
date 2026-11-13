@@ -281,6 +281,16 @@ function pctText(v) {
 // R 已打分但陷阱标注线命中（2026-10 标注制：分数照给、风险旗里已有「价值陷阱特征」扣分说明）
 const gateHasTrap = (s) => s.recommend != null && !!s.recommend_gate
   && String(s.recommend_gate).split('+').includes('trap')
+// 周期顶标注线（2026-11-13：强周期且周期位置 ≥75，同款标注不拦分）
+const gateHasCyc = (s) => s.recommend != null && !!s.recommend_gate
+  && String(s.recommend_gate).split('+').includes('cycletop')
+// R 列 title 的标注注记（陷阱/周期顶命中都亮，组合串两者并列）
+const rGateNote = (s) => {
+  const parts = []
+  if (gateHasTrap(s)) parts.push('⚠陷阱标注（不拦分）')
+  if (gateHasCyc(s)) parts.push('⚠周期顶标注（不拦分）')
+  return parts.length ? ' · ' + parts.join(' ') : ''
+}
 
 onMounted(async () => {
   mq = window.matchMedia(MOBILE_QUERY)
@@ -427,13 +437,14 @@ onBeforeUnmount(() => {
                   <span class="rank">{{ (page - 1) * PAGE_SIZE + i + 1 }}</span>
                   <b>{{ s.name }}</b>
                   <router-link v-if="s.research" :to="'/research/' + s.research.slug" class="rs-flag" @click.stop>研</router-link>
+                  <span v-if="s.research?.cycle === 'top'" class="risk-flag" title="研报判周期顶">顶</span>
                   <span class="cd">{{ s.code }}</span>
                   <span class="badge">{{ s.market === 'HK' ? '港' : 'A' }}</span>
                 </div>
               </td>
               <td><span class="tier-badge" :class="TIER_META[s.tier].cls">{{ TIER_META[s.tier].label }}</span></td>
               <td><b :class="{ 'pick-hi': s.tier === 'strong' }">{{ s.pick?.toFixed(0) ?? '—' }}</b></td>
-              <td :title="`价值 ${s.value?.toFixed(0) ?? '—'} · 成长 ${s.growth?.toFixed(0) ?? '—'}${gateHasTrap(s) ? ' · ⚠陷阱标注（不拦分）' : (s.recommend == null && s.recommend_gate ? ' · 拦:' + s.recommend_gate : '')}`">{{ s.recommend?.toFixed(0) ?? '—' }}<span v-if="gateHasTrap(s)" class="risk-flag">⚠</span></td>
+              <td :title="`价值 ${s.value?.toFixed(0) ?? '—'} · 成长 ${s.growth?.toFixed(0) ?? '—'}${rGateNote(s)}${s.recommend == null && s.recommend_gate ? ' · 拦:' + s.recommend_gate : ''}`">{{ s.recommend?.toFixed(0) ?? '—' }}<span v-if="gateHasTrap(s) || gateHasCyc(s)" class="risk-flag">⚠</span></td>
               <td :class="pctClass(s.discount)">{{ pctText(s.discount) }}</td>
               <td :class="s.pb_pctile != null && s.pb_pctile <= 25 ? 'marg-pos' : ''">{{ s.pb_pctile?.toFixed(0) ?? '—' }}{{ s.pb_pctile != null ? '%' : '' }}</td>
               <td>{{ fmtPct(s.div_yield) }}</td>
@@ -477,7 +488,7 @@ onBeforeUnmount(() => {
       <div class="card note-card">
         <b>怎么读这块看板</b>
         <p>
-          <b>入手分</b>(0~100)= 综合推荐分 R(价值 0.6 + 成长 0.4,已被造假/陷阱/中报恶化门槛把守)
+          <b>入手分</b>(0~100)= 综合推荐分 R(价值 0.6 + 成长 0.4,已被造假/中报恶化拦截门槛把守,陷阱与周期顶为标注线不拦分)
           叠加「当下值不值得下手」:安全边际(现价低于施洛斯/格雷厄姆买点的幅度)、PB 十年分位、股息率、净现金垫子;
           造假与陷阱灰带、ST 关注旗、中报变脸、年报滞后逐项扣分。分数只回答「现在买它有多划算」,不预测涨跌。
         </p>
@@ -487,6 +498,7 @@ onBeforeUnmount(() => {
           无推荐分的深折价烟蒂(施洛斯分≥70)单走烟蒂通道,封顶 65 分。
           最新披露期(中报/三季报)才资不抵债、年报尚未为负的,不进硬门槛但强制封顶「观察」并亮旗(PB 锚在负权益下失效,分数照给)。
           净有息负债/市值(货币资金含类现金 − 有息负债)深度为负三级降档:−30% 起灰带扣分,−100% 封顶「观察」,−200% 封顶「不进观察区」(银行算不出者不罚)。
+          周期位置旗三档(2026-11 起):判为强周期且位置 ≥75 亮「周期位置高位」——利润峰值期低 PE 是预定价嫌疑,周期股低 PE 是卖点而非买点;≤25 亮「周期底部区域」(底≠买点,双锚与股息纪律自读);中段沿用「强周期」。研报判「周期顶」的标的置顶亮「顶」旗,只披露不降档。
         </p>
         <p class="note-fine">
           默认排除银行(A股行业字典记「货币金融服务」、港股记「银行」,两处一并排除,可点 chips × 取消);
