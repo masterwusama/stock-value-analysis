@@ -387,7 +387,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
         <div class="plan-head">
           <div>
             <div class="sec-title">收盘复盘 → 明日预案
-              <span class="sec-sub">昨日可上手逐只复盘 · 今日可上手逐只应对卡(加仓/低吸/持有/减半/清仓)</span>
+              <span class="sec-sub">最多 6 只 · 低位/低险优先 · 每张含四时点应对(加仓/低吸/持有/减半/清仓)</span>
             </div>
             <div class="plan-hint">{{ plan?.header?.position_hint }}{{ plan?.header?.trap ? ' · ⚠陷阱日禁隔夜' : '' }}</div>
           </div>

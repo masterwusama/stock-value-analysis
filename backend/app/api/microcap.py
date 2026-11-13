@@ -1512,7 +1512,10 @@ def microcap_plan(db: Session = Depends(get_session)):
     by_code = {it.code: it for it in items}
     review = _build_review(_prior_snapshot(meta.get("quote_date")), by_code,
                            meta.get("quote_date"))
-    # 预案:今日可上手(spec≥65)按 spec 降序,逐只生成
+    # 预案:今日可上手(spec≥65),2026-11-13 起限 6 只——低位/低险优先:
+    # 低位启动型(无连板且 20 日涨幅<15%=回踩低吸空间大) > 基础型 > 连板型;
+    # 同型按 risk_level→danger→spec 排序。宁可少卡,卡卡可执行。
+    PLAN_MAX = 6
     regime = meta["battle"]["regime"]
     # 止损互锁(2026-11-12,用户质询驱动):昨日复盘 verdict=stop/dt 的标的,今日预案
     # 硬排除——止损纪律不被 spec 分数覆盖(昨日止损今日反弹+3% 且 spec 仍≥65 时,
@@ -1522,8 +1525,18 @@ def microcap_plan(db: Session = Depends(get_session)):
     plans = []
     skipped_no_buy = 0
     skipped_stop = []
-    for it in sorted((i for i in items if i.spec is not None and i.spec >= 65),
-                     key=lambda i: i.spec, reverse=True):
+    plan_cands = sorted(
+        (i for i in items if i.spec is not None and i.spec >= 65),
+        key=lambda i: (
+            (i.streak or 0) > 0,                       # 连板型垫底
+            i.r20 is None or i.r20 >= 0.15,            # 低位启动优先(False=低位排前)
+            i.risk_level,                              # 风险低优先
+            i.danger,                                  # 危险度低优先
+            -(i.spec or 0),                            # 同分 spec 高者先
+        ))
+    skipped_priority = max(0, len(plan_cands) - PLAN_MAX)
+    for it in plan_cands:
+        # 攒满 6 张即停——过滤跳过的(no_buy/止损互锁)由后续候选按序补位
         lv = {"ma5": it.ma5, "ma10": it.ma10, "lo20": it.lo20, "hi20": it.hi20_ex,
               "shrink": it.turn_shrink, "surge": it.turn_surge, "tma5": it.turn_ma5}
         archetype, moves, sizing, auction = plan_moves(it.streak, it.r20, regime.get("small_ok"),
@@ -1555,6 +1568,8 @@ def microcap_plan(db: Session = Depends(get_session)):
             "risk_note": f"{regime['month']}月{regime['label']}·{regime['advice'].split('·')[0]}"
                          + (f" · 险源:{top_danger}" if top_danger else ""),
         })
+        if len(plans) >= PLAN_MAX:
+            break
     dt = meta["battle"]["dt_side"]
     header = {
         "regime": regime,
@@ -1564,6 +1579,8 @@ def microcap_plan(db: Session = Depends(get_session)):
         "trap": meta["battle"].get("trap"),
         "skipped_no_buy": skipped_no_buy,
         "skipped_stop": skipped_stop,
+        "skipped_priority": skipped_priority,
+        "order_note": "最多6只·低位启动优先,同级风险低→危险度低→spec高",
     }
     return PlanOut(review=review, header=header, plans=plans, cheatsheet=_CHEATSHEET)
 

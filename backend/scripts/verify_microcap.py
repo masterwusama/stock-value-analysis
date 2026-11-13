@@ -433,6 +433,12 @@ def test_live():
               f"{len(pl['plans'])}+{pl['header'].get('skipped_no_buy')} vs {tr_n}")
         p0 = pl["plans"][0]
         check("预案字段齐", all(k in p0 for k in ("code", "name", "spec", "archetype", "levels", "moves", "risk_note", "sizing")))
+        # 6 张上限+低位/低险优先(2026-11-13):≤6 张;若候选溢出(有跳过)则首位应为低位启动型
+        check("预案≤6张", len(pl["plans"]) <= 6, str(len(pl["plans"])))
+        if pl["header"].get("skipped_priority", 0) > 0 and pl["plans"]:
+            check("溢出时首位=低位启动", pl["plans"][0]["archetype"] == "low",
+                  pl["plans"][0]["archetype"])
+        check("排序说明字段齐", "order_note" in pl["header"])
         check("live加仓指引含数字", all(
             any(m["k"] not in ("dip", "add") or __import__("re").search(r"\d", m["t"] + m["x"])
                 for m in p["moves"]) for p in pl["plans"]))
