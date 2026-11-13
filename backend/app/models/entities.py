@@ -195,6 +195,11 @@ class ScoreDaily(Base):
     cycle: Mapped[float | None] = mapped_column(Double)
     cyclical: Mapped[bool | None] = mapped_column(Boolean)
     cycle_trend: Mapped[str | None] = mapped_column(String(8))
+    # 行业周期分类锚（2026-11-13，data/cycle_class.json）：strong/semi/defensive/financial/
+    # NULL(无行业锚)。只做分类不做打分——供筛选/展示/后续 cycle_validity 分域，不进任何公式。
+    # cyclical 的判定已按本列合并（strong 强制判入、defensive/financial 强制判出），
+    # 本列是「为什么这么判」的留痕。
+    cycle_class: Mapped[str | None] = mapped_column(String(16))
     # 价值陷阱分（0~100，分高＝坏消息堆得多，与 fraud 同为「越低越好」列）。三列一起存的原因：
     # trap_c 是分数的未归一原值（Σ ln(lift)×亮灯），档位表按它查——分数舍入到一位小数后
     # 正好落在档位边界上会串档；trap_eval 是「这分建在几项证据上」，固定分母下缺项只压低
@@ -217,7 +222,11 @@ class ScoreDaily(Base):
     # V/G 至少一条判不动）——列表页的 `-` 必须能区分「不过线」与「算不出」。出厂检验
     # backend/scripts/r_validity.py 三线全过（判别单调 / 不弱于成分 / 门槛剔得更坏）。
     recommend: Mapped[float | None] = mapped_column(Double)
-    recommend_gate: Mapped[str | None] = mapped_column(String(16))
+    # 门槛状态串：'pass'/'trap'/'cycletop'/'nodata' 或组合（'+'连接，顺序恒为
+    # fraud→trap→cycletop→interim，最长 'fraud+trap+cycletop+interim' 27 字符）。
+    # 2026-11-13 由 VARCHAR(16) 升到 48——旧宽度下 'fraud+trap+interim'（18 字符）会被
+    # 截成 'fraud+trap+inter'，前端 split('+') 解析出半个假门槛名。
+    recommend_gate: Mapped[str | None] = mapped_column(String(48))
     # 中报恶化 dip：最新 interim 扣非（缺则净利）同比。评分轴只吃年报，这是「年报正常、
     # 之后中报变脸」盲区的探针（600866 实例）：≤ −30% 列表挂徽标，≤ −70% 拦下 R
     # （阈值来历 scripts/dip_validity.py：转亏 lift 7.8×、年报复证 lift 3.3×）。

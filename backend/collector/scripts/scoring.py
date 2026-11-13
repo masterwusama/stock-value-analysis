@@ -8,6 +8,7 @@
 """
 
 from datetime import datetime, timedelta, timezone
+import json
 import math
 import os
 
@@ -1482,6 +1483,13 @@ R_FRAUD_GATE = 40.0      # 造假分门槛（40=trap_validity 分项表里造假
 # 挂 ⚠ 陷阱风险标注；线本身的量级仍取出厂档位「档2 单点」上沿（C ≤ 0.98）。掘金台的强推
 # 在 pick.py 侧继续把命中者排除在外——标注制的「分数照给」不等于「强推放行」。
 R_TRAP_GATE = 20.0
+# 周期顶标注线（2026-11-13，设计文档 §3.3）：行业锚 strong 且周期位置分 ≥75 → gate 记
+# 'cycletop'，与陷阱同款「标注不拦分」——利润峰值期的低 PE 是预定价嫌疑（宏桥式「价低利
+# 高」象限），周期股低 PE 是卖点而非买点。只对 strong 生效是上线当日实测定的假阳性闸：
+# 位置高分位里混着大量单边增长的 semi 成长股（AMD/零跑/宇树式「利润新高=位置 100」是
+# 结构上行不是周期顶），行业锚 strong 才是「周期股」语义。只标注不减分：减分/强推排除
+# 等公式级接入等 cycle_validity 预登记回测出数后再议（P1 闸门）。
+R_CYCLE_TOP_NOTE = 75.0
 
 
 # ---- 中报恶化 dip：最新 interim 扣非同比（评分轴只吃年报，这里是年报盲区的探针） ----
@@ -1531,17 +1539,21 @@ def interim_dip_yoy(indicators):
     return (cur - pv) / abs(pv)
 
 
-def recommend_score(v_total, g_total, fraud, trap_total, dip=None):
+def recommend_score(v_total, g_total, fraud, trap_total, dip=None,
+                    cyclical=None, cycle_total=None, cycle_class=None):
     """→ (R 总分 or None, 门槛状态)。
 
     门槛状态：'pass'（有分且干净）/ 'trap'（有分但陷阱标注线命中——R 照打，前端挂
-    价值陷阱风险标注）/ 'fraud' / 'interim'（被资格线拦下，R=None）或组合（'+' 连接，
-    顺序恒为 fraud→trap→interim，如 'fraud+trap'、'trap+interim'；拦截项在组合里时
-    R=None，'trap' 只作附记保留信息）/ 'nodata'（门槛过了但 V/G 判不动，公开年报
-    不足 3 期）。判不动的门槛输入（fraud/trap/dip 为 None）按「无证据」放行——港美股
-    trap 整列不适用、扣非缺失侧 dip 判不动，靠这条拿得到 R。
+    价值陷阱风险标注）/ 'cycletop'（有分但周期顶标注线命中——R 照打，前端挂周期顶
+    风险标注）/ 'fraud' / 'interim'（被资格线拦下，R=None）或组合（'+' 连接，
+    顺序恒为 fraud→trap→cycletop→interim，如 'fraud+trap'、'trap+cycletop'；拦截项
+    在组合里时 R=None，标注项只作附记保留信息）/ 'nodata'（门槛过了但 V/G 判不动，
+    公开年报不足 3 期）。判不动的门槛输入（fraud/trap/dip 为 None）按「无证据」放行
+    ——港美股 trap 整列不适用、扣非缺失侧 dip 判不动，靠这条拿得到 R。
     trap 2026-10-17 起不再拦分（动机与去向见 R_TRAP_GATE 注释）：资格线只留
     fraud/dip 两道拦截，陷阱>20 的 gate='trap' 让前端把风险亮出来。
+    cycletop 2026-11-13 起上线（同款标注制；只吃行业锚 strong——见 R_CYCLE_TOP_NOTE
+    注释里的假阳性闸）。
     stockLegacy.js 的 recommendScore 同一条规则。
     """
     hit = []
@@ -1550,6 +1562,10 @@ def recommend_score(v_total, g_total, fraud, trap_total, dip=None):
     trap_hit = trap_total is not None and trap_total > R_TRAP_GATE
     if trap_hit:
         hit.append('trap')
+    cyc_top_hit = (cycle_class == 'strong' and bool(cyclical)
+                   and cycle_total is not None and cycle_total >= R_CYCLE_TOP_NOTE)
+    if cyc_top_hit:
+        hit.append('cycletop')
     if dip is not None and dip <= INTERIM_DIP_GATE:
         hit.append('interim')
     if 'fraud' in hit or 'interim' in hit:
@@ -1558,7 +1574,8 @@ def recommend_score(v_total, g_total, fraud, trap_total, dip=None):
         return None, 'nodata'
     r = R_W_VALUE * v_total + (1.0 - R_W_VALUE) * g_total
     # 与 JS Math.round(r*10)/10 一致（Python round 为银行家舍入，不能直接用）
-    return math.floor(r * 10 + 0.5) / 10.0, ('trap' if trap_hit else 'pass')
+    flags = [h for h in ('trap', 'cycletop') if h in hit]
+    return math.floor(r * 10 + 0.5) / 10.0, ('+'.join(flags) if flags else 'pass')
 
 
 def management_analysis(d):
@@ -1687,10 +1704,57 @@ def _capex_prev(annual_cf, row, key):
     return [r.get(key) for r in annual_cf[max(0, ci - 3):ci] if r.get(key) is not None]
 
 
-def cycle_analysis(d):
+# ---------- 行业周期分类锚（2026-11-13，docs/设计-周期位置评价改进-202611.md §3.1）----------
+# 纯财务量化判「是不是周期股」实测 74% A 股中招、单边景气期资源股漏判（JS 侧 cycleAnalysis
+# note 里一直挂着的已知局限）。行业锚收窄误判：strong 强制判入、defensive/financial 强制
+# 判出、semi/未分类维持财务量化。表只做分类不做打分，改动走 data/cycle_class.json（前端
+# frontend/src/data/cycle_class.json 是逐字镜像，_score_check.py 有比对）。
+_CYCLE_CLASS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 'data', 'cycle_class.json')
+_CYCLE_CLASS = None
+
+
+def _cycle_class_map():
+    global _CYCLE_CLASS
+    if _CYCLE_CLASS is None:
+        try:
+            with open(_CYCLE_CLASS_PATH, encoding='utf-8') as f:
+                _CYCLE_CLASS = json.load(f)
+        except (OSError, ValueError):
+            _CYCLE_CLASS = {'industry': {}, 'overrides': {}}
+    return _CYCLE_CLASS
+
+
+def industry_cycle_class(d):
+    """→ 行业分类锚：个股 overrides 优先，其后市场前缀键（HK:原材料 这类跨市场同名的分道），
+    最后裸行业名；都未命中返回 None（完全按财务量化）。"""
+    m = _cycle_class_map()
+    ov = m.get('overrides', {}).get(str(d.get('code') or ''))
+    if isinstance(ov, dict):
+        return ov.get('class')
+    ind = str((d.get('info') or {}).get('行业') or '')
+    if not ind:
+        return None
+    table = m.get('industry', {})
+    return table.get(f"{d.get('market') or 'A'}:{ind}") or table.get(ind) or None
+
+
+def _cycle_force(cls):
+    """行业锚 → cycle_analysis 的 force 入参：True 强制判周期 / False 强制判非周期 / None 不干预。"""
+    if cls == 'strong':
+        return True
+    if cls in ('defensive', 'financial'):
+        return False
+    return None
+
+
+def cycle_analysis(d, force=None):
     """对应 JS cycleAnalysis —— 周期性行业判定 + 周期位置评分（0~100，越低越接近底部）。
     阶段一：周期强度（净利变异系数 40 + 深度下滑频率 35 + 毛利率波动 25），≥ 40 判为周期性；
-    阶段二：仅周期性公司打周期位置分；非周期性返回 {'cyclical': False, 'total': None}。"""
+    阶段二：仅周期性公司打周期位置分；非周期性返回 {'cyclical': False, 'total': None}。
+    force：行业周期分类锚（_cycle_force）——True 强制判周期（修复单边景气期资源股漏判）、
+    False 强制判非周期（防御/金融行业不进周期位置框架）、None 按财务量化。JS 侧在
+    cycleAnalysis 内部读同一张表取 force，两侧同一语义。"""
     annual = annual_rows(d.get('indicators') or [])
     cf_list = sorted(d.get('cashflow') or [], key=lambda r: str(r.get('报告日') or ''))
     ba_list = sorted(d.get('balance') or [], key=lambda r: str(r.get('报告日') or ''))
@@ -1743,6 +1807,11 @@ def cycle_analysis(d):
     cyc = min(100.0, sum(c_avail)) if c_avail else None
     cyc = None if cyc is None else math.floor(cyc * 10 + 0.5) / 10.0
     cyclical = cyc is not None and cyc >= 40
+    # 行业锚合并（2026-11-13）：strong 强制判入 / defensive·financial 强制判出 / semi·None 不干预
+    if force is True:
+        cyclical = True
+    elif force is False:
+        cyclical = False
     if not cyclical:
         return {'cyclical': False, 'cyclicalScore': cyc, 'total': None}
 
@@ -2014,9 +2083,13 @@ def compute_scores(company, now=None):
     scores['priceRefs'] = price_references(company, va)
     scores['fraud'] = fraud_analysis(company)
     scores['mgmt'] = management_analysis(company)
-    ca = cycle_analysis(company)
+    cls = industry_cycle_class(company)
+    ca = cycle_analysis(company, force=_cycle_force(cls))
     scores['cycle'] = ca['total']
     scores['cyclical'] = ca['cyclical']
+    # 行业周期分类锚（2026-11-13）：strong/semi/defensive/financial/None，随分入库
+    # （score_daily.cycle_class）供筛选/展示/后续验证分域，不参与任何计算
+    scores['cycleClass'] = cls
     tp = trap_score(company)
     scores['trap'] = tp['total']
     # C = Σ ln(lift)×亮灯，是分数未经归一的原始证据权重合计；档位表按 C 查而不是按分数查
@@ -2036,10 +2109,11 @@ def compute_scores(company, now=None):
     # 中报恶化 dip：年报盲区探针（标注 + R 门槛共用），口径见 interim_dip_yoy 文件头。
     # 先算再喂 R：门槛是它存在的第一理由。
     scores['interimDip'] = interim_dip_yoy(company.get('indicators'))
-    # 综合推荐分 R：门槛外的 V/G 合成（见 recommend_score 文件头）
+    # 综合推荐分 R：门槛外的 V/G 合成（见 recommend_score 文件头；cycletop 标注线吃
+    # 本函数刚算出的 cyclical/cycle/cycleClass，与列表展示同一份输入）
     scores['recommend'], scores['recommendGate'] = recommend_score(
         scores['value'], scores['growth'], scores['fraud'], scores['trap'],
-        scores['interimDip'])
+        scores['interimDip'], scores['cyclical'], scores['cycle'], scores['cycleClass'])
     # 趋势状态仅周期性公司（非周期不打分不显示趋势）
     scores['cycleTrend'] = cycle_trend(cycle_history(company)) if ca['total'] is not None else None
     # 商业模式特征（bm_validity 过线标签，2026-09-19 上线）：布尔入库，列表「特征」筛选用。

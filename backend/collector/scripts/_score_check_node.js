@@ -104,10 +104,12 @@ async function main() {
       valueEval: num(vscore.eff ? vscore.eff.evaluated : null),
     };
 
-    // 综合推荐分 R：门槛外的 0.6×V + 0.4×G（与 compute_scores 同一套输入：fraud/dip 用现算的）
+    // 综合推荐分 R：门槛外的 0.6×V + 0.4×G（与 compute_scores 同一套输入：fraud/dip 用现算的；
+    // 周期顶标注线 2026-11-13 起吃 ca 的 cyclical/total/cycleClass，两侧同一份输入）
     const dipV = m.interimDipYoy(d.indicators);
     const rec = m.recommendScore(num(vscore.total), num(gs.total),
-                                 num((m.fraudAnalysis(d) || {}).total), num(tp.total), num(dipV));
+                                 num((m.fraudAnalysis(d) || {}).total), num(tp.total), num(dipV),
+                                 !!ca.cyclical, num(ca.total), ca.cycleClass || null);
     out[code].recommend = num(rec.total);
     out[code].recommendGate = rec.gate == null ? null : rec.gate;
     // 中报恶化 dip：纯 indicators 函数，数值比对（与 Python 同一浮点运算路径）

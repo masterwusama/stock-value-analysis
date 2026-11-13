@@ -494,8 +494,16 @@ if not ALT:
           and _rs(80.0, 60.0, 10.0, 10.0, -0.70) == (None, 'interim')   # 边界恰好拦下
           and _rs(None, 60.0, 10.0, 10.0) == (None, 'nodata')
           and _rs(80.0, 60.0, None, None) == (72.0, 'pass')
-          and _rs(85.0, 40.0, 40.0, 20.0) == (67.0, 'pass'),            # 陷阱恰在线上=不命中
-          "recommend_score 的门槛状态（陷阱标注制）/中报恶化边界（−0.69 放行、−0.70 拦下）或 0.6×V+0.4×G 舍入口径不对")
+          and _rs(85.0, 40.0, 40.0, 20.0) == (67.0, 'pass')             # 陷阱恰在线上=不命中
+          # 周期顶标注线（2026-11-13）：行业锚 strong 且位置 ≥75 记 'cycletop'（标注不拦分）
+          and _rs(80.0, 60.0, 10.0, 10.0, None, True, 75.0, 'strong') == (72.0, 'cycletop')   # 恰在线上=命中
+          and _rs(80.0, 60.0, 10.0, 10.0, None, True, 74.9, 'strong') == (72.0, 'pass')       # 线下干净
+          and _rs(80.0, 60.0, 10.0, 10.0, None, True, 90.0, 'semi') == (72.0, 'pass')         # semi 不吃周期顶线（假阳性闸）
+          and _rs(80.0, 60.0, 10.0, 10.0, None, False, 90.0, 'strong') == (72.0, 'pass')      # 非周期不看位置
+          and _rs(80.0, 60.0, 10.0, 10.0, None, True, None, 'strong') == (72.0, 'pass')       # 位置判不动放行
+          and _rs(80.0, 60.0, 10.0, 25.0, None, True, 80.0, 'strong') == (72.0, 'trap+cycletop')  # 双标注并列
+          and _rs(80.0, 60.0, 45.0, 10.0, -0.90, True, 80.0, 'strong') == (None, 'fraud+cycletop+interim'),
+          "recommend_score 的门槛状态（陷阱/周期顶标注制）/中报恶化边界（−0.69 放行、−0.70 拦下）或 0.6×V+0.4×G 舍入口径不对")
 
 E_EXP = {}
 if not ALT:

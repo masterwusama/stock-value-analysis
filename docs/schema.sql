@@ -119,9 +119,10 @@ CREATE TABLE score_daily (
 	score_schloss DOUBLE, 
 	fraud DOUBLE, 
 	mgmt DOUBLE, 
-	cycle DOUBLE, 
-	cyclical BOOL, 
-	cycle_trend VARCHAR(8), 
+	cycle DOUBLE,
+	cyclical BOOL,
+	cycle_trend VARCHAR(8),
+	cycle_class VARCHAR(16),
 	trap DOUBLE, 
 	trap_c DOUBLE, 
 	trap_eval INTEGER, 
@@ -129,8 +130,8 @@ CREATE TABLE score_daily (
 	growth_eval INTEGER, 
 	value DOUBLE, 
 	value_eval INTEGER, 
-	recommend DOUBLE, 
-	recommend_gate VARCHAR(16), 
+	recommend DOUBLE,
+	recommend_gate VARCHAR(48),
 	interim_dip DOUBLE, 
 	w_cash DOUBLE, 
 	int_debt DOUBLE, 
@@ -159,6 +160,10 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
+CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
+
+CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
+
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
 
 CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
@@ -172,10 +177,6 @@ CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
 CREATE INDEX idx_list_value ON score_daily (trade_date, value);
 
 CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
-
-CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
-
-CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -517,4 +518,19 @@ CREATE TABLE etf_ann (
 );
 
 CREATE INDEX idx_etf_ann_date ON etf_ann (code, ann_date);
+
+CREATE TABLE theory_daily (
+	theory_id VARCHAR(32) NOT NULL, 
+	trade_date DATE NOT NULL, 
+	sid INTEGER NOT NULL, 
+	tier VARCHAR(16) NOT NULL, 
+	score NUMERIC(5, 1), 
+	mcap_cny NUMERIC(20, 2), 
+	conds JSON, 
+	flags JSON, 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (theory_id, trade_date, sid)
+);
+
+CREATE INDEX idx_theory_daily_scan ON theory_daily (theory_id, trade_date, tier);
 

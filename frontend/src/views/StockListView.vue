@@ -241,7 +241,7 @@ const G_TIP = '成长综合分 G（0-100，越高越好）：净利/营收/每�
 const G_BAND_CUTS = [[16.0, '档1 增长最弱', 'bad'], [28.3, '档2 偏低', 'low'], [47.7, '档3 中位', 'mid'], [69.0, '档4 偏高', 'mid']]
 const R_TIP = '综合推荐分 R（0-100，越高越好）：门槛外的 0.6×价值综合分 V + 0.4×成长综合分 G。'
   + '两道拦截门槛——造假 ≤ 40 · 中报恶化 dip ≤ −70%（判不动的门槛输入按无证据放行，港美股扣非缺失侧 dip 不适用）；'
-  + '陷阱 ≤ 20 是风险标注线（2026-10 起不再拦分）：命中时 R 照打、分数旁挂 ⚠，档位见陷阱分列。'
+  + '陷阱 ≤ 20 与周期顶（强周期且周期位置 ≥ 75）是风险标注线（不再拦分）：命中时 R 照打、分数旁挂 ⚠，档位见陷阱分/周期列。'
   + '被拦下的公司显示 -，那是「不过资格线」不是 0 分；悬停可见具体原因（fraud/interim/nodata）。'
   + '回测（A 股 2021~2023 事件时面板）：门槛内按无价格版五分位，其后转亏率 16.0%→2.4% 单调、减值≥5% 26.8%→3.3% 单调、逐年 3/3。'
   + '收益侧实测为负向（高分组 2 年超额跑输 10.1pp，2022~2024 质量/成长风格杀跌）——R 是排雷与选质的入口，不是买点。'
@@ -250,6 +250,7 @@ const R_BAND_CUTS = [[24, '档1 最差', 'bad'], [36, '档2 偏低', 'low'], [46
 const R_GATE_LABEL = {
   fraud: '造假红旗分 > 40，被资格线拦下',
   trap: '价值陷阱分 > 20：陷阱风险标注线命中（标注不拦分，R 照打）',
+  cycletop: '周期顶标注线命中：判为强周期且周期位置分 ≥ 75（标注不拦分，R 照打）',
   interim: '中报恶化：最新一期季报/半年报扣非同比 ≤ −70%，被资格线拦下（回测转亏 lift 7.8×）',
   nodata: '门槛已过，但 V/G 至少一条判不动（公开年报不足 3 期）',
 }
@@ -667,17 +668,24 @@ function rTitle(s) {
     trapNote = '｜⚠ 陷阱风险标注：' + R_GATE_LABEL.trap + (tb ? ' · ' + tb : '')
       + '——便宜可能是周期底部或价值陷阱，读分时把陷阱列一并看'
   }
+  // 周期顶标注线命中（2026-11-13）：利润峰值期的低 PE 是预定价嫌疑
+  const gateArr = String(s.recommend_gate || '').split('+')
+  let cycNote = ''
+  if (s.recommend != null && gateArr.includes('cycletop')) {
+    cycNote = '｜⚠ 周期顶标注：' + R_GATE_LABEL.cycletop
+      + '——利润峰值期的低 PE 有预定价嫌疑，周期股低 PE 是卖点而非买点，读分时把周期列一并看'
+  }
   const mkt = s.market && s.market !== 'A'
     ? '⚠ 港美股：门槛在本市场实际只剩「造假 ≤ 40」一道（陷阱口径只在 A 股成立、扣非不披露），排雷保护弱于 A 股——读分时把造假分与 ⚑ 一并看。'
     : ''
-  return `${R_TIP}｜本标的：${label}${ing.length ? ' · ' + ing.join(' · ') : ''}${trapNote}${mkt ? '｜' + mkt : ''}`
+  return `${R_TIP}｜本标的：${label}${ing.length ? ' · ' + ing.join(' · ') : ''}${trapNote}${cycNote}${mkt ? '｜' + mkt : ''}`
 }
 // R 已打分但陷阱标注线命中（gate 串含 trap 且非 pass）；被 fraud/interim 拦下的不在此列
 const gateHasTrap = (s) => s.recommend != null && !!s.recommend_gate
   && String(s.recommend_gate).split('+').includes('trap')
 // 移动卡片第二层：推荐格无分时的门槛原因速记（与详情 R 卡一致，缩写版）；
 // 有分但陷阱标注线命中时同样缩写展示（'⚠陷阱'），pass/空串不显示
-const HERO_GATE = { fraud: '造假', trap: '陷阱', interim: '中报', nodata: '无数据' }
+const HERO_GATE = { fraud: '造假', trap: '陷阱', cycletop: '周期顶', interim: '中报', nodata: '无数据' }
 const heroGate = (s) => {
   const g = s.recommend_gate
   if (!g || g === 'pass') return ''

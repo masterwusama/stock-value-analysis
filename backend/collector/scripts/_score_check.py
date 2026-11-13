@@ -182,6 +182,13 @@ for f in sorted(companies_dir.glob('*.json')):
     for k, _w, _lo, _hi in V_ITEMS:      # 分项整体没进 raw 也算判不动，不能只数存在的键
         st['na'][k] = st['na'].get(k, 0) + (vr['raw'].get(k) is None)
 
+# 行业周期分类锚（2026-11-13）：前端镜像必须与源表 JSON 语义一致（改任一边忘另一边在这里现形）
+_cc_src = json.loads((BASE / 'data' / 'cycle_class.json').read_text(encoding='utf-8'))
+_cc_fe = json.loads((BASE.parent.parent / 'frontend' / 'src' / 'data' / 'cycle_class.json')
+                    .read_text(encoding='utf-8'))
+if _cc_src != _cc_fe:
+    diffs.append(('cycle_class.json', 'frontend/src/data 镜像与 collector/data 源表不一致', '-', '-'))
+
 if diffs:
     print('不一致 %d 处:' % len(diffs))
     for code, key, p, j in diffs:

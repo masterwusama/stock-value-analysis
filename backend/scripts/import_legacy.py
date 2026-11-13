@@ -348,6 +348,7 @@ def build_score_rows(index, trade_date, db):
             "mgmt": sc.get("mgmt"),
             "cycle": sc.get("cycle"),
             "cyclical": sc.get("cyclical"),
+            "cycle_class": sc.get("cycleClass"),
             "cycle_trend": sc.get("cycleTrend"),
             "trap": sc.get("trap"),
             "trap_c": sc.get("trapC"),

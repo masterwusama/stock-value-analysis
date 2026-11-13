@@ -11,6 +11,12 @@
   // 10年期国债收益率参考值（用于股债利差对比，需手动定期更新）
   var BOND_10Y = 0.017;
 
+  // 行业周期分类锚（2026-11-13）：backend/collector/data/cycle_class.json 的逐字镜像
+  // （构建期打进 bundle；_score_check.py 比对两份文件一致）。cycleAnalysis 阶段一用它
+  // 合并行业锚——与 Python 侧 industry_cycle_class/_cycle_force 同一条规则。
+  // import attribute 是给 Node 侧 parity 探针（_score_*_node.js 原生 ESM 加载）用的
+  import cycleClassMap from '../data/cycle_class.json' with { type: 'json' };
+
   /* ---------------- 工具函数 ---------------- */
 
   // 与 collector/scripts/equity.py 一致：有限数值，归母优先、总权益兜底，保留零和负值。
@@ -1641,20 +1647,29 @@
     return V_BANDS[V_BANDS.length - 1];
   }
 
-  var R_W_VALUE = 0.6, R_FRAUD_GATE = 40, R_TRAP_GATE = 20;
+  var R_W_VALUE = 0.6, R_FRAUD_GATE = 40, R_TRAP_GATE = 20, R_CYCLE_TOP_NOTE = 75;
 
-  function recommendScore(vTotal, gTotal, fraud, trap, dip) {
+  function recommendScore(vTotal, gTotal, fraud, trap, dip, cyclical, cycleTotal, cycleClass) {
     // 陷阱线 2026-10-17 起标注不拦分：>20 的 R 照打、gate 记 'trap'（scoring.py 同步同改）。
-    // 命中顺序恒为 fraud→trap→interim；组合里有拦截项时 R=None，'trap' 只作附记。
+    // 周期顶标注线 2026-11-13 上线（同款标注制）：行业锚 strong 且周期位置分 ≥75 → gate
+    // 记 'cycletop'——利润峰值期的低 PE 是预定价嫌疑，周期股低 PE 是卖点而非买点；
+    // 只吃 strong 是上线当日实测定的假阳性闸（semi 单边增长股「利润新高=位置100」是结构
+    // 上行不是周期顶）。
+    // 命中顺序恒为 fraud→trap→cycletop→interim；组合里有拦截项时 R=None，标注项只作附记。
     var hit = [];
     if (fraud != null && fraud > R_FRAUD_GATE) hit.push('fraud');
     var trapHit = trap != null && trap > R_TRAP_GATE;
     if (trapHit) hit.push('trap');
+    var cycTopHit = cycleClass === 'strong' && !!cyclical && cycleTotal != null && cycleTotal >= R_CYCLE_TOP_NOTE;
+    if (cycTopHit) hit.push('cycletop');
     if (dip != null && dip <= INTERIM_DIP_GATE) hit.push('interim');
     if (hit.indexOf('fraud') >= 0 || hit.indexOf('interim') >= 0) return { total: null, gate: hit.join('+') };
     if (vTotal == null || gTotal == null) return { total: null, gate: 'nodata' };
+    var flags = [];
+    if (trapHit) flags.push('trap');
+    if (cycTopHit) flags.push('cycletop');
     return { total: Math.round((R_W_VALUE * vTotal + (1 - R_W_VALUE) * gTotal) * 10) / 10,
-             gate: trapHit ? 'trap' : 'pass' };
+             gate: flags.length ? flags.join('+') : 'pass' };
   }
 
   // 中报恶化 dip：最新 interim（Q1/H1/Q3）的扣非同比（缺则净利同比）。评分轴只吃年报，
@@ -1713,6 +1728,7 @@
   var R_GATE_TEXT = {
     fraud: '造假红旗分 > 40（报表内部的量化背离过线）',
     trap: '价值陷阱分 > 20（坏消息证据堆过「单点」档——2026-10-17 起标注不拦分：R 照打并挂 ⚠ 风险标注）',
+    cycletop: '周期顶标注线命中（判为强周期且周期位置分 ≥ 75 景气偏高——2026-11-13 起标注不拦分：R 照打并挂 ⚠ 周期顶标注）',
     interim: '中报恶化：最新一期季报/半年报的扣非同比 ≤ −70%（回测转亏 lift 7.8×，见 dip_validity）',
     nodata: '门槛过了，但 V/G 至少一条判不动（公开年报不足 3 期）'
   };
@@ -1828,9 +1844,30 @@
 
   // 管理层评分卡（与 scoreCard 同构，等级方向高分=好=绿；符合度列 = 得分/权重）
 
+  // 行业周期分类锚（2026-11-13）：个股覆盖优先 → 市场前缀键（HK:原材料）→ 裸行业名 → null。
+  // 与 Python scoring.industry_cycle_class 同一条规则；返回 'strong'/'semi'/'defensive'/'financial'/null。
+  function cycleClassOf(d) {
+    var m = cycleClassMap || {};
+    var ov = (m.overrides || {})[String(d.code || '')];
+    if (ov && typeof ov === 'object') return ov['class'] || null;
+    var ind = String((d.info || {})['行业'] || '');
+    if (!ind) return null;
+    var t = m.industry || {};
+    return t[(d.market || 'A') + ':' + ind] || t[ind] || null;
+  }
+
+  // 行业锚 → force 语义（Python _cycle_force 同构）：strong 强制判入、defensive/financial 强制判出、其余不干预
+  function cycleForceOf(cls) {
+    if (cls === 'strong') return true;
+    if (cls === 'defensive' || cls === 'financial') return false;
+    return null;
+  }
+
   // ---- 周期性行业判定 + 周期位置评分（0~100，分数越低越接近周期底部）----
   // 两阶段：①周期强度 0~100（净利波动40 + 深度下滑频率35 + 毛利率波动25），≥40 判为周期性；
   // ②周期性公司才打周期位置分（利润/毛利率/营收位置 + 同比动能 + 现金流 + 库存/资本开支周期 + 单季环比）。
+  // 2026-11-13 起阶段一合并行业周期分类锚：strong 行业强制判周期（修复单边景气期资源股漏判）、
+  // defensive/financial 行业强制判非周期（压掉普通制造业常规波动与金融股的市场Beta）。
   function cycleAnalysis(d) {
     var annual = annualRows(d.indicators || []);
     var cfList = (d.cashflow || []).slice().sort(function (a, b) { return cmpKey(a['报告日'], b['报告日']); });
@@ -1881,14 +1918,23 @@
     var cyc = cAvail.length ? Math.min(100, cAvail.reduce(function (s, x) { return s + x.score; }, 0)) : null;
     cyc = cyc == null ? null : Math.round(cyc * 10) / 10;
     var cyclical = cyc != null && cyc >= 40;
+    // 行业周期分类锚合并（2026-11-13，与 Python scoring.cycle_analysis 同一规则）
+    var ccClass = cycleClassOf(d);
+    var ccForce = cycleForceOf(ccClass);
+    if (ccForce === true) cyclical = true;
+    else if (ccForce === false) cyclical = false;
 
     if (!cyclical) {
+      var naBasis = ccForce === false
+        ? '行业分类锚判为' + (ccClass === 'financial' ? '金融' : '防御') + '行业（' + ccClass + '），不按周期位置框架打分（财务周期强度 ' + (cyc == null ? '-' : fmtNum(cyc)) + ' 仅留档）'
+        : (cyc == null ? '样本不足：年报数据少于 3 期，无法判定周期性' :
+          '周期强度 ' + fmtNum(cyc) + ' < 40，判定为非周期性/弱周期行业');
       return {
         cyclical: false, cyclicalScore: cyc, cyclicalItems: cItems, total: null, items: [],
+        cycleClass: ccClass,
         title: '周期位置 · 周期性行业判定与底部概率量化',
-        basis: cyc == null ? '样本不足：年报数据少于 3 期，无法判定周期性' :
-          '周期强度 ' + fmtNum(cyc) + ' < 40，判定为非周期性/弱周期行业',
-        note: '周期强度由近 8 年年报的净利润变异系数（40 分）+ 利润深度下滑频率（35 分）+ 毛利率波动（25 分）构成；≥ 40 判为周期性行业才进行周期位置打分。已知局限：判定基于约 8 年财务样本，近 8 年处于单边景气期的典型周期股（如上行期的资源股）波动特征不明显会被判为“非周期”，若窗口恰好覆盖单边行情也可能误判，需结合行业属性（如公用事业/消费/医药通常弱周期，钢铁/有色/化工/航运/造纸通常强周期）复核。'
+        basis: naBasis,
+        note: '周期强度由近 8 年年报的净利润变异系数（40 分）+ 利润深度下滑频率（35 分）+ 毛利率波动（25 分）构成；≥ 40 判为周期性行业才进行周期位置打分。2026-11 起叠加行业周期分类锚（cycle_class.json）：强周期行业强制判入（修复单边景气期资源股漏判），防御/金融行业强制判出，半周期与未分类行业仍按财务量化复核。'
       };
     }
 
@@ -1962,11 +2008,12 @@
     var total = weightedTotal(items.map(function (x) { return [x.score, x.max]; }));
     return {
       cyclical: true, cyclicalScore: cyc, cyclicalItems: cItems,
+      cycleClass: ccClass,
       total: total == null ? null : Math.round(total * 10) / 10,
       items: items,
       title: '周期位置 · 周期性行业判定与底部概率量化',
-      basis: '周期强度 ' + fmtNum(cyc) + '（≥ 40 判为周期性）；位置评分基准：' + (lastYear || '-') + ' 年报 + 最新单季',
-      note: '两阶段量化：①周期强度（净利变异系数 40 + 深度下滑频率 35 + 毛利率波动 25，≥ 40 判为周期性，非周期性不打分）；②周期位置 0~100，分数越低越接近周期底部（利润/毛利率/营收处于历史低位、同比深负、现金流承压、去库存、资本开支收缩、单季仍在回落均为底部特征）。已知局限：位置分按“可算出的维度”归一，缺数据的维度既不加罚也不免罚，维度很少时该分只反映已测得的部分；基于约 8 年样本的相对位置，近 8 年单边景气期的典型周期股会被判为“非周期”；无历史市价分位数据故未纳入估值维度；周期位置低≠立即反转，需结合行业供需与产能数据确认，仅供研究参考。'
+      basis: '周期强度 ' + fmtNum(cyc) + '（≥ 40 判为周期性' + (ccForce === true ? '；行业分类锚 strong 强制判入' : '') + '）；位置评分基准：' + (lastYear || '-') + ' 年报 + 最新单季',
+      note: '两阶段量化：①周期强度（净利变异系数 40 + 深度下滑频率 35 + 毛利率波动 25，≥ 40 判为周期性，2026-11 起强周期行业经行业分类锚强制判入，防御/金融行业强制判出）；②周期位置 0~100，分数越低越接近周期底部（利润/毛利率/营收处于历史低位、同比深负、现金流承压、去库存、资本开支收缩、单季仍在回落均为底部特征），≥75 为景气偏高（周期顶嫌疑，列表/掘金台挂 ⚠ 标注）。已知局限：位置分按“可算出的维度”归一，缺数据的维度既不加罚也不免罚；基于约 8 年样本的相对位置；无历史市价分位数据故未纳入估值维度；周期位置低≠立即反转，需结合行业供需与产能数据确认，仅供研究参考。'
     };
   }
 
@@ -2460,23 +2507,31 @@
       var rv = valueScore(d), rg = growthScore(d);
       var rf = fraudAnalysis(d).total, rt = trapScore(d);
       var dip = interimDipYoy(d.indicators || []);
-      var rRec = recommendScore(rv.total, rg.total, rf, rt.total, dip);
+      var rCa = cycleAnalysis(d);
+      var rRec = recommendScore(rv.total, rg.total, rf, rt.total, dip, rCa.cyclical, rCa.total, rCa.cycleClass);
       L.push('综合推荐分 R = 0.6 × V + 0.4 × G（门槛外的合成，权重先验不拟合）');
       L.push('输入：V ' + (rv.total == null ? '-' : fmtNum(rv.total)) + ' · G ' + (rg.total == null ? '-' : fmtNum(rg.total)) +
         ' · 造假 ' + (rf == null ? '-' : fmtNum(rf)) + ' · 陷阱 ' + (rt.total == null ? (rt.na ? '不适用' : '判不动') : fmtNum(rt.total)) +
-        ' · 中报 dip ' + (dip == null ? '判不动' : (dip * 100).toFixed(0) + '%'));
+        ' · 中报 dip ' + (dip == null ? '判不动' : (dip * 100).toFixed(0) + '%') +
+        ' · 周期位置 ' + (rCa.cyclical ? (rCa.total == null ? '判不动' : fmtNum(rCa.total)) : '非周期'));
       L.push('拦截门槛：造假 ≤ 40 ' + (rf == null ? '（判不动放行）' : rf <= R_FRAUD_GATE ? '✓' : '✗') +
         ' · 中报 dip > −70% ' + (dip == null ? '（判不动放行）' : dip > INTERIM_DIP_GATE ? '✓' : '✗'));
       L.push('陷阱标注线 ≤ 20：' + (rt.total == null ? '（不适用）' : rt.total <= R_TRAP_GATE
         ? '✓ 干净' : '⚠ 命中——标注不拦分，R 照打并挂风险标注'));
+      L.push('周期顶标注线 ≥ 75（行业锚 strong 才适用）：' + (rCa.cycleClass !== 'strong' ? '（非强周期行业，不适用）' : (!rCa.cyclical ? '（非周期，不适用）' : (rCa.total == null ? '（位置判不动）' : rCa.total < R_CYCLE_TOP_NOTE
+        ? '✓ 干净' : '⚠ 命中——标注不拦分，R 照打并挂周期顶标注'))));
       if (rRec.total == null) {
-        L.push('结论：无 R（' + (R_GATE_TEXT[rRec.gate] || rRec.gate) + '）——门槛外是「不过资格线」，不是 0 分');
+        L.push('结论：无 R（' + (String(rRec.gate).split('+').map(function (k) { return R_GATE_TEXT[k] || k; }).join('；') || rRec.gate) + '）——门槛外是「不过资格线」，不是 0 分');
       } else {
         L.push('＝ 0.6×' + fmtNum(rv.total) + ' + 0.4×' + fmtNum(rg.total) + ' = ' + fmtNum(rRec.total) +
           '（' + bandLabel(R_BANDS, rRec.total) + '）');
-        if (rRec.gate === 'trap') {
+        if (String(rRec.gate).split('+').indexOf('trap') >= 0) {
           L.push('⚠ 价值陷阱标注线命中（陷阱分 ' + fmtNum(rt.total) + (rt.band ? ' · ' + rt.band.label : '') +
             '）：便宜可能是周期底部或价值陷阱，读分时把陷阱分一节的档位与发生率一并看。');
+        }
+        if (String(rRec.gate).split('+').indexOf('cycletop') >= 0) {
+          L.push('⚠ 周期顶标注线命中（位置 ' + fmtNum(rCa.total) + '）：利润峰值期的低 PE 有预定价嫌疑——' +
+            '周期股低 PE 是卖点而非买点，升档需供给红线等例外条款硬证据。');
         }
       }
       if (dip != null && dip <= INTERIM_DIP_NOTE) {
@@ -2684,6 +2739,7 @@ export {
   V_BANDS,
   vBandOf,
   R_W_VALUE,
+  R_CYCLE_TOP_NOTE,
   recommendScore,
   INTERIM_DIP_NOTE,
   interimDipYoy,
@@ -2692,6 +2748,7 @@ export {
   R_GATE_TEXT,
   managementAnalysis,
   cycleAnalysis,
+  cycleClassOf,
   cycleGradeText,
   cycleHistory,
   cycleTrendOf,

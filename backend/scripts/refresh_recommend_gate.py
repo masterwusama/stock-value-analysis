@@ -32,14 +32,15 @@ def main():
     db = SessionLocal()
     td = db.execute(select(E.ScoreDaily.trade_date)
                     .order_by(E.ScoreDaily.trade_date.desc()).limit(1)).scalar_one()
-    # recommend_gate 列是 varchar(16)，导入侧对超长串显式截头（strict 模式直写会整批回滚）；
-    # 'fraud+trap+interim' 恰好 18 字符会被截成 'fraud+trap+inter'——与生产入库同一口径
-    gate_lim = E.ScoreDaily.__table__.c.recommend_gate.type.length or 16
+    # recommend_gate 列宽从实体动态取（2026-11-13 已由 varchar(16) 升到 48，'fraud+trap+
+    # cycletop+interim' 27 字符完整落库；导入侧 BulkInserter 按同一实体宽度截头）
+    gate_lim = E.ScoreDaily.__table__.c.recommend_gate.type.length or 48
     rows = db.execute(select(E.ScoreDaily).where(E.ScoreDaily.trade_date == td)).scalars().all()
     changed = 0
     gained = 0
     for r in rows:
-        rec, gate = recommend_score(r.value, r.growth, r.fraud, r.trap, r.interim_dip)
+        rec, gate = recommend_score(r.value, r.growth, r.fraud, r.trap, r.interim_dip,
+                                    r.cyclical, r.cycle, r.cycle_class)
         if isinstance(gate, str) and len(gate) > gate_lim:
             gate = gate[:gate_lim]
         if rec == r.recommend and gate == r.recommend_gate:
