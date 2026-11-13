@@ -13,18 +13,52 @@ const list = ref(null)
 const report = ref(null)
 const error = ref('')
 
-// 列表检索 + 翻页:纯前端(全量列表本就一次拉回,74+ 份没必要再走后端分页)。
+// 列表检索 + 三维筛选 + 翻页:纯前端(全量列表本就一次拉回,80+ 份没必要再走后端分页)。
 // 检索字段=代码/名称/标题/结论/细分档/标签/摘要;空格分词取 AND,命中即留。
+// 三维筛选(评价体系 v2):推荐九档 grade + 实控人九级 ctrl + 高管九级 mgmt,
+// 选项从库内实际取值动态收集(不硬编码,新档位自动进下拉),按体系语义排序。
 const q = ref('')
+const gradeF = ref('')
+const ctrlF = ref('')
+const mgmtF = ref('')
 const page = ref(1)
 const PAGE_SIZE = 10
 
+// 推荐九档好→差的官方顺序;库里出现但不在表内的档位排末尾(按名称)
+const GRADE_ORDER = ['增持-强', '增持-中', '增持-弱', '观察-偏多', '观察-中性', '观察-偏空', '回避-轻', '回避-中', '回避-强']
+const gradeOptions = computed(() => {
+  const set = new Set((list.value || []).map((m) => m.grade).filter(Boolean))
+  return [...set].sort((a, b) => {
+    const ia = GRADE_ORDER.indexOf(a), ib = GRADE_ORDER.indexOf(b)
+    if (ia !== -1 && ib !== -1) return ia - ib
+    if (ia !== -1) return -1
+    if (ib !== -1) return 1
+    return a.localeCompare(b, 'zh')
+  })
+})
+// 实控人/高管九级:取「XX-N」尾缀数字升序(1 利益一致 → 9 高危),无数字的排末尾
+const levelOptions = (key) => computed(() => {
+  const set = new Set((list.value || []).map((m) => m[key]).filter(Boolean))
+  return [...set].sort((a, b) => {
+    const na = parseInt(String(a).split('-').pop(), 10)
+    const nb = parseInt(String(b).split('-').pop(), 10)
+    if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb
+    if (Number.isFinite(na)) return -1
+    if (Number.isFinite(nb)) return 1
+    return a.localeCompare(b, 'zh')
+  })
+})
+const ctrlOptions = levelOptions('ctrl')
+const mgmtOptions = levelOptions('mgmt')
+
 const filtered = computed(() => {
   const kw = q.value.trim().toLowerCase()
-  const all = list.value || []
-  if (!kw) return all
-  const words = kw.split(/\s+/)
-  return all.filter((m) => {
+  const words = kw ? kw.split(/\s+/) : []
+  return (list.value || []).filter((m) => {
+    if (gradeF.value && m.grade !== gradeF.value) return false
+    if (ctrlF.value && m.ctrl !== ctrlF.value) return false
+    if (mgmtF.value && m.mgmt !== mgmtF.value) return false
+    if (!words.length) return true
     const hay = [m.code, m.name, m.title, m.conclusion, m.grade, m.summary, ...(m.tags || [])]
       .join('\n').toLowerCase()
     return words.every((w) => hay.includes(w))
@@ -32,6 +66,17 @@ const filtered = computed(() => {
 })
 const totalPages = computed(() => Math.max(1, Math.ceil(filtered.value.length / PAGE_SIZE)))
 const paged = computed(() => filtered.value.slice((page.value - 1) * PAGE_SIZE, page.value * PAGE_SIZE))
+// 是否有任何筛选生效(决定计数与空态文案形态)
+const hasFilter = computed(() => Boolean(q.value.trim() || gradeF.value || ctrlF.value || mgmtF.value))
+// 生效筛选的一句话摘要(空态提示用)
+const filterLabel = computed(() => {
+  const parts = []
+  if (gradeF.value) parts.push(`档位=${gradeF.value}`)
+  if (ctrlF.value) parts.push(`实控=${ctrlF.value}`)
+  if (mgmtF.value) parts.push(`高管=${mgmtF.value}`)
+  if (q.value.trim()) parts.push(`关键词「${q.value.trim()}」`)
+  return parts.join(' + ')
+})
 // 页码按钮序列:总数少全展示,多则围绕当前页开窗,断档处以 … 占位
 const pageList = computed(() => {
   const t = totalPages.value, c = page.value
@@ -47,8 +92,8 @@ const pageList = computed(() => {
   }
   return out
 })
-// 新检索词或翻页动作可能把页码顶出界(列表刷新后变短),收敛回合法区间
-watch([q, totalPages], () => { if (page.value > totalPages.value) page.value = 1 })
+// 新检索词/筛选切换或翻页动作可能把页码顶出界(列表刷新后变短),收敛回合法区间
+watch([q, gradeF, ctrlF, mgmtF, totalPages], () => { if (page.value > totalPages.value) page.value = 1 })
 
 const slug = computed(() => route.params.slug)
 
@@ -118,12 +163,24 @@ const tocGroups = computed(() => {
         <div class="toolbar">
           <input v-model="q" class="search" type="search" placeholder="检索:代码 / 名称 / 标题 / 标签 / 结论…"
             aria-label="检索研报">
-          <span v-if="list" class="count">{{ q ? `筛得 ${filtered.length} / ${list.length} 份` : `共 ${list.length} 份` }}</span>
+          <select v-model="gradeF" class="filter" :class="{ active: gradeF }" aria-label="按推荐档位筛选">
+            <option value="">档位:全部</option>
+            <option v-for="g in gradeOptions" :key="g" :value="g">{{ g }}</option>
+          </select>
+          <select v-model="ctrlF" class="filter" :class="{ active: ctrlF }" aria-label="按实控人评级筛选">
+            <option value="">实控:全部</option>
+            <option v-for="c in ctrlOptions" :key="c" :value="c">{{ c }}</option>
+          </select>
+          <select v-model="mgmtF" class="filter" :class="{ active: mgmtF }" aria-label="按高管评级筛选">
+            <option value="">高管:全部</option>
+            <option v-for="g in mgmtOptions" :key="g" :value="g">{{ g }}</option>
+          </select>
+          <span v-if="list" class="count">{{ hasFilter ? `筛得 ${filtered.length} / ${list.length} 份` : `共 ${list.length} 份` }}</span>
         </div>
       </header>
 
       <p v-if="list && !list.length" class="empty">还没有研报。</p>
-      <p v-else-if="list && !filtered.length" class="empty">没有匹配「{{ q }}」的研报。</p>
+      <p v-else-if="list && !filtered.length" class="empty">没有匹配 {{ filterLabel }} 的研报。</p>
       <section v-for="m in paged" :key="m.slug" class="card" @click="$router.push('/research/' + m.slug)">
         <div class="row1">
           <router-link :to="'/stock/' + m.code" class="code-link" @click.stop>{{ m.code }} {{ m.name }}</router-link>
@@ -206,12 +263,17 @@ const tocGroups = computed(() => {
 .page-head h2 { margin: 4px 0 6px; }
 .page-head .sub { color: #6b7280; font-size: 13px; margin: 0 0 14px; }
 .page-head code { background: #f3f4f6; border-radius: 4px; padding: 0 4px; font-size: 12px; }
-/* 检索条:输入框 + 计数,与卡片同宽 */
+/* 检索条:输入框 + 三维筛选下拉 + 计数,与卡片同宽 */
 .toolbar { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
 .search { flex: 1; max-width: 420px; padding: 7px 12px; font-size: 13px;
   border: 1px solid #e5e9f2; border-radius: 8px; background: #fff; color: #1f2937; }
 .search:focus { outline: none; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.25); }
-.count { color: #9ca3af; font-size: 12px; white-space: nowrap; }
+/* 三个评价体系下拉:与检索框同风格,选中后边框着色提示「有筛选在生效」 */
+.filter { padding: 6px 8px; font-size: 13px; border: 1px solid #e5e9f2; border-radius: 8px;
+  background: #fff; color: #1f2937; cursor: pointer; }
+.filter:focus { outline: none; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.25); }
+.filter.active { border-color: #93c5fd; background: #eff6ff; }
+.count { color: #9ca3af; font-size: 12px; white-space: nowrap; margin-left: auto; }
 /* 翻页条:居中,按钮沿用 back 的轻描边风格;当前页实心 */
 .pager { display: flex; justify-content: center; align-items: center; gap: 6px; margin: 18px 0 6px; flex-wrap: wrap; }
 .pager button { font-size: 13px; padding: 4px 11px; border: 1px solid #e5e7eb; background: #fff;
@@ -303,9 +365,10 @@ section.card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(20, 30, 
 @media (max-width: 600px) {
   /* 研报卡:标题/区间换行、摘要行高收紧 */
   section.card { padding: 12px 12px; }
-  /* 检索条:窄屏占满整行,计数换行 */
+  /* 检索条:窄屏占满整行,三个下拉均分第二行,计数换行 */
   .toolbar { flex-wrap: wrap; row-gap: 6px; }
   .search { max-width: none; width: 100%; }
+  .filter { flex: 1 1 30%; min-width: 0; }
   .row1 { flex-wrap: wrap; row-gap: 4px; }
   .row1 .date { margin-left: 0; flex-basis: 100%; order: 9; }
   .row2 h3 { font-size: 15px; }
