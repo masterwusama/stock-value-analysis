@@ -1,0 +1,53 @@
+{
+  "updated": "2026-11-15",
+  "note": "世界局势·情景树人工档。纪律:①probability 是主观估计·非模型输出,页面必须带此标注——这不是黄金记分卡那种算法评分(已判死),是把分析者的情景权重显性化供人批判;②每情景的 assets 只写方向与幅度带(不写点位预测),magnitude 用「中枢±」语言;③linked_event 关联 events.json 的 id,一个局势一套情景;④sets 是列表——历史局势的情景集保留可作复盘对照,当前主导局势排第一。",
+  "sets": [
+    {
+      "set_id": "2026-11-me-ceasefire",
+      "title": "中东停火周期演进",
+      "linked_event": "2026-11-me-ceasefire",
+      "updated": "2026-11-15",
+      "base_note": "当前定价状态:停火协议已签,溢价层开始回吐但未归零(执行与反复的可能性仍在)。三情景覆盖协议命运的完整空间。概率为主观估计·非模型输出,每季或重大节点复核。",
+      "scenarios": [
+        {
+          "name": "停火稳固",
+          "probability": 0.50,
+          "prob_note": "主观估计·非模型输出",
+          "narrative": "协议执行推进,护航与保险费率正常化,溢价层归零,商品回归供需定价。",
+          "assets": [
+            {"ref": "crudeoil", "direction": "bearish", "magnitude": "中枢较停火前下移 5-10%", "channel": "地缘风险溢价归零,回到 OPEC+ 供给与全球需求的供需定价"},
+            {"ref": "shipping", "direction": "bearish", "magnitude": "油轮运价自高位回落 20-40%", "channel": "战争险与绕行溢价回吐;COA 长约占比高/内贸占比高的公司钝化"},
+            {"ref": "gold", "direction": "bearish", "magnitude": "回落 2-5%", "channel": "避险溢价消退;央行购金底仓与实际利率定价层不受影响"},
+            {"ref": "aviation", "direction": "bullish", "magnitude": "成本端利好(航煤随油价下行)", "channel": "燃油占运营成本 30-40%,油价每降 10% 航司成本约降 3-4%"},
+            {"ref": "chemicals", "direction": "neutral", "magnitude": "中性——看价差不看单边", "channel": "成本降的同时产品价格同步跟跌,「成本降≠利润升」,净影响取决于上下游价差方向"}
+          ]
+        },
+        {
+          "name": "反复拉锯",
+          "probability": 0.35,
+          "prob_note": "主观估计·非模型输出",
+          "narrative": "协议执行反复,偶发摩擦与指责,溢价层部分回归——脉冲行情为主,中枢不变。",
+          "assets": [
+            {"ref": "crudeoil", "direction": "neutral", "magnitude": "区间震荡 ±5%,脉冲上影", "channel": "每次摩擦升级短暂抬升风险溢价,随后回落"},
+            {"ref": "shipping", "direction": "neutral", "magnitude": "运价脉冲式波动(每次冲突消息跳涨回落)", "channel": "现货运价对消息高度敏感,COA 客户基本免疫"},
+            {"ref": "gold", "direction": "neutral", "magnitude": "避险底仓托底,区间波动", "channel": "央行购金+不确定性格局支撑"},
+            {"ref": "aviation", "direction": "neutral", "magnitude": "成本端中性偏波动", "channel": "航煤随油价脉冲"}
+          ]
+        },
+        {
+          "name": "重新升级",
+          "probability": 0.15,
+          "prob_note": "主观估计·非模型输出",
+          "narrative": "协议破裂重回冲突,溢价层快速回归并可能超出前高(反复失败的信任折价)。",
+          "assets": [
+            {"ref": "crudeoil", "direction": "bullish", "magnitude": "+15-25%", "channel": "供给中断风险重新定价(霍尔木兹通行+设施袭击)"},
+            {"ref": "shipping", "direction": "bullish", "magnitude": "运价翻倍级脉冲", "channel": "战争险费率飙升+绕行拉长吨海里(2024-2026 危机期已实测的形态)"},
+            {"ref": "gold", "direction": "bullish", "magnitude": "+3-8%", "channel": "避险资金回流"},
+            {"ref": "aviation", "direction": "bearish", "magnitude": "成本端转压力", "channel": "航煤跳涨挤压利润,叠加绕行区航班改线"},
+            {"ref": "chemicals", "direction": "bearish", "magnitude": "原料成本冲击(产品端传导滞后)", "channel": "油价急涨期价差先收窄后恢复——化工股在冲突初段通常承压"}
+          ]
+        }
+      ]
+    }
+  ]
+}

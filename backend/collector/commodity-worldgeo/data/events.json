@@ -1,0 +1,94 @@
+{
+  "updated": "2026-11-15",
+  "note": "世界局势·人工结构化事件库(aviation_ipo.json/targets.json 同款人工档模式,API 直读不入库)。维护口径:①只录对资产面有明确传导渠道的局势级事件,公司级事件走研报/公司公告,不进这里;②status=active 表示仍在影响定价,resolved 表示窗口已满转入应验度核对(核对在 API 读时自动算,商品/fx 面自动,sector/stock 面人工);③direction 是对该资产「价格」的方向不是利好利空的修辞——航空股在停火中是 bullish(成本降);④strength 1-3 是传导强度主观分级(1=次要变量,2=重要变量,3=主导变量);⑤horizon 是预期影响时间窗(0-1m/0-3m/3-12m/structural=结构性趋势无到期日);⑥evidence 用文字描述来源(不存易失效的 URL),可核性交给 summary 与时间;⑦过期事件(status=resolved)不删,是应验度追踪的台账。",
+  "verify_threshold_pct": 1.0,
+  "verify_note": "应验度核对口径:事件日开始至 date+window_days 止的窗口内,该资产代理序列首末涨跌 vs direction 预期。|chg|<1%=flat(平),方向一致=confirmed,反向=refuted。阈值 1% 与代理序列映射在 API world_geo.py 的 _VERIFY_CODE。未到期(status=active)不核对。",
+  "events": [
+    {
+      "id": "2026-11-me-ceasefire",
+      "date": "2026-11-05",
+      "title": "中东停火协议签署,霍尔木兹危机转入停火周期",
+      "category": "停火缓和",
+      "region": "中东",
+      "status": "active",
+      "summary": "本轮中东冲突的地缘风险溢价开始定价回吐:油轮战争险费率回落、霍尔木兹通行风险下调。市场此前的定价含三层溢价——油价的地缘风险溢价、油轮运价的绕行与保费溢价、贵金属的避险溢价。停火不改变供需基本面,改变的是溢价层。历史剧本见 playbook 2024-2026-hormuz-ceasefire(本项目亲历周期:危机脉冲→僵持→停火回吐)。",
+      "assets": [
+        {"type": "commodity", "ref": "crudeoil", "direction": "bearish", "strength": 2,
+         "channel": "地缘风险溢价回吐(供给不增但溢价消退)", "horizon": "0-3m"},
+        {"type": "sector", "ref": "shipping", "direction": "bearish", "strength": 2,
+         "channel": "油轮运价的战争险/绕行溢价回落;COA 长约与内贸占比高的航司钝化", "horizon": "0-3m"},
+        {"type": "commodity", "ref": "gold", "direction": "bearish", "strength": 1,
+         "channel": "避险溢价部分消退;央行购金底仓不受停火影响", "horizon": "0-1m"},
+        {"type": "sector", "ref": "aviation", "direction": "bullish", "strength": 1,
+         "channel": "航煤成本端跟随油价回落(燃油占航司运营成本 30-40%)", "horizon": "0-3m"},
+        {"type": "sector", "ref": "chemicals", "direction": "bearish", "strength": 1,
+         "channel": "原料端油价回落但产品端同步跟跌——「成本降≠利润升」,净影响看价差", "horizon": "0-3m"}
+      ],
+      "expectation": {"window_days": 60,
+                      "notes": "油价中枢下移 5-10%;油轮运价高位回落但长约钝化;航煤跟跌=航空成本利好"},
+      "evidence": ["2026-11-05 起多源报道停火协议签署并进入执行期(事件快评批次当日完成七份传导核对)"],
+      "related_reports": [],
+      "playbook_ref": "2024-2026-hormuz-ceasefire"
+    },
+    {
+      "id": "2026-11-us-export-control",
+      "date": "2026-11-10",
+      "title": "美国对华出口管制博弈延续(乙烷许可/芯片设备双刃)",
+      "category": "制裁出口管制",
+      "region": "中美",
+      "status": "active",
+      "summary": "出口管制是库内唯一「同一事件对两类资产方向相反」的双刃档:对依赖美国原料的公司(乙烷进口几乎100%来自美国的轻烃路线)是断供利空——2025-05 BIS 对纯度≥95% 乙烷实施出口许可、连云港船货被迫转售、2025-07 恢复,完整压力测试已发生过;对国产替代方向(智驾芯片/半导体设备)反而是份额加速的利好。事件强度评估必须先问「站在哪一侧」。",
+      "assets": [
+        {"type": "sector", "ref": "chemicals", "direction": "bearish", "strength": 2,
+         "channel": "乙烷进口许可风险(轻烃路线原料单一来源,VLEC 船队互锁缓冲有限)", "horizon": "0-3m"},
+        {"type": "sector", "ref": "semis", "direction": "bullish", "strength": 2,
+         "channel": "管制收紧=国产替代份额加速(智驾/半导体设备)", "horizon": "0-3m"},
+        {"type": "commodity", "ref": "gold", "direction": "bullish", "strength": 1,
+         "channel": "中美博弈升温的底层避险配置", "horizon": "0-3m"}
+      ],
+      "expectation": {"window_days": 90,
+                      "notes": "资产面是 sector 级,P0 不自动核对(人工);商品面仅 gold 的弱传导"},
+      "evidence": ["2025-05 BIS 乙烷出口许可事件(2025-07 恢复)为已实测先例;2026-11 博弈延续的背景见中美贸易谈判报道"],
+      "related_reports": [],
+      "playbook_ref": "2025-bis-ethane"
+    },
+    {
+      "id": "2022-central-bank-gold",
+      "date": "2022-01-01",
+      "title": "央行购金结构性长趋势(2022 年起全球央行年购金超千吨)",
+      "category": "央行储备",
+      "region": "全球",
+      "status": "active",
+      "summary": "俄乌后储备资产再定价的结构性趋势:全球央行购金从年均 400-500 吨台阶式抬升至 1000+ 吨(中国官方储备连续多月增持可从 gold 模块 CN_GOLD_WAN 序列直读)。这不是事件而是 regime——不需要 window_days 核对,它的作用是给一切金价下跌叙事提供「底仓买家」存在性的先验。与停火(避险溢价层)、美元周期(定价层)互不覆盖,三者叠加才是金价完整定价。",
+      "assets": [
+        {"type": "commodity", "ref": "gold", "direction": "bullish", "strength": 2,
+         "channel": "结构性买盘:官方储备去美元化的持续配置", "horizon": "structural"}
+      ],
+      "expectation": {"window_days": 365,
+                      "notes": "结构性趋势不设核对到期:window_days 仅用于 active 态的年度提醒"},
+      "evidence": ["世界黄金协会季度央行购金报告(2022 起年购金千吨级);中国央行增持见 gold 模块 CN_GOLD_WAN 序列"],
+      "related_reports": [],
+      "playbook_ref": null
+    },
+    {
+      "id": "2026-11-us-congress",
+      "date": "2026-11-05",
+      "title": "美国中期选举后国会格局变化:对俄制裁执行力度存变数",
+      "category": "选举政策",
+      "region": "美国",
+      "status": "active",
+      "summary": "国会格局变化影响的是「制裁执行力度」这一政策变量而非局势本体:对俄制裁若执行松动,影子船队运力回归合规贸易,油运运价的制裁溢价回吐;对乌援助与能源政策节奏亦可能变化。这是低强度、高不确定性的局势变量——列入观察但强度给最低档,传导方向均为「边际」。",
+      "assets": [
+        {"type": "sector", "ref": "shipping", "direction": "bearish", "strength": 1,
+         "channel": "对俄制裁执行若松动,影子船队运力回归=运价制裁溢价回吐(边际)", "horizon": "0-3m"},
+        {"type": "commodity", "ref": "crudeoil", "direction": "bearish", "strength": 1,
+         "channel": "俄油贸易摩擦成本下降=有效供给边际回升(边际)", "horizon": "0-3m"}
+      ],
+      "expectation": {"window_days": 90,
+                      "notes": "强度 1 的边际变量,预期幅度小,核对意义有限——主要价值在提醒「政策变量在位」"},
+      "evidence": ["2026-11 中期选举结果的多源报道;国会格局对制裁政策的影响机制见航运停火快评批次"],
+      "related_reports": [],
+      "playbook_ref": null
+    }
+  ]
+}
