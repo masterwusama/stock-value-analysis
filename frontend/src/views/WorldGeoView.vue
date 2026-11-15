@@ -31,6 +31,19 @@ let echarts = null
 // 链切换(P1:传导链图谱,一次渲染一条链)
 const curChain = ref('')
 
+// 资产中文显示名:ref 是机器键(verify/exposure 映射依赖),显示层翻译——
+// 优先用 API 下发(/events 与 /scenarios 的 ref_names,与后端 _REF_NAMES 同源),
+// 请求未到/失败时 fallback 本地常量(两者维护需同步,后端头注有提醒)
+const FALLBACK_REF_NAMES = {
+  gold: '黄金', silver: '白银', copper: '铜', aluminum: '铝',
+  lithium: '碳酸锂', crudeoil: '原油', ferrous: '黑色系', agri: '农产品',
+  fx_cny: '人民币', natgas: '天然气', jetfuel: '航煤', ironore: '铁矿石',
+  shipping: '航运板块', chemicals: '化工原料', aviation: '民航板块', semis: '半导体/智驾',
+}
+const refNames = computed(() => evs.value?.ref_names || scn.value?.ref_names || FALLBACK_REF_NAMES)
+const refName = (r) => refNames.value[r] || r
+const typeName = (t) => ({ commodity: '商品', fx: '汇率', sector: '板块', stock: '个股' }[t] || t)
+
 // ---- 展示格式化(与 CommodityView 同款) ----
 const num = (v, d = 2) => (v == null ? '-' : (+v).toFixed(d))
 const sign = (v, d = 1) => (v == null ? '-' : (v >= 0 ? '+' : '') + (+v).toFixed(d))
@@ -307,7 +320,7 @@ onBeforeUnmount(() => {
           <h3>③ 活跃事件</h3>
           <span class="sub">{{ evs.updated }} 更新 · 方向=对资产价格的方向(航空在停火中是利多) · 强度 1-3</span>
         </div>
-        <div v-for="ev in activeNormal" :key="ev.id" class="ev-card">
+          <div v-for="ev in activeNormal" :key="ev.id" class="ev-card">
           <div class="ev-head">
             <span class="ev-cat">{{ ev.category }}</span>
             <b class="ev-title">{{ ev.title }}</b>
@@ -320,7 +333,8 @@ onBeforeUnmount(() => {
             </span>
           </div>
           <p class="ev-sum">{{ ev.summary }}</p>
-          <div class="ev-wrap">
+          <!-- 桌面表格 / 移动端资产卡片(6 列表格横滚体验差,移动端组块化) -->
+          <div v-if="!isMobile" class="ev-wrap">
             <table class="ev-tbl">
               <thead><tr>
                 <th>资产</th><th>方向</th><th title="传导强度 1-3(3=主导变量)">强度</th>
@@ -329,8 +343,8 @@ onBeforeUnmount(() => {
               <tbody>
                 <tr v-for="(a, ai) in ev.assets" :key="ai">
                   <td>
-                    <span class="a-type" :data-t="a.type">{{ a.type === 'commodity' ? '商品' : a.type === 'fx' ? '汇率' : a.type === 'sector' ? '板块' : '个股' }}</span>
-                    {{ a.ref }}
+                    <span class="a-type" :data-t="a.type">{{ typeName(a.type) }}</span>
+                    {{ refName(a.ref) }}
                   </td>
                   <td><span class="dir" :class="DIR[a.direction]?.c">{{ DIR[a.direction]?.t || a.direction }}</span></td>
                   <td>{{ '●'.repeat(a.strength || 0) || '·' }}</td>
@@ -342,9 +356,25 @@ onBeforeUnmount(() => {
               </tbody>
             </table>
           </div>
+          <div v-else class="ea-list">
+            <div v-for="(a, ai) in ev.assets" :key="ai" class="ea-card">
+              <div class="ea-r1">
+                <span class="a-type">{{ typeName(a.type) }}</span>
+                <b>{{ refName(a.ref) }}</b>
+                <span class="dir" :class="DIR[a.direction]?.c">{{ DIR[a.direction]?.t || a.direction }}</span>
+                <span class="ea-str">{{ '●'.repeat(a.strength || 0) || '·' }}</span>
+              </div>
+              <div class="ea-chan">{{ a.channel }}</div>
+              <div class="ea-r3">
+                <span class="a-hz">{{ a.horizon }}</span>
+                <span class="v-badge" :class="vBadge(a).c" :title="vBadge(a).tip">{{ vBadge(a).t }}</span>
+                <span v-if="a.verify?.chg_pct != null" class="v-chg">{{ sign(a.verify.chg_pct) }}%</span>
+              </div>
+            </div>
+          </div>
           <p class="ev-exp"><b>预期:</b>{{ ev.expectation?.notes }}(核对窗 {{ ev.expectation?.window_days }} 天)</p>
           <p v-if="ev.evidence?.length" class="ev-evi"><b>依据:</b>{{ ev.evidence.join(';') }}</p>
-          <p v-if="ev.playbook_ref" class="ev-pb">📜 历史剧本:{{ ev.playbook_ref }}(见 ⑤)</p>
+          <p v-if="ev.playbook_ref" class="ev-pb">📜 历史剧本:{{ ev.playbook_ref }}(见 ⑦)</p>
         </div>
 
         <!-- 结构性趋势单独一组(无到期概念) -->
@@ -357,12 +387,12 @@ onBeforeUnmount(() => {
               <span class="ev-date">{{ ev.date }} 起</span>
             </div>
             <p class="ev-sum">{{ ev.summary }}</p>
-            <div class="ev-wrap">
+            <div v-if="!isMobile" class="ev-wrap">
               <table class="ev-tbl">
                 <thead><tr><th>资产</th><th>方向</th><th>强度</th><th>传导渠道</th><th>性质</th></tr></thead>
                 <tbody>
                   <tr v-for="(a, ai) in ev.assets" :key="ai">
-                    <td><span class="a-type" data-t="commodity">商品</span>{{ a.ref }}</td>
+                    <td><span class="a-type" data-t="commodity">商品</span>{{ refName(a.ref) }}</td>
                     <td><span class="dir" :class="DIR[a.direction]?.c">{{ DIR[a.direction]?.t }}</span></td>
                     <td>{{ '●'.repeat(a.strength || 0) || '·' }}</td>
                     <td class="a-chan">{{ a.channel }}</td>
@@ -370,6 +400,18 @@ onBeforeUnmount(() => {
                   </tr>
                 </tbody>
               </table>
+            </div>
+            <div v-else class="ea-list">
+              <div v-for="(a, ai) in ev.assets" :key="ai" class="ea-card">
+                <div class="ea-r1">
+                  <span class="a-type">商品</span>
+                  <b>{{ refName(a.ref) }}</b>
+                  <span class="dir" :class="DIR[a.direction]?.c">{{ DIR[a.direction]?.t }}</span>
+                  <span class="ea-str">{{ '●'.repeat(a.strength || 0) || '·' }}</span>
+                </div>
+                <div class="ea-chan">{{ a.channel }}</div>
+                <div class="ea-r3"><span class="a-hz">structural</span></div>
+              </div>
             </div>
           </div>
         </div>
@@ -392,7 +434,7 @@ onBeforeUnmount(() => {
             <p class="scn-nar">{{ s.narrative }}</p>
             <div v-for="(a, ai) in s.assets" :key="ai" class="scn-asset">
               <span class="dir" :class="DIR[a.direction]?.c">{{ DIR[a.direction]?.t }}</span>
-              <b>{{ a.ref }}</b>
+              <b>{{ refName(a.ref) }}</b>
               <span class="scn-mag">{{ a.magnitude }}</span>
               <span class="scn-chan">{{ a.channel }}</span>
             </div>
@@ -586,6 +628,16 @@ onBeforeUnmount(() => {
 .ev-pb { color: #92400e; }
 .ev-struct h4 { border-top: 1px dashed var(--line, #e5e9f2); padding-top: 10px; }
 
+/* 移动端资产卡片(6 列表格横滚体验差的替代形态) */
+.ea-list { display: flex; flex-direction: column; gap: 8px; }
+.ea-card { border: 1px solid var(--line, #e5e9f2); border-radius: 8px; padding: 8px 10px;
+  background: var(--bg-soft, #f8fafd); }
+.ea-r1 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ea-r1 b { font-size: 13px; }
+.ea-str { color: var(--accent, #2d6cdf); font-size: 11px; letter-spacing: 1px; margin-left: auto; }
+.ea-chan { font-size: 11.5px; color: var(--txt-2, #4b5563); line-height: 1.6; margin-top: 4px; }
+.ea-r3 { display: flex; align-items: center; gap: 8px; margin-top: 5px; flex-wrap: wrap; }
+
 /* ---- 情景树 ---- */
 .scn-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .scn-card { border: 1px solid var(--line, #e5e9f2); border-radius: 10px; padding: 12px 14px; }
@@ -652,6 +704,18 @@ onBeforeUnmount(() => {
 .m .ev-title { font-size: 13px; }
 .m .a-chan { max-width: none; }
 .m .ev-tbl { font-size: 11px; }
+/* 链切换 tab:移动端横向滚动不换行(7 条链标题长,堆叠占半屏)——CommodityView seg-bar 同款 */
+.m .toolbar.tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; }
+.m .toolbar.tabs::-webkit-scrollbar { display: none; }
+.m .toolbar.tabs .tab { flex: 0 0 auto; white-space: nowrap; }
+.m .ev-vsum { margin-left: 0; }
+.m .scn-prob { font-size: 24px; }
+.m .scn-chan { line-height: 1.5; }
+.m .t-note { line-height: 1.45; }
+.m .pb summary { padding: 8px 10px; }
+.m .pb-body { padding: 0 10px 10px; }
+.m .cand { padding: 5px 4px; }
 .m .mx-chart { width: 780px; }
 .m .foot { font-size: 11px; }
 </style>

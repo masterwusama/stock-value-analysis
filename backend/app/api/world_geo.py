@@ -72,6 +72,17 @@ _VERIFY_CODE = {
     "natgas": "NG_MAIN", "jetfuel": "AV_JETFUEL", "ironore": "I0_CLOSE",
 }
 
+# ---- 资产中文显示名:ref 是机器键(verify/exposure 映射依赖,不能改),
+# 显示层翻译由 API 下发(前端 fallback 常量同步)——人工档维护时新增 ref
+# 记得同步这里与 _VERIFY_CODE/geo_exposure.json ----
+_REF_NAMES = {
+    "gold": "黄金", "silver": "白银", "copper": "铜", "aluminum": "铝",
+    "lithium": "碳酸锂", "crudeoil": "原油", "ferrous": "黑色系", "agri": "农产品",
+    "fx_cny": "人民币", "natgas": "天然气", "jetfuel": "航煤", "ironore": "铁矿石",
+    "shipping": "航运板块", "chemicals": "化工原料", "aviation": "民航板块",
+    "semis": "半导体/智驾",
+}
+
 
 def _load_json(name, default):
     """人工档直读:损坏/缺失按空档降级不抛(与 aviation_ipo 同款)。"""
@@ -303,6 +314,8 @@ def events(db: Session = Depends(get_session)):
         "note": data.get("note"),
         "verify_note": data.get("verify_note"),
         "events": out,
+        # 资产中文显示名(ref 是机器键,前端显示层翻译)
+        "ref_names": _REF_NAMES,
         # 掘金台联动:资产→代表标的映射(前端按 active 事件的 ref 反查标的挂 pill)
         "exposure": _load_json("geo_exposure.json", {"exposure": {}}).get("exposure", {}),
     }
@@ -358,6 +371,7 @@ def scenarios():
         "updated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "updated": data.get("updated"),
         "note": data.get("note"),
+        "ref_names": _REF_NAMES,
         "sets": data.get("sets", []),
     }
 
