@@ -191,33 +191,33 @@ function onResize() { if (mChart) mChart.resize(); if (cChart) cChart.resize() }
 watch(isMobile, () => nextTick(() => { renderMatrix(); renderChain() }))
 watch(curChain, () => nextTick(renderChain))
 
-// ---- 传导链图谱(P1):echarts graph 手工分层布局,x=层级 y=同层序号 ----
+// ---- 传导链图谱(P1):echarts tree(orient LR 自动布局) ----
+// 两代方案实测淘汰记录:①graph layout:'none'——x/y 是数据坐标会被 auto-fit,
+// 单层链 y 包围盒塌缩致节点垂直居中+上下大片空白;②sankey——单链流量全 1,
+// 节点矩形高度被拉满列高(巨型色块)。tree 按拓扑自动分层、节点尺寸固定像素、
+// 分支(关税链 vol→cu/sh)自然表达,链条是单根树(tariff 链 cny 单父成立)。
 function renderChain() {
   if (!cEl.value || !echarts || !chs.value) return
   const ch = (chs.value.chains || []).find((x) => x.id === curChain.value)
   if (!ch) { if (cChart) cChart.clear(); return }
   if (!cChart) cChart = echarts.init(cEl.value)
   const m = isMobile.value
-  if (m && cEl.value) cEl.value.style.width = '900px'
+  if (m && cEl.value) cEl.value.style.width = '1020px'
   if (!m && cEl.value) cEl.value.style.width = '100%'
   cChart.resize()
-  // 同层节点错开 y(如关税链 layer2 有铜+航运两个节点)
-  const byLayer = {}
-  const data = ch.nodes.map((n) => {
-    n._li = byLayer[n.layer] = (byLayer[n.layer] ?? -1) + 1
+  const rawOf = Object.fromEntries(ch.nodes.map((n) => [n.name, n]))
+  const kids = Object.fromEntries(ch.nodes.map((n) => [n.id, []]))
+  for (const [s, t] of ch.edges || []) kids[s].push(t)
+  const roots = ch.nodes.filter((n) => !(ch.edges || []).some(([, t]) => t === n.id))
+  const build = (id) => {
+    const n = ch.nodes.find((x) => x.id === id)
     return {
-      id: n.id, name: n.name, _raw: n,
-      x: 90 + n.layer * (m ? 165 : 235),
-      y: 55 + n._li * (m ? 72 : 92),
-      symbolSize: n.type === 'event' ? 48 : n.type === 'proxy' ? 30 : 40,
-      itemStyle: { color: nodeColor(n), borderColor: '#fff', borderWidth: 2 },
-      label: { show: true, position: 'bottom', fontSize: m ? 9 : 11.5 },
+      name: n.name, _raw: n,
+      itemStyle: { color: nodeColor(n), borderColor: '#fff', borderWidth: 1 },
+      label: { fontSize: m ? 10.5 : 12.5, color: '#374151', position: 'bottom', distance: 7 },
+      ...(kids[id].length ? { children: kids[id].map(build) } : {}),
     }
-  })
-  const links = (ch.edges || []).map(([s, t]) => ({
-    source: s, target: t,
-    lineStyle: { width: 2, color: '#b8c9e8', curveness: 0 },
-  }))
+  }
   const live = (n) => n.live && n.live.latest != null
     ? `<br/>最新 ${n.live.latest}${n.live.chg_1m != null ? ` · 1月 ${n.live.chg_1m > 0 ? '+' : ''}${n.live.chg_1m}%` : ''}`
     : (n.code ? '<br/>(序列无数据)' : '<br/>⚠ 无免费结构化源(诚实空节点)')
@@ -226,17 +226,23 @@ function renderChain() {
     tooltip: {
       confine: true, textStyle: { fontSize: m ? 10 : 12 },
       formatter: (p) => {
-        const n = p.data._raw || {}
+        const n = rawOf[p.name] || {}
         const eTxt = { up: '↑ 预期利多', down: '↓ 预期利空' }[n.expected] || (n.type === 'event' ? '局势本体' : '→')
         const tp = { event: '事件', proxy: '中间变量', asset: '资产', sector: '板块' }[n.type] || n.type
-        return `<b>${n.name}</b> <span style="color:#9ca3af">(${tp}${n.code ? ' · ' + n.code : ''})</span><br/>${eTxt} · ${n.note || ''}${live(n)}`
+        return `<b>${p.name}</b> <span style="color:#9ca3af">(${tp}${n.code ? ' · ' + n.code : ''})</span><br/>${eTxt} · ${n.note || ''}${live(n)}`
       },
     },
     series: [{
-      type: 'graph', layout: 'none', data, links,
-      roam: false,
-      edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 8,
-      emphasis: { focus: 'adjacency' },
+      type: 'tree', data: roots.map((r) => build(r.id)), orient: 'LR', roam: false,
+      left: 30, top: 16, right: 110, bottom: 26,  // label 统一 bottom(不压边线不出血),下边距给 label 行留位
+      symbol: 'circle',
+      symbolSize: (v, p) => {
+        const t = (p.data._raw || {}).type
+        return t === 'event' ? 46 : t === 'proxy' ? 30 : 38
+      },
+      initialTreeDepth: 99,  // 全展开;负值非法会裁掉所有层(canvas 空白实测)
+      lineStyle: { width: 2, color: '#b8c9e8' },
+      emphasis: { focus: 'descendant' },
     }],
   }, true)
 }
@@ -296,7 +302,9 @@ onBeforeUnmount(() => {
             <div class="t-note">{{ t.note }}</div>
           </div>
         </div>
-        <p class="dim tip">📖 {{ ov.method }}</p>
+        <details class="tip-fold"><summary>📖 温度计读法与口径(点开)</summary>
+          <p class="dim tip">{{ ov.method }}</p>
+        </details>
       </section>
 
       <!-- ② 形态对照:组合指纹手册(静态人工文案) -->
@@ -415,7 +423,9 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </div>
-        <p class="dim tip">📖 {{ evs.verify_note }}{{ evs.note }}</p>
+        <details class="tip-fold"><summary>📖 应验度口径与事件维护说明(点开)</summary>
+          <p class="dim tip">{{ evs.verify_note }}{{ evs.note }}</p>
+        </details>
       </section>
 
       <!-- ④ 情景树 -->
@@ -451,7 +461,9 @@ onBeforeUnmount(() => {
         <div class="mx-scroll">
           <div ref="mEl" class="mx-chart" :style="{ height: isMobile ? '620px' : '640px' }"></div>
         </div>
-        <p class="dim tip">📖 {{ mtx.note }}</p>
+        <details class="tip-fold"><summary>📖 矩阵口径与读法(点开)</summary>
+          <p class="dim tip">{{ mtx.note }}</p>
+        </details>
       </section>
 
       <!-- ⑥ 传导链图谱(P1):事件→中间变量→资产,无源节点诚实空 -->
@@ -464,12 +476,15 @@ onBeforeUnmount(() => {
           <button v-for="ch in chs.chains" :key="ch.id" type="button" class="tab"
                   :class="{ on: curChain === ch.id }" @click="curChain = ch.id">{{ ch.title }}</button>
         </div>
-        <div ref="cEl" class="c-chart" :style="{ height: isMobile ? '400px' : '360px' }"></div>
-        <p class="dim tip">📖 {{ chs.note }}
-          <template v-if="curChainObj">校验:{{ curChainObj.validation?.note }}</template>
-          <span v-if="curChainObj?.validation?.verified" style="color:#166534">【已实测对照】</span>
-          <span v-else-if="curChainObj" style="color:#9ca3af">【方向先验·未回测】</span>
+        <div ref="cEl" class="c-chart" :style="{ height: isMobile ? '240px' : '240px' }"></div>
+        <p v-if="curChainObj" class="dim" style="margin: 8px 2px 0">
+          <template v-if="curChainObj.validation?.verified" style="color:#166534"><span style="color:#166534">✓ 已实测对照</span></template>
+          <span v-else style="color:#9ca3af">◎ 方向先验·未回测</span>
+          <template v-if="curChainObj.validation?.note"> — {{ curChainObj.validation.note }}</template>
         </p>
+        <details class="tip-fold"><summary>📖 图谱读法(点开)</summary>
+          <p class="dim tip">{{ chs.note }}</p>
+        </details>
       </section>
 
       <!-- ⑦ 历史剧本库 -->
@@ -519,9 +534,12 @@ onBeforeUnmount(() => {
           </a>
         </div>
         <p v-else class="dim">暂无候选(未采集或源失败降级——明天 07:55 自动重试)。</p>
-        <p class="dim tip">📖 {{ cnd?.note }}</p>
+        <details class="tip-fold"><summary>📖 候选雷达口径(点开)</summary>
+          <p class="dim tip">{{ cnd?.note }}</p>
+        </details>
       </section>
 
+      <details class="tip-fold"><summary>📖 全页口径与数据来源(点开)</summary>
       <p class="dim foot">
         口径:温度计 10 指标中 8 个复用商品模块已入库序列(GPR/VIXCLS/金银比/铜金比/布伦特-WTI/
         美元宽/实际利率/人民币中间价),金油比与油铜比为跨商品派生
@@ -536,6 +554,7 @@ onBeforeUnmount(() => {
         值得人工复核先验强度——先验不被自动改写。传导链灰节点=无免费结构化源,诚实空不编数据。
         候选雷达 GDELT DOC 2.0 免费无 key,采集失败留旧档;转正事件人工核对。
       </p>
+      </details>
     </template>
   </div>
 </template>
@@ -557,6 +576,15 @@ onBeforeUnmount(() => {
 .empty { color: var(--sub, #9ca3af); font-size: 13px; }
 .dim { color: var(--sub, #9ca3af); font-size: 12px; }
 .tip { margin: 8px 2px 0; line-height: 1.8; }
+/* 长 note 折叠:口径说明是工具属性文本,移动端平铺占半屏(实测踩坑)——
+   默认收起,点开展开;桌面同样折叠保持页面紧凑 */
+.tip-fold { margin: 8px 2px 0; }
+.tip-fold summary { cursor: pointer; font-size: 12px; color: var(--sub, #6b7280);
+  user-select: none; list-style: none; }
+.tip-fold summary::before { content: '▸ '; color: var(--sub, #9ca3af); }
+.tip-fold[open] summary::before { content: '▾ '; }
+.tip-fold summary::-webkit-details-marker { display: none; }
+.tip-fold .tip { margin: 6px 0 0; }
 .foot { line-height: 1.8; padding: 8px 4px 0; }
 .up { color: var(--up, #dc2626); } .down { color: var(--down, #16a34a); }
 
