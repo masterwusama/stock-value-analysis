@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api import agro, commodity, etf, forecast, microcap, pick, research, securities, sentiment
+from app.api import agro, commodity, etf, forecast, microcap, pick, research, securities, sentiment, world_geo
 from app.db import get_session
 
 app = FastAPI(title="stock-value-analysis API", version="0.1.0")
@@ -48,6 +48,7 @@ app.include_router(forecast.router)
 app.include_router(sentiment.router)
 app.include_router(research.router)
 app.include_router(etf.router)
+app.include_router(world_geo.router)
 
 
 class HealthOut(BaseModel):

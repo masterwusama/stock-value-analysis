@@ -16,6 +16,7 @@ onMounted(prefetchEcharts)
       <router-link to="/microcap">小微盘</router-link>
       <router-link to="/agro">农化制品</router-link>
       <router-link to="/commodity">大宗商品</router-link>
+      <router-link to="/geo">世界局势</router-link>
       <router-link to="/forecast">业绩预测</router-link>
       <router-link to="/sentiment">情绪日报</router-link>
       <router-link to="/etf">ETF评估</router-link>
