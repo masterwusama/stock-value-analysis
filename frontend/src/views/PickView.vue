@@ -106,6 +106,26 @@ async function loadStars() {
   meta.value = d.meta
   stats.value = d.stats
 }
+
+// —— 世界局势联动(P1):活跃事件涉及标的挂「地缘」pill ——
+// 信息性提示不改档位(事件→资产→代表标的映射来自 world_geo 的 geo_exposure 人工档);
+// 拉取失败静默降级(pill 缺席=无联动,不影响看板主体)。
+const geoMap = ref({})
+async function loadGeo() {
+  const d = await get('/world-geo/events')
+  const ex = d.exposure || {}
+  const mp = {}
+  for (const ev of d.events || []) {
+    if (ev.status !== 'active') continue
+    for (const a of ev.assets || []) {
+      const hit = ex[a.ref]?.codes || []
+      for (const c of hit) {
+        (mp[c] ||= []).push(ev.title)
+      }
+    }
+  }
+  geoMap.value = mp
+}
 // 地图与清单同一套筛选:market/排除行业之外,tier 页签、行业下拉、关键词也联动
 // (2026-11-10);tier=回避时域内无点,图空是诚实态(回避者无买点锚不进图)
 async function loadCloud() {
@@ -312,7 +332,8 @@ onMounted(async () => {
   try {
     // 四路并行:各自只写自己的状态,总耗时=最慢一路而非四路求和(端点各自有缓存,
     // 但冷启动时 board 1.5s、stars/industries/cloud 各几十 ms,串行白等)
-    await Promise.all([loadStars(), loadIndustries(), loadCloud(), loadBoard()])
+    await Promise.all([loadStars(), loadIndustries(), loadCloud(), loadBoard(),
+                       loadGeo().catch(() => {})])  // 地缘联动失败静默(信息性 pill)
     loading.value = false
     // 内容整体在 v-else 门后:loadCloud 尾部的 drawCloud 跑在 loading 翻假之前,
     // chartEl 还是 null 会静默早退(2026-10 重构丢了原版「翻假后补画」的契约,
@@ -438,6 +459,8 @@ onBeforeUnmount(() => {
                   <b>{{ s.name }}</b>
                   <router-link v-if="s.research" :to="'/research/' + s.research.slug" class="rs-flag" @click.stop>研</router-link>
                   <span v-if="s.research?.cycle === 'top'" class="risk-flag" title="研报判周期顶">顶</span>
+                  <span v-if="geoMap[s.code]" class="geo-flag"
+                        :title="'活跃世界局势事件涉及:' + geoMap[s.code].join(' · ') + '(信息性提示,不改档)'">地缘</span>
                   <span class="cd">{{ s.code }}</span>
                   <span class="badge">{{ s.market === 'HK' ? '港' : 'A' }}</span>
                 </div>
@@ -463,6 +486,7 @@ onBeforeUnmount(() => {
           <div v-for="s in board.items" :key="s.sid" class="m-item" @click="router.push(`/stock/${s.code}`)">
             <div class="m-row1">
               <b>{{ s.name }}</b><span class="cd">{{ s.code }}</span>
+              <span v-if="geoMap[s.code]" class="geo-flag" :title="geoMap[s.code].join(' · ')">地缘</span>
               <span class="tier-badge" :class="TIER_META[s.tier].cls">{{ TIER_META[s.tier].label }}</span>
               <span class="m-pick">{{ s.pick?.toFixed(0) ?? '—' }}分</span>
             </div>
@@ -608,6 +632,8 @@ onBeforeUnmount(() => {
 .nm-row { display: flex; align-items: center; gap: 6px; }
 .cd { color: var(--sub); font-size: 12px; }
 .rs-flag { font-size: 10px; padding: 0 4px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); }
+.geo-flag { font-size: 10px; padding: 0 4px; border: 1px solid #c9a227; border-radius: 4px; color: #92400e;
+  background: #fffbeb; cursor: help; }
 .pick-hi { color: #c0392b; }
 .why-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .why-reason { font-size: 12px; color: var(--sub); }

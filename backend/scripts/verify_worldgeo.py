@@ -85,6 +85,51 @@ def main():
     check("情景集校验", True, "%d 套" % len(scenarios.get("sets", [])))
     check("剧本档校验", True, "%d 个剧本" % len(playbooks.get("playbooks", [])))
 
+    # ---- P1/P2 人工档:chains / geo_exposure / history_events / backtest ----
+    chains_doc = json.loads((GEO_DIR / "chains.json").read_text(encoding="utf-8"))
+    exposure = json.loads((GEO_DIR / "geo_exposure.json").read_text(encoding="utf-8"))
+    history = json.loads((GEO_DIR / "history_events.json").read_text(encoding="utf-8"))
+    for ch in chains_doc.get("chains", []):
+        ids = [n["id"] for n in ch.get("nodes", [])]
+        if len(ids) != len(set(ids)):
+            fails.append("链 %s 节点 id 重复" % ch.get("id"))
+        for f, t in ch.get("edges", []):
+            if f not in ids or t not in ids:
+                fails.append("链 %s 边 %s→%s 引用不存在的节点" % (ch.get("id"), f, t))
+        for n in ch.get("nodes", []):
+            if n.get("layer") is None or n.get("layer") < 0:
+                fails.append("链 %s 节点 %s layer 非法" % (ch.get("id"), n.get("id")))
+    check("传导链档校验", True, "%d 条链" % len(chains_doc.get("chains", [])))
+    exp = exposure.get("exposure", {})
+    miss = refs_ok - set(exp.keys())
+    if miss:
+        fails.append("geo_exposure 缺资产映射: %s" % miss)
+    for ref, m in exp.items():
+        p = m.get("primary")
+        codes = m.get("codes", [])
+        if p and p not in codes:
+            fails.append("geo_exposure %s primary 不在 codes 里" % ref)
+        for c in codes:
+            if not (c.isdigit() and len(c) in (6,)):
+                fails.append("geo_exposure %s 代码格式异常: %s" % (ref, c))
+    check("资产暴露档校验", not miss, "%d 资产" % len(exp))
+    hcats = set(cats)
+    for ev in history.get("events", []):
+        try:
+            dt.date.fromisoformat(ev.get("date") or "")
+        except ValueError:
+            fails.append("历史事件 %s 日期非法: %s" % (ev.get("name"), ev.get("date")))
+        if ev.get("category") not in hcats:
+            fails.append("历史事件 %s 类别不在矩阵列: %s" % (ev.get("name"), ev.get("category")))
+    check("历史事件档校验", True, "%d 个事件" % len(history.get("events", [])))
+    bt_path = GEO_DIR / "backtest.json"
+    if bt_path.exists():
+        bt = json.loads(bt_path.read_text(encoding="utf-8"))
+        check("回测格子数=资产×类别", len(bt.get("cells", {})) == len(refs_ok) * len(cats),
+              "实际 %d" % len(bt.get("cells", {})))
+    else:
+        notes.append("backtest.json 不存在(回测未跑过,手动: --backtest)")
+
     # ---- ② 派生序列产物抽查(手工重算对比) ----
     gold = json.loads((BACKEND / "collector" / "commodity-gold" / "data" / "gold.json")
                       .read_text(encoding="utf-8"))
@@ -167,7 +212,7 @@ def main():
 
     # ---- ⑥ API smoke(服务在跑时) ----
     import urllib.request
-    for ep in ("overview", "events", "scenarios", "matrix"):
+    for ep in ("overview", "events", "scenarios", "matrix", "chains", "candidates"):
         try:
             with urllib.request.urlopen("http://127.0.0.1:8000/api/world-geo/" + ep, timeout=5) as r:
                 body = json.loads(r.read().decode("utf-8"))

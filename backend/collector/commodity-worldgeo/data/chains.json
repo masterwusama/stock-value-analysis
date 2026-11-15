@@ -1,0 +1,100 @@
+{
+  "updated": "2026-11-16",
+  "note": "传导链人工档:事件→中间变量→资产的可观测路径。节点类型 event=局势本体/proxy=中间观测变量/asset=有直接代理序列的资产/sector=板块。code 是 cmd_value 代理序列(有源节点 API 会注入 latest/chg_1m 实时读数);code=null=无免费结构化源——如实画空节点不编数据(弱源纪律),但保留节点因为它是传导的必经环节。expected 是本链在该节点的预期方向(↓↑→),validation 标注链条的历史对照来源。图谱是方向示意图:节点位置=层级不是因果强度,叠加效果看敏感度矩阵。",
+  "chains": [
+    {
+      "id": "ceasefire-oil",
+      "title": "停火→油价→航空成本链",
+      "event_ref": "2026-11-me-ceasefire",
+      "validation": {"note": "2024-2026 霍尔木兹危机-停火周期亲历对照;溢价回吐顺序保费→运价→油价的实证", "verified": true},
+      "nodes": [
+        {"id": "cf", "name": "停火协议", "type": "event", "layer": 0, "expected": null, "code": null, "note": "局势本体:溢价层开始回吐"},
+        {"id": "ins", "name": "战争险保费", "type": "proxy", "layer": 1, "expected": "down", "code": null, "note": "无免费结构化源(保险市场,公告零星);回吐第一环"},
+        {"id": "tnt", "name": "吨海里(绕行)", "type": "proxy", "layer": 2, "expected": "down", "code": null, "note": "无免费源;绕行结束=运输需求距离回落"},
+        {"id": "oil", "name": "WTI 原油", "type": "asset", "layer": 3, "expected": "down", "code": "CL_MAIN", "note": "风险溢价归零,回到供需定价"},
+        {"id": "jf", "name": "美湾航煤", "type": "asset", "layer": 4, "expected": "down", "code": "AV_JETFUEL", "note": "航司第一大成本锚(占成本 30-40%)"},
+        {"id": "av", "name": "民航板块", "type": "sector", "layer": 5, "expected": "up", "code": null, "note": "成本端利好;个股面见 geo_exposure"}
+      ],
+      "edges": [["cf", "ins"], ["ins", "tnt"], ["tnt", "oil"], ["oil", "jf"], ["jf", "av"]]
+    },
+    {
+      "id": "ceasefire-shipping",
+      "title": "停火→油轮运价链",
+      "event_ref": "2026-11-me-ceasefire",
+      "validation": {"note": "2026-11 停火快评批次的多公司对照;COA 长约与内贸占比高者钝化(减震形态)已实测", "verified": true},
+      "nodes": [
+        {"id": "cf", "name": "停火协议", "type": "event", "layer": 0, "expected": null, "code": null, "note": ""},
+        {"id": "ins", "name": "战争险保费", "type": "proxy", "layer": 1, "expected": "down", "code": null, "note": "回吐第一环"},
+        {"id": "frt", "name": "油轮运价", "type": "proxy", "layer": 2, "expected": "down", "code": null, "note": "无免费结构化源(BDTI/VLCC 现货在登录墙后);用航运公司公告与研报代理"},
+        {"id": "sh", "name": "航运板块", "type": "sector", "layer": 3, "expected": "down", "code": null, "note": "现货敞口公司波动远大于 COA 敞口(敏感度可事前算)"}
+      ],
+      "edges": [["cf", "ins"], ["ins", "frt"], ["frt", "sh"]]
+    },
+    {
+      "id": "control-ethane",
+      "title": "出口管制→乙烷断供链(双刃·利空侧)",
+      "event_ref": "2026-11-us-export-control",
+      "validation": {"note": "2025-05 BIS 乙烷许可→2025-07 恢复的完整实测;互锁缓冲(VLEC/长约/码头)决定伤害等级", "verified": true},
+      "nodes": [
+        {"id": "ctl", "name": "出口管制", "type": "event", "layer": 0, "expected": null, "code": null, "note": "BIS 许可管制类"},
+        {"id": "eth", "name": "乙烷出口许可", "type": "proxy", "layer": 1, "expected": "down", "code": null, "note": "无实时源;许可审批状态走公告"},
+        {"id": "cst", "name": "轻烃原料成本", "type": "proxy", "layer": 2, "expected": "up", "code": null, "note": "单一来源暴露→断供期原料成本冲击(价差压缩)"},
+        {"id": "ch", "name": "化工原料板块", "type": "sector", "layer": 3, "expected": "down", "code": null, "note": "轻烃路线标的重定价;恢复后仍有治理折价残留"}
+      ],
+      "edges": [["ctl", "eth"], ["eth", "cst"], ["cst", "ch"]]
+    },
+    {
+      "id": "control-substitute",
+      "title": "出口管制→国产替代链(双刃·利多侧)",
+      "event_ref": "2026-11-us-export-control",
+      "validation": {"note": "同一事件与乙烷链方向相反——双刃档;份额加速逻辑见智驾/设备研报组", "verified": false},
+      "nodes": [
+        {"id": "ctl", "name": "出口管制", "type": "event", "layer": 0, "expected": null, "code": null, "note": ""},
+        {"id": "ban", "name": "管制清单范围", "type": "proxy", "layer": 1, "expected": "up", "code": null, "note": "清单扩大=国产替代空间扩大"},
+        {"id": "shr", "name": "国产份额", "type": "proxy", "layer": 2, "expected": "up", "code": null, "note": "季度级验证(公司公告份额数据)"},
+        {"id": "sm", "name": "半导体/智驾板块", "type": "sector", "layer": 3, "expected": "up", "code": null, "note": "双刃档利多侧"}
+      ],
+      "edges": [["ctl", "ban"], ["ban", "shr"], ["shr", "sm"]]
+    },
+    {
+      "id": "cb-gold",
+      "title": "央行购金→金价链(结构性)",
+      "event_ref": "2022-central-bank-gold",
+      "validation": {"note": "2022 起年购金千吨级(WGC 季报);中国央行增持可从 CN_GOLD_WAN 月度序列直读", "verified": true},
+      "nodes": [
+        {"id": "reg", "name": "储备多元化 regime", "type": "event", "layer": 0, "expected": null, "code": null, "note": "结构性趋势非离散事件"},
+        {"id": "cb", "name": "央行购金量", "type": "proxy", "layer": 1, "expected": "up", "code": "CN_GOLD_WAN", "note": "中国官方储备月度(代理整体央行买盘节奏)"},
+        {"id": "vault", "name": "伦敦金库库存", "type": "proxy", "layer": 2, "expected": "down", "code": "LONDON_VAULT", "note": "实物市场收紧信号"},
+        {"id": "au", "name": "伦敦金", "type": "asset", "layer": 3, "expected": "up", "code": "XAU_USD", "note": "结构性买盘托底——一切下跌叙事的先验对手盘"}
+      ],
+      "edges": [["reg", "cb"], ["cb", "vault"], ["vault", "au"]]
+    },
+    {
+      "id": "opec-oil",
+      "title": "OPEC+决议→油铜比链",
+      "event_ref": null,
+      "validation": {"note": "2014-11 不减产/2016-11 首减产/2020-04 最大减产/2022-10 减产 200 万桶等决议节点见 history_events.json;方向先验见矩阵 OPEC 列", "verified": false},
+      "nodes": [
+        {"id": "op", "name": "OPEC+ 决议", "type": "event", "layer": 0, "expected": null, "code": null, "note": "产量配额会议(约每季度)"},
+        {"id": "sup", "name": "有效供给", "type": "proxy", "layer": 1, "expected": "down", "code": null, "note": "配额执行率无实时源;走月度产量报告"},
+        {"id": "oil", "name": "WTI 原油", "type": "asset", "layer": 2, "expected": "up", "code": "CL_MAIN", "note": "减产=供给收缩=利多(主导变量)"},
+        {"id": "oc", "name": "油铜比", "type": "asset", "layer": 3, "expected": "up", "code": "GEO_OIL_CU", "note": "供给冲击主导期油铜比走高=通胀交易"}
+      ],
+      "edges": [["op", "sup"], ["sup", "oil"], ["oil", "oc"]]
+    },
+    {
+      "id": "tariff-trade",
+      "title": "关税→贸易流→需求链",
+      "event_ref": null,
+      "validation": {"note": "2018-19 贸易战与 2025 对等关税的实测形态;铜的贸易战负敏感度在矩阵关税列", "verified": false},
+      "nodes": [
+        {"id": "tf", "name": "关税升级", "type": "event", "layer": 0, "expected": null, "code": null, "note": "301/对等关税节点"},
+        {"id": "vol", "name": "贸易量", "type": "proxy", "layer": 1, "expected": "down", "code": null, "note": "无实时源;月度进出口数据滞后验证"},
+        {"id": "cu", "name": "LME 铜", "type": "asset", "layer": 2, "expected": "down", "code": "CAD_MAIN", "note": "贸易流破坏=需求破坏(2018/2025 实测)"},
+        {"id": "sh", "name": "航运板块", "type": "sector", "layer": 2, "expected": "down", "code": null, "note": "集运需求直接受损"},
+        {"id": "cny", "name": "人民币(USDCNY)", "type": "asset", "layer": 3, "expected": "up", "code": "USDCNY_FIX", "note": "贬值对冲形态(2018/2025 实测)"}
+      ],
+      "edges": [["tf", "vol"], ["vol", "cu"], ["vol", "sh"], ["cu", "cny"]]
+    }
+  ]
+}

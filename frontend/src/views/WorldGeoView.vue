@@ -14,15 +14,22 @@ import { useMediaQuery } from '../lib/useMediaQuery'
 
 const isMobile = useMediaQuery('(max-width: 640px)')
 const ov = ref(null)      // /overview 温度计
-const evs = ref(null)     // /events 事件+应验度
+const evs = ref(null)     // /events 事件+应验度+exposure
 const scn = ref(null)     // /scenarios 情景树
-const mtx = ref(null)     // /matrix 矩阵+剧本
+const mtx = ref(null)     // /matrix 矩阵+剧本+回测
+const chs = ref(null)     // /chains 传导链
+const cnd = ref(null)     // /candidates GDELT 候选雷达
 const error = ref('')
 const loading = ref(false)
 
 const mEl = ref(null)     // 热力图容器
+const cEl = ref(null)     // 传导链图容器
 let mChart = null
+let cChart = null
 let echarts = null
+
+// 链切换(P1:传导链图谱,一次渲染一条链)
+const curChain = ref('')
 
 // ---- 展示格式化(与 CommodityView 同款) ----
 const num = (v, d = 2) => (v == null ? '-' : (+v).toFixed(d))
@@ -34,6 +41,18 @@ const DIR = {
   bullish: { t: '↑ 利多', c: 'dir-up' },
   bearish: { t: '↓ 利空', c: 'dir-down' },
   neutral: { t: '→ 中性', c: 'dir-flat' },
+  up: { t: '↑', c: 'dir-up' },
+  down: { t: '↓', c: 'dir-down' },
+}
+// 传导链节点类型配色:event=金(局势本体) proxy=灰(中间变量,无源点常灰)
+// asset/sector 按 expected 方向(up 红/down 绿/null 蓝)
+function nodeColor(n) {
+  if (n.type === 'event') return '#c9a227'
+  if (n.type === 'proxy' && !n.code) return '#9ca3af'
+  const e = n.expected
+  if (e === 'up') return '#dc2626'
+  if (e === 'down') return '#16a34a'
+  return '#2d6cdf'
 }
 // 应验度徽章:事实核对三态+未到期/人工/缺数(中性色,不用涨跌色)
 const VERDICT = {
@@ -73,6 +92,7 @@ const PATTERNS = [
 
 // ---- 事件分组:active 在前,resolved/结构性靠后 ----
 const activeEvents = computed(() => (evs.value?.events || []).filter((e) => e.status === 'active'))
+const curChainObj = computed(() => (chs.value?.chains || []).find((x) => x.id === curChain.value))
 const structuralEvents = computed(() =>
   (evs.value?.events || []).filter((e) => e.status === 'active' && e.is_structural))
 const activeNormal = computed(() => activeEvents.value.filter((e) => !e.is_structural))
@@ -81,13 +101,16 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [o, e, s, m] = await Promise.all([
+    const [o, e, s, m, c, cd] = await Promise.all([
       get('/world-geo/overview'), get('/world-geo/events'),
       get('/world-geo/scenarios'), get('/world-geo/matrix'),
+      get('/world-geo/chains'), get('/world-geo/candidates').catch(() => null),
     ])
-    ov.value = o; evs.value = e; scn.value = s; mtx.value = m
+    ov.value = o; evs.value = e; scn.value = s; mtx.value = m; chs.value = c; cnd.value = cd
+    if (c?.chains?.length && !curChain.value) curChain.value = c.chains[0].id
     await nextTick()
     renderMatrix()
+    renderChain()
   } catch (e2) {
     error.value = String(e2.message || e2)
   } finally {
@@ -119,7 +142,15 @@ function renderMatrix() {
       formatter: (p) => {
         const r = rows[p.value[1]], c = (r.cells || [])[p.value[0]] || {}
         const dTxt = c.d > 0 ? '利多' : c.d < 0 ? '利空' : '中性/不适用'
-        return `<b>${r.name} × ${cats[p.value[0]]}</b><br/>${dTxt} · 强度 ${c.s || 0}<br/>${c.note || ''}`
+        const bt = c.bt || {}
+        let btLine = ''
+        if (bt.n) {
+          btLine = `<br/><span style="color:#b45309">历史回测(${bt.n} 次事件):均值 ${bt.mean}% · ` +
+            (bt.hit != null ? `方向命中 ${Math.round(bt.hit * 100)}%</span>` : '先验中性无方向</span>')
+        } else {
+          btLine = '<br/><span style="color:#9ca3af">历史回测:该组合无离散事件样本</span>'
+        }
+        return `<b>${r.name} × ${cats[p.value[0]]}</b><br/>${dTxt} · 强度 ${c.s || 0}<br/>${c.note || ''}${btLine}`
       },
     },
     grid: { left: m ? 96 : 120, right: 14, top: 8, bottom: m ? 56 : 60 },
@@ -143,8 +174,59 @@ function renderMatrix() {
   }, true)
 }
 
-function onResize() { if (mChart) mChart.resize() }
-watch(isMobile, () => nextTick(renderMatrix))
+function onResize() { if (mChart) mChart.resize(); if (cChart) cChart.resize() }
+watch(isMobile, () => nextTick(() => { renderMatrix(); renderChain() }))
+watch(curChain, () => nextTick(renderChain))
+
+// ---- 传导链图谱(P1):echarts graph 手工分层布局,x=层级 y=同层序号 ----
+function renderChain() {
+  if (!cEl.value || !echarts || !chs.value) return
+  const ch = (chs.value.chains || []).find((x) => x.id === curChain.value)
+  if (!ch) { if (cChart) cChart.clear(); return }
+  if (!cChart) cChart = echarts.init(cEl.value)
+  const m = isMobile.value
+  if (m && cEl.value) cEl.value.style.width = '900px'
+  if (!m && cEl.value) cEl.value.style.width = '100%'
+  cChart.resize()
+  // 同层节点错开 y(如关税链 layer2 有铜+航运两个节点)
+  const byLayer = {}
+  const data = ch.nodes.map((n) => {
+    n._li = byLayer[n.layer] = (byLayer[n.layer] ?? -1) + 1
+    return {
+      id: n.id, name: n.name, _raw: n,
+      x: 90 + n.layer * (m ? 165 : 235),
+      y: 55 + n._li * (m ? 72 : 92),
+      symbolSize: n.type === 'event' ? 48 : n.type === 'proxy' ? 30 : 40,
+      itemStyle: { color: nodeColor(n), borderColor: '#fff', borderWidth: 2 },
+      label: { show: true, position: 'bottom', fontSize: m ? 9 : 11.5 },
+    }
+  })
+  const links = (ch.edges || []).map(([s, t]) => ({
+    source: s, target: t,
+    lineStyle: { width: 2, color: '#b8c9e8', curveness: 0 },
+  }))
+  const live = (n) => n.live && n.live.latest != null
+    ? `<br/>最新 ${n.live.latest}${n.live.chg_1m != null ? ` · 1月 ${n.live.chg_1m > 0 ? '+' : ''}${n.live.chg_1m}%` : ''}`
+    : (n.code ? '<br/>(序列无数据)' : '<br/>⚠ 无免费结构化源(诚实空节点)')
+  cChart.setOption({
+    textStyle: { fontFamily: 'inherit' },
+    tooltip: {
+      confine: true, textStyle: { fontSize: m ? 10 : 12 },
+      formatter: (p) => {
+        const n = p.data._raw || {}
+        const eTxt = { up: '↑ 预期利多', down: '↓ 预期利空' }[n.expected] || (n.type === 'event' ? '局势本体' : '→')
+        const tp = { event: '事件', proxy: '中间变量', asset: '资产', sector: '板块' }[n.type] || n.type
+        return `<b>${n.name}</b> <span style="color:#9ca3af">(${tp}${n.code ? ' · ' + n.code : ''})</span><br/>${eTxt} · ${n.note || ''}${live(n)}`
+      },
+    },
+    series: [{
+      type: 'graph', layout: 'none', data, links,
+      roam: false,
+      edgeSymbol: ['none', 'arrow'], edgeSymbolSize: 8,
+      emphasis: { focus: 'adjacency' },
+    }],
+  }, true)
+}
 
 onMounted(async () => {
   echarts = await ensureEcharts()
@@ -154,7 +236,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
   if (mChart) mChart.dispose()
-  mChart = null
+  if (cChart) cChart.dispose()
+  mChart = cChart = null
 })
 </script>
 
@@ -168,9 +251,10 @@ onBeforeUnmount(() => {
       <section class="card head">
         <h2>世界局势推演</h2>
         <p class="sub">
-          局势温度计 × 活跃事件 × 情景树 × 敏感度矩阵 × 历史剧本 × 应验度追踪。
+          局势温度计 × 活跃事件 × 情景树 × 敏感度矩阵 × 传导链图谱 × 历史剧本 × 应验度追踪 × 候选雷达。
           研究看板,非投资建议;情景概率是<b>主观估计·非模型输出</b>;不做复合评分
-          (温度计是多个单一事实并排,组合判别留给人);应验度是事后事实核对不是预测评分。
+          (温度计是多个单一事实并排,组合判别留给人);应验度是事后事实核对不是预测评分;
+          矩阵回测是先验的对照检验,先验与回测背离处值得人工复核。
         </p>
       </section>
 
@@ -328,10 +412,28 @@ onBeforeUnmount(() => {
         <p class="dim tip">📖 {{ mtx.note }}</p>
       </section>
 
-      <!-- ⑥ 历史剧本库 -->
+      <!-- ⑥ 传导链图谱(P1):事件→中间变量→资产,无源节点诚实空 -->
       <section class="card">
         <div class="title-row">
-          <h3>⑥ 历史剧本库</h3>
+          <h3>⑥ 传导链图谱</h3>
+          <span class="sub">{{ chs.updated }} 更新 · 有源节点带实时读数 · 灰节点=无免费源(诚实空,不编数据)</span>
+        </div>
+        <div class="toolbar tabs">
+          <button v-for="ch in chs.chains" :key="ch.id" type="button" class="tab"
+                  :class="{ on: curChain === ch.id }" @click="curChain = ch.id">{{ ch.title }}</button>
+        </div>
+        <div ref="cEl" class="c-chart" :style="{ height: isMobile ? '400px' : '360px' }"></div>
+        <p class="dim tip">📖 {{ chs.note }}
+          <template v-if="curChainObj">校验:{{ curChainObj.validation?.note }}</template>
+          <span v-if="curChainObj?.validation?.verified" style="color:#166534">【已实测对照】</span>
+          <span v-else-if="curChainObj" style="color:#9ca3af">【方向先验·未回测】</span>
+        </p>
+      </section>
+
+      <!-- ⑦ 历史剧本库 -->
+      <section class="card">
+        <div class="title-row">
+          <h3>⑦ 历史剧本库</h3>
           <span class="sub">新事件按类别匹配剧本,对照传导路径-峰值反应-持续期-消退形态</span>
         </div>
         <details v-for="pb in mtx.playbooks" :key="pb.id" class="pb">
@@ -361,15 +463,36 @@ onBeforeUnmount(() => {
         </details>
       </section>
 
+      <!-- ⑧ 候选事件雷达(P2:GDELT 自动发现,人工审阅转正) -->
+      <section class="card">
+        <div class="title-row">
+          <h3>⑧ 候选事件雷达</h3>
+          <span class="sub">{{ cnd?.updated || '未采集' }} · GDELT 自动抓取 · 只做发现线索,转正事件需人工核对写入事件库</span>
+        </div>
+        <div v-if="cnd?.articles?.length" class="cand-list">
+          <a v-for="(a, ai) in cnd.articles" :key="ai" class="cand" :href="a.url" target="_blank" rel="noopener">
+            <span class="cand-date">{{ (a.date || '').replace('T', ' ').replace('Z', '') }}</span>
+            <span class="cand-title">{{ a.title }}</span>
+            <span class="cand-dom">{{ a.domain }}</span>
+          </a>
+        </div>
+        <p v-else class="dim">暂无候选(未采集或源失败降级——明天 07:55 自动重试)。</p>
+        <p class="dim tip">📖 {{ cnd?.note }}</p>
+      </section>
+
       <p class="dim foot">
         口径:温度计 10 指标中 8 个复用商品模块已入库序列(GPR/VIXCLS/金银比/铜金比/布伦特-WTI/
         美元宽/实际利率/人民币中间价),金油比与油铜比为跨商品派生
         (fetch_worldgeo.py 读兄弟模块 JSON 按日内连接相除,GEO_ 前缀,07:55 殿后任务);
         GEO_OIL_CU 数据起点 2016(新浪外盘 CAD 源),全史分位覆盖不了完整周期,读数看 begin。
-        事件/情景/矩阵/剧本为人工结构化档(commodity-worldgeo/data/ 下四个 JSON),
-        维护口径见各文件 note。应验度自动核对仅覆盖商品与汇率面(代理序列映射见
-        world_geo.py _VERIFY_CODE);sector/stock 面敏感度取决于业务结构(现货 vs 长约/内贸),
-        人工核对。免费源边界:温度计全部来自既有免费采集链,本模块零新增网络依赖。
+        事件/情景/矩阵/剧本为人工结构化档(commodity-worldgeo/data/ 下 JSON),
+        维护口径见各文件 note。应验度自动核对:商品/汇率面走 cmd_value 代理序列;
+        stock 面走 quote_daily(历史深度 2026-09 起,更早窗口诚实 insufficient);
+        sector 面走 geo_exposure.json 代表标的代理(板块综合非个股,proxy 标注)。
+        矩阵回测(history_events.json ~40 历史事件,T→T+30 窗口)是先验的对照检验:
+        先验与回测背离处(如地缘冲突×原油:先验利多但 30 日窗口均值 -2.8%,「买预期卖事实」)
+        值得人工复核先验强度——先验不被自动改写。传导链灰节点=无免费结构化源,诚实空不编数据。
+        候选雷达 GDELT DOC 2.0 免费无 key,采集失败留旧档;转正事件人工核对。
       </p>
     </template>
   </div>
@@ -481,6 +604,19 @@ onBeforeUnmount(() => {
 /* ---- 矩阵 ---- */
 .mx-scroll { overflow-x: auto; }
 .mx-chart { width: 100%; }
+
+/* ---- 传导链图谱(P1) ---- */
+.c-chart { width: 100%; }
+
+/* ---- 候选雷达(P2) ---- */
+.cand-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
+.cand { display: flex; gap: 8px; align-items: baseline; font-size: 12px; text-decoration: none;
+  color: var(--txt-2, #4b5563); padding: 4px 6px; border-radius: 6px; }
+.cand:hover { background: var(--accent-soft, #f4f8ff); }
+.cand-date { flex: 0 0 auto; color: var(--sub, #9ca3af); font-variant-numeric: tabular-nums; font-size: 10.5px; }
+.cand-title { flex: 1; }
+.cand-dom { flex: 0 0 auto; color: var(--sub, #9ca3af); font-size: 10.5px; }
+.m .cand { flex-wrap: wrap; }
 
 /* ---- 剧本 ---- */
 .pb { border: 1px solid var(--line, #e5e9f2); border-radius: 10px; margin-bottom: 8px; }

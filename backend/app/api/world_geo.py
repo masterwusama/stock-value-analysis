@@ -31,7 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db import get_session
-from app.models import CmdValue
+from app.models import CmdValue, QuoteDaily, Security
 
 router = APIRouter(prefix="/api/world-geo", tags=["world-geo"])
 
@@ -90,6 +90,34 @@ def _series_pts(db: Session, code: str):
         .where(CmdValue.cmd_code == code).order_by(CmdValue.data_date)
     ).all()
     return [(d.isoformat(), float(v)) for d, v in rows if v is not None]
+
+
+def _series_tail(db: Session, code: str, n: int = 90):
+    """最近 n 个点(传导链节点实时读数用,避免拉全量长序列)。"""
+    rows = db.execute(
+        select(CmdValue.data_date, CmdValue.val)
+        .where(CmdValue.cmd_code == code)
+        .order_by(CmdValue.data_date.desc()).limit(n)
+    ).all()
+    return [(d.isoformat(), float(v)) for d, v in reversed(rows) if v is not None]
+
+
+def _quote_pts(db: Session, code: str, start: dt.date, end: dt.date):
+    """个股窗口收盘价(股票/板块代理核对用;quote_daily 历史 2026-09 起)。"""
+    rows = db.execute(
+        select(QuoteDaily.trade_date, QuoteDaily.price)
+        .join(Security, Security.sid == QuoteDaily.sid)
+        .where(Security.code == code,
+               QuoteDaily.trade_date >= start, QuoteDaily.trade_date <= end)
+        .order_by(QuoteDaily.trade_date)
+    ).all()
+    return [(d.isoformat(), float(p)) for d, p in rows if p is not None]
+
+
+def _exposure_primary(ref: str):
+    """geo_exposure.json 的板块→代表标的(代理核对用);读不到返回 None。"""
+    ex = _load_json("geo_exposure.json", {"exposure": {}})
+    return (ex.get("exposure", {}).get(ref) or {}).get("primary")
 
 
 def _pctile(points, days=None):
@@ -179,28 +207,52 @@ def overview(db: Session = Depends(get_session)):
 
 
 def _verify_asset(db: Session, ev_date: str, window_days: int,
-                  ref: str, direction: str, threshold: float):
-    """单资产应验度核对:窗口内首末涨跌 vs 预期方向。事实核对,不评分。"""
-    code = _VERIFY_CODE.get(ref)
-    if not code:
-        return {"status": "manual", "note": "sector/stock 面不做自动核对(业务结构决定敏感度),人工"}
-    pts = _series_pts(db, code)
-    if not pts:
-        return {"status": "no_data", "code": code, "note": "代理序列无数据"}
+                  atype: str, ref: str, direction: str, threshold: float):
+    """单资产应验度核对:窗口内首末涨跌 vs 预期方向。事实核对,不评分。
+
+    P1 扩展:商品/fx 面查 cmd_value;stock 面直接查 quote_daily(个股行情,
+    历史 2026-09 起——更早的事件窗口自然 insufficient 降级,诚实);sector 面
+    用 geo_exposure.json 的代表标的代理(primary,标注 proxy)。窗口内点 <2
+    一律 insufficient,不编数据。
+    """
     start = dt.date.fromisoformat(ev_date)
     end = start + dt.timedelta(days=window_days)
     today = dt.date.today()
+    extra: dict = {}
+    # ① 解析代理数据源(商品/fx→cmd_value 全量序列;stock/sector→quote_daily 窗口查询)
+    if atype in ("commodity", "fx"):
+        code = _VERIFY_CODE.get(ref)
+        if not code:
+            return {"status": "manual", "note": "该 ref 无代理映射,人工核对"}
+    elif atype == "stock":
+        code = ref
+        extra["proxy_note"] = "个股行情核对(quote_daily)"
+    elif atype == "sector":
+        code = _exposure_primary(ref)
+        if not code:
+            return {"status": "manual", "note": "板块无代表标的,人工核对"}
+        extra["proxy_note"] = "代表标的 %s 代理(板块综合非个股)" % code
+    else:
+        return {"status": "manual", "note": "该资产类型不做自动核对,人工"}
+    # ② 未到期统一 pending(任何类型)
     if today < end:
         return {"status": "pending", "code": code,
-                "window_end": end.isoformat(), "note": "核对窗口未满"}
-    win = [p for p in pts if start <= dt.date.fromisoformat(p[0]) <= end]
-    if len(win) < 2:
+                "window_end": end.isoformat(), "note": "核对窗口未满", **extra}
+    # ③ 窗口数据(点 <2 一律 insufficient,不编数据)
+    if atype in ("commodity", "fx"):
+        pts = _series_pts(db, code)
+        win = [p for p in pts if start <= dt.date.fromisoformat(p[0]) <= end]
+    else:
+        win = _quote_pts(db, code, start, end)
+    if not win or len(win) < 2:
         return {"status": "insufficient", "code": code,
-                "note": "窗口内数据点不足(序列断档?)"}
+                "note": ("quote_daily 窗口内数据不足(历史深度 2026-09 起)"
+                         if atype in ("stock", "sector") else "窗口内数据点不足(序列断档?)"),
+                **extra}
     base, last = win[0][1], win[-1][1]
     chg = (last / base - 1) * 100 if base else None
     if chg is None:
-        return {"status": "insufficient", "code": code, "note": "基期值为 0,无法算涨跌"}
+        return {"status": "insufficient", "code": code, "note": "基期值为 0,无法算涨跌", **extra}
     if abs(chg) < threshold:
         verdict = "flat"
     elif (direction == "bullish" and chg > 0) or (direction == "bearish" and chg < 0):
@@ -211,16 +263,15 @@ def _verify_asset(db: Session, ev_date: str, window_days: int,
         "status": "done", "code": code,
         "window_start": win[0][0], "window_end": win[-1][0],
         "base": base, "last": last, "chg_pct": round(chg, 1),
-        "verdict": verdict,
+        "verdict": verdict, **extra,
     }
 
 
 @router.get("/events")
 def events(db: Session = Depends(get_session)):
-    """活跃事件库 + 应验度自动核对(商品/fx 面)。"""
+    """活跃事件库 + 应验度自动核对(商品/fx/stock/sector 代理面) + 掘金台联动映射。"""
     data = _load_json("events.json", {"events": []})
     threshold = float(data.get("verify_threshold_pct", 1.0))
-    today = dt.date.today()
     out = []
     for ev in data.get("events", []):
         ev = dict(ev)
@@ -228,7 +279,8 @@ def events(db: Session = Depends(get_session)):
         for a in ev.get("assets", []):
             a["verify"] = _verify_asset(
                 db, ev.get("date") or "1970-01-01", wdays,
-                a.get("ref") or "", a.get("direction") or "neutral", threshold)
+                a.get("type") or "", a.get("ref") or "",
+                a.get("direction") or "neutral", threshold)
         # 事件级汇总:仅统计可自动核对的资产
         done = [a["verify"] for a in ev.get("assets", [])
                 if a.get("verify", {}).get("status") == "done"]
@@ -251,6 +303,50 @@ def events(db: Session = Depends(get_session)):
         "note": data.get("note"),
         "verify_note": data.get("verify_note"),
         "events": out,
+        # 掘金台联动:资产→代表标的映射(前端按 active 事件的 ref 反查标的挂 pill)
+        "exposure": _load_json("geo_exposure.json", {"exposure": {}}).get("exposure", {}),
+    }
+
+
+@router.get("/chains")
+def chains(db: Session = Depends(get_session)):
+    """传导链图谱:节点代理序列注入最近读数(tail 90 点算 latest/1月变化)。"""
+    data = _load_json("chains.json", {"chains": []})
+    out = []
+    for ch in data.get("chains", []):
+        ch = dict(ch)
+        for nd in ch.get("nodes", []):
+            c = nd.get("code")
+            if not c:
+                continue
+            tail = _series_tail(db, c, 60)
+            if not tail:
+                nd["live"] = {"latest": None, "stale": True}
+                continue
+            latest = tail[-1][1]
+            base = next((v for d, v in tail
+                         if dt.date.fromisoformat(d) >= dt.date.fromisoformat(tail[-1][0]) - dt.timedelta(days=30)),
+                        latest)
+            chg = round(latest / base - 1, 4) * 100 if base else None
+            nd["live"] = {"latest": latest, "chg_1m": round(chg, 1) if chg is not None else None}
+        out.append(ch)
+    return {
+        "updated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "updated": data.get("updated"),
+        "note": data.get("note"),
+        "chains": out,
+    }
+
+
+@router.get("/candidates")
+def candidates():
+    """GDELT 候选事件雷达(采集产物直读;未采集/失败留旧档或空)。"""
+    data = _load_json("candidates.json", {"articles": []})
+    return {
+        "updated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
+        "updated": data.get("updated_at"),
+        "note": data.get("note"),
+        "articles": data.get("articles", []),
     }
 
 
@@ -268,14 +364,22 @@ def scenarios():
 
 @router.get("/matrix")
 def matrix():
-    """敏感度矩阵 + 历史剧本(合并端点:两者都是静态人工档)。"""
+    """敏感度矩阵(含历史弹性回测对照) + 历史剧本(合并端点:静态人工档)。"""
     m = _load_json("geo_matrix.json", {"categories": [], "rows": []})
     pb = _load_json("playbooks.json", {"playbooks": []})
+    bt = _load_json("backtest.json", {"cells": {}})
+    cats = m.get("categories", [])
+    for row in m.get("rows", []):
+        cells = row.get("cells") or []
+        for ci, cell in enumerate(cells):
+            if ci < len(cats):
+                cell["bt"] = bt.get("cells", {}).get("%s|%s" % (row.get("ref"), cats[ci]))
     return {
         "updated_at": dt.datetime.now().astimezone().isoformat(timespec="seconds"),
         "updated": m.get("updated"),
         "note": m.get("note"),
-        "categories": m.get("categories", []),
+        "bt_note": bt.get("note"),
+        "categories": cats,
         "rows": m.get("rows", []),
         "playbooks": pb.get("playbooks", []),
     }
