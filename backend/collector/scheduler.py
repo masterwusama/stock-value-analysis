@@ -200,8 +200,16 @@ def main():
               hour=7, minute=45, id="aviation-monthly")
     # 世界局势派生(07:55:商品族错峰链的殿后位——金油比/油铜比的原料是
     # gold(06:05)/crudeoil(06:55)/copper(06:25) 三兄弟 JSON,必须等它们当日
-    # 先落盘;纯派生零网络,秒级完成)
+    # 先落盘;纯派生+GDELT 候选雷达,秒级完成)
     s.add_job(run_job, "cron", args=["world-geo"], hour=7, minute=55, id="world-geo")
+    # 世界局势矩阵弹性回测(每月 1 号 08:05:history_events.json 人工档低频变更,
+    # 月频重算 130 格经验弹性足够;--backtest 纯文件工件不回灌)
+    s.add_job(run_job, "cron", args=["world-geo-backtest"], day=1,
+              hour=8, minute=5, id="world-geo-backtest")
+    # 世界局势周报(每周日 10:15:case(10:05) 之后错峰;温度计周变化+事件应验度+
+    # 情景复核提醒 → docs/worldgeo-weekly/,人工研判占位区留给人填)
+    s.add_job(run_job, "cron", args=["worldgeo-weekly"], day_of_week="sun",
+              hour=10, minute=15, id="worldgeo-weekly")
     # Silver Institute 年报平衡表(月频:1 号 07:25;新版 4 月发布次月捡起,
     # 平时本地缓存+解析幂等,失败留旧数据)
     s.add_job(run_job, "cron", args=["silver-wss"], day=1, hour=7, minute=25, id="silver-wss")
@@ -223,7 +231,7 @@ def main():
           "sentiment(交易日 16:30 情绪日报) heat(交易日 16:35 资金热度/概念题材) heat-catchup(工作日 16:55/21:35 heat 缺日自愈) case(周日 10:05 立案/处罚公告) "
           "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
           "zombie-sweep(启动+每小时 清扫僵尸 running 行) "
-          "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报) aviation(每天 07:35 民航日度组) aviation-monthly(每月 12/15 日 07:45 民航月度组) world-geo(每天 07:55 世界局势派生,零网络殿后)。"
+          "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报) aviation(每天 07:35 民航日度组) aviation-monthly(每月 12/15 日 07:45 民航月度组) world-geo(每天 07:55 世界局势派生,零网络殿后) world-geo-backtest(每月 1 号 08:05 矩阵弹性回测) worldgeo-weekly(每周日 10:15 世界局势周报)。" 
           "Ctrl+C 退出",
           flush=True)
     s.start()

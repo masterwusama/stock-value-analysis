@@ -170,6 +170,12 @@ JOBS = {
     # 人工档(events/scenarios/geo_matrix/playbooks)API 直读不经此链。
     # 回灌走 --only-worldgeo(commodity='worldgeo',GEO_ 前缀防互灌)
     "world-geo": [(COLLECTOR / "commodity-worldgeo" / "scripts", "fetch_worldgeo.py")],
+    # world-geo-backtest:矩阵经验弹性回测(--backtest,纯文件工件 backtest.json,
+    # 无回灌面进 NO_IMPORT)。每月 1 号 08:05,人工档变更后也可手动重跑
+    "world-geo-backtest": [(COLLECTOR / "commodity-worldgeo" / "scripts", "fetch_worldgeo.py")],
+    # worldgeo-weekly:周报生成(读库+人工档 → docs/worldgeo-weekly/,纯文件
+    # 工件无回灌面 NO_IMPORT)。每周日 10:15,case(10:05) 之后错峰
+    "worldgeo-weekly": [(COLLECTOR / "scripts", "build_worldgeo_weekly.py")],
     "import": [],
 }
 
@@ -177,6 +183,9 @@ JOBS = {
 # CLI 透传参数会整体替代默认参数（如 `run.py stock --codes 600519`）。
 JOB_DEFAULTS = {
     "stock": ["--all-market", "--snapshot-only", "--quiet"],
+    # world-geo-backtest:回测模式默认参数(fetch_worldgeo.py 的 --backtest
+    # 只写 backtest.json,不做派生/不回灌;world-geo 本体无默认参数不用登记)
+    "world-geo-backtest": ["--backtest"],
     # --hk-connect：港股通名单（≈621 只）跟着深抓一起刷，否则只有今天这一次手动跑，
     # 下周港股财务数据就开始变旧。名单拉不到时 hk_connect_targets 空列表降级，不阻断 A 股
     # --us-indexes：美股五大指数成分并集（≈765 只），降级行为同上；
@@ -228,7 +237,7 @@ IMPORT_DEFAULTS = {
 # 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
 # 空转时若照常 _import_db 会退化成一次全量导入(重且无意义);heat 是纯 JSON
 # 工件(data/heat/,API 直读),没有回灌面
-NO_IMPORT = {"etf-heal", "heat"}
+NO_IMPORT = {"etf-heal", "heat", "world-geo-backtest", "worldgeo-weekly"}
 
 
 # 全量抓取持锁时跳过调度（fetch_data 的 index.json 为全量重写,两进并行会互盖条目）
@@ -263,6 +272,8 @@ SCRIPT_TIMEOUT = {
     "ferrous": 900,   # 实测 10.8s
     "agri": 900,      # 实测 15.3s
     "world-geo": 300,  # 零网络纯派生(读三兄弟 JSON 相除),秒级;余量给 JSON 解析
+    "world-geo-backtest": 600,  # 人工档+兄弟 JSON 重算 130 格,秒级
+    "worldgeo-weekly": 600,  # 读库 10 序列+人工档 → Markdown,秒级
 }
 
 

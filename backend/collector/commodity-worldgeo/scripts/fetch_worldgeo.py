@@ -19,6 +19,17 @@
 同 code 二次注册会被 _import_cmd_series 的 upsert 翻转 commodity 字段(互灌),
 API /api/world-geo/overview 直接按 code 跨 commodity 读库合成。
 
+P1/P2 扩展(2026-11-16):
+    --backtest   矩阵经验弹性回测:读 history_events.json(~40 个历史事件)+
+                 geo_matrix.json + 兄弟序列,对每个 (资产,事件类别) 格子算
+                 「事件日 T→T+30 自然日窗口内代理序列涨跌」分布(样本数/均值/
+                 方向命中率) → backtest.json。独立 job world-geo-backtest
+                 (每月 1 号 08:05,NO_IMPORT——纯文件工件),也可手动跑。
+    GDELT 候选雷达:每天派生后顺手抓 GDELT DOC 2.0 API(免费无 key)的世界
+                 局势英语新闻候选(ceasefire/sanctions/OPEC/Hormuz 等),
+                 落 candidates.json 供「候选雷达」人工审阅转正——只做发现
+                 不自动入事件库。网络失败静默降级(留旧档),不影响派生主线。
+
 降级语义:兄弟 JSON 缺文件/缺 code/交集为空时,该派生序列从上一轮产物原样
 继承(数据不丢,warnings 注记);两派生全失败才让 job 变红(exit=1)。
 
@@ -29,14 +40,17 @@ API /api/world-geo/overview 直接按 code 跨 commodity 读库合成。
 """
 import argparse
 import json
+import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 BACKEND = Path(__file__).resolve().parents[3]
 DATA = BACKEND / "collector" / "commodity-worldgeo" / "data"
 OUT = DATA / "worldgeo.json"
+BACKTEST_OUT = DATA / "backtest.json"
+CAND_OUT = DATA / "candidates.json"
 
 # 原料来源(兄弟模块产物;只读不写)
 SRC = {
@@ -103,11 +117,161 @@ def _ratio(a_pts, b_pts, scale, digits):
     return sorted(out)
 
 
+# ---- P2:矩阵经验弹性回测(--backtest 模式,独立 job) ----
+# 资产代理序列映射:矩阵行的资产 ref → 兄弟 JSON 里的 code(sector 面不回测——
+# 板块无单序列代理,quote_daily 不在 JSON 侧)
+_BACKTEST_CODE = {
+    "gold": ("gold", "XAU_USD"), "silver": ("gold", "XAG_USD"),
+    "copper": ("copper", "CAD_MAIN"), "aluminum": ("aluminum", "AHD_MAIN"),
+    "lithium": ("lithium", "LC0_CLOSE"), "crudeoil": ("crudeoil", "CL_MAIN"),
+    "ferrous": ("ferrous", "RB0_CLOSE"), "agri": ("agri", "LH0_CLOSE"),
+    "fx_cny": ("gold", "USDCNY_FIX"),
+}
+_BT_WINDOW_DAYS = 30
+
+
+def run_backtest():
+    """对矩阵每个 (资产,事件类别) 格子回测历史弹性。
+
+    口径:该类别全部历史事件 T→T+30 自然日内代理序列首末涨跌的分布。
+    hit=方向与矩阵先验(d)一致的比例(d=0 的格子 hit=None——先验中性,无方向可命中)。
+    相邻事件样本相关(如 2022-02 三连),均值仅供参考、样本数是主读数。
+    """
+    he = json.loads((DATA / "history_events.json").read_text(encoding="utf-8"))
+    mx = json.loads((DATA / "geo_matrix.json").read_text(encoding="utf-8"))
+    raw, warns = _load_series()
+    cats = mx["categories"]
+    cells = {}
+    for row in mx["rows"]:
+        ref = row["ref"]
+        src = _BACKTEST_CODE.get(ref)
+        seq = raw.get(src[1]) or [] if src else []
+        mseq = {d: v for d, v in seq}
+        ds = sorted(mseq)
+        for ci, cat in enumerate(cats):
+            cell = (row.get("cells") or [{}] * len(cats))[ci]
+            d_pri = cell.get("d", 0)
+            chgs = []
+            for ev in he.get("events", []):
+                if ev.get("category") != cat:
+                    continue
+                try:
+                    t0 = datetime.strptime(ev["date"], "%Y-%m-%d").date()
+                except (ValueError, KeyError, TypeError):
+                    continue
+                t1 = t0 + timedelta(days=_BT_WINDOW_DAYS)
+                win = [mseq[d] for d in ds if t0.isoformat() <= d <= t1.isoformat()]
+                if len(win) >= 2 and win[0]:
+                    chgs.append((win[-1] / win[0] - 1) * 100)
+            key = "%s|%s" % (ref, cat)
+            if chgs:
+                hit = None
+                if d_pri > 0:
+                    hit = round(sum(1 for c in chgs if c > 0) / len(chgs), 2)
+                elif d_pri < 0:
+                    hit = round(sum(1 for c in chgs if c < 0) / len(chgs), 2)
+                cells[key] = {
+                    "n": len(chgs), "mean": round(sum(chgs) / len(chgs), 1), "hit": hit,
+                }
+            else:
+                cells[key] = {"n": 0, "mean": None, "hit": None}
+    payload = {
+        "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "window_days": _BT_WINDOW_DAYS,
+        "note": ("矩阵经验弹性回测:历史事件 T→T+30 自然日窗口内资产代理序列首末涨跌分布。"
+                 "n=样本数(主读数,相邻事件样本相关如 2022-02 三连,均值仅供参考);"
+                 "hit=实际涨跌方向与矩阵先验一致的比例(n<3 统计意义弱);"
+                 "hit=null=先验中性(d=0)无方向可命中;央行储备列是结构性 regime 无离散事件(n=0)。"),
+        "cells": cells,
+    }
+    BACKTEST_OUT.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    filled = sum(1 for c in cells.values() if c["n"])
+    print("[worldgeo] 回测写盘 %s: %d 格,有样本 %d 格" % (
+        BACKTEST_OUT.name, len(cells), filled), flush=True)
+    return 0
+
+
+# ---- P2:GDELT 候选雷达(每天派生后顺手抓,失败静默降级) ----
+# 降噪双层:①查询用「资产词 AND 事件词」共现(单关键词 gold/OPEC 会命中金奖/明星等海量噪音
+# ——首跑实测 30 条里"Gold Duke of Edinburgh"级噪音占多数);②标题白名单二次过滤。
+# 宁缺毋滥:过滤后不足 5 条也如实落盘,候选是线索不是结论。
+GDELT_URL = ("https://api.gdeltproject.org/api/v2/doc/doc?query=%s"
+             "&mode=ArtList&maxrecords=75&format=json&sort=DateDesc")
+GDELT_QUERY = ('(oil OR crude OR gold OR silver OR copper OR aluminum OR nickel OR wheat '
+               'OR tanker OR freight) AND (sanctions OR ceasefire OR "export control" OR '
+               'Hormuz OR "Red Sea" OR OPEC OR tariff OR embargo OR blockade OR '
+               '"production cut" OR strike) sourcelang:english')
+# 标题白名单用 \b 词边界正则("war" 子串会误命中 award/warranty——首跑实测踩坑)
+_TITLE_RE = re.compile(
+    r"\b(ceasefire|sanctions?|opec|hormuz|red sea|tariffs?|embargo|crude|oil price|brent|wti"
+    r"|gold price|bullion|gold market|export control|export ban|export restriction|blockade"
+    r"|drone attack|attack on|strike on|pipeline|tankers?|freight|supply cut|production cut"
+    r"|output cut|central bank gold|war)\b")
+
+
+def fetch_candidates():
+    """GDELT DOC 2.0 文章候选:世界局势英语新闻雷达,人工审阅转正事件。
+
+    GDELT DOC API 有请求频率限制(限流文案「one every 5 seconds」,实测 IP 级
+    冷却可达分钟级)——本任务每天仅一次,加 sleep 20 重试一次兜短窗限流;再失败
+    静默降级留旧档(调用方 try 包裹)。
+    """
+    import urllib.parse
+    import urllib.request
+    url = GDELT_URL % urllib.parse.quote(GDELT_QUERY)
+    data = None
+    for attempt in range(2):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=40) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+            data = json.loads(body)
+            break
+        except json.JSONDecodeError:
+            # 限流文案是纯文本,JSON 解析失败=限流/错误页——退避后重试一次
+            if attempt == 0:
+                print("[worldgeo] GDELT 限流(返回非 JSON),20 秒后重试一次", flush=True)
+                time.sleep(20)
+                continue
+            raise
+    if data is None:
+        raise ValueError("GDELT 两次尝试均未返回 JSON")
+    arts, seen = [], set()
+    for a in data.get("articles", []):
+        title = (a.get("title") or "").strip()
+        tl = title.lower()
+        if not title or title[:60].lower() in seen:
+            continue
+        if not _TITLE_RE.search(tl):
+            continue  # 标题白名单二次过滤(词边界正则,查询共现后仍有周边噪音)
+        seen.add(title[:60].lower())
+        arts.append({
+            "date": (a.get("seendate") or "")[:15],
+            "title": title, "url": a.get("url") or "", "domain": a.get("domain") or "",
+        })
+    if not arts:
+        raise ValueError("GDELT 过滤后空返回(宁缺毋滥)")
+    payload = {"updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+               "query": GDELT_QUERY,
+               "note": ("候选事件雷达:GDELT 自动抓取的局势相关英语新闻(资产词×事件词共现查询+标题白名单"
+                        "二次过滤),只做发现线索,转正事件需人工核对后写入 events.json(不自动入库)。"),
+               "articles": arts}
+    CAND_OUT.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    print("[worldgeo] 候选雷达: %d 条 → %s" % (len(arts), CAND_OUT.name), flush=True)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
                     help="只打印派生计划,不读写文件")
+    ap.add_argument("--backtest", action="store_true",
+                    help="只跑矩阵经验弹性回测写 backtest.json,不做派生/不回灌(独立 job)")
+    ap.add_argument("--no-candidates", action="store_true",
+                    help="跳过 GDELT 候选雷达抓取")
     a = ap.parse_args()
+    if a.backtest:
+        return run_backtest()
     plan = ["%s = %s.%s ÷ %s.%s ×%g" % t for t in
             ((d[0], d[1], d[2], d[3], d[4], d[5]) for d in DERIVED)]
     print("[worldgeo] 派生计划: %s" % "; ".join(plan), flush=True)
@@ -171,6 +335,15 @@ def main():
         OUT.name, len(series_out), total, len(warnings),
         ";".join(w.split(":")[0] for w in warnings) or "-",
         time.time() - t0), flush=True)
+
+    # GDELT 候选雷达:主线的附加层,失败只记 print 不动 warnings/job 色
+    if not a.no_candidates:
+        try:
+            fetch_candidates()
+        except Exception as e:  # noqa: BLE001 候选雷达是辅助面,降级不红
+            print("[worldgeo] 候选雷达降级: %s %s(留旧档)" % (
+                type(e).__name__, str(e)[:100]), flush=True)
+
     # 两派生全缺席才红:单序列继承是常态降级,兄弟模块次日自愈
     return 0 if ok >= 1 else 1
 
