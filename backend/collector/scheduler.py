@@ -198,6 +198,10 @@ def main():
     # 再滞后几天,两次机会幂等捡新;数据未更新则空转——月度序列全继承)
     s.add_job(run_job, "cron", args=["aviation-monthly"], day="12,15",
               hour=7, minute=45, id="aviation-monthly")
+    # 世界局势派生(07:55:商品族错峰链的殿后位——金油比/油铜比的原料是
+    # gold(06:05)/crudeoil(06:55)/copper(06:25) 三兄弟 JSON,必须等它们当日
+    # 先落盘;纯派生零网络,秒级完成)
+    s.add_job(run_job, "cron", args=["world-geo"], hour=7, minute=55, id="world-geo")
     # Silver Institute 年报平衡表(月频:1 号 07:25;新版 4 月发布次月捡起,
     # 平时本地缓存+解析幂等,失败留旧数据)
     s.add_job(run_job, "cron", args=["silver-wss"], day=1, hour=7, minute=25, id="silver-wss")
@@ -219,7 +223,7 @@ def main():
           "sentiment(交易日 16:30 情绪日报) heat(交易日 16:35 资金热度/概念题材) heat-catchup(工作日 16:55/21:35 heat 缺日自愈) case(周日 10:05 立案/处罚公告) "
           "etf(每天 17:35 ETF 综合评估) etf-heal(工作日 18-23 点半小时自愈补跑) "
           "zombie-sweep(启动+每小时 清扫僵尸 running 行) "
-          "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报) aviation(每天 07:35 民航日度组) aviation-monthly(每月 12/15 日 07:45 民航月度组)。"
+          "gold(每天 06:05) silver(每天 06:15) copper(每天 06:25) aluminum(每天 06:35) lithium(每天 06:45) crudeoil(每天 06:55) ferrous(每天 07:05) agri(每天 07:15) silver-wss(每月 1 号 07:25 平衡表年报) aviation(每天 07:35 民航日度组) aviation-monthly(每月 12/15 日 07:45 民航月度组) world-geo(每天 07:55 世界局势派生,零网络殿后)。"
           "Ctrl+C 退出",
           flush=True)
     s.start()

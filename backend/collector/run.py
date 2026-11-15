@@ -162,6 +162,14 @@ JOBS = {
     # +猪粮比(自算,6:1 官方预警线)。能繁母猪存栏无免费源记 P2。
     # 注意与 agro(农化制品)是两个模块
     "agri": [(COLLECTOR / "commodity-agri" / "scripts", "fetch_agri.py")],
+    # world-geo：世界局势推演模块(局势温度计的跨商品比价派生层,2026-11-15)。
+    # 零网络:读 gold/crudeoil/copper 三兄弟 JSON 按日内连接相除派生
+    # GEO_GOLD_OIL(金油比)/GEO_OIL_CU(油铜比),温度计其余 8 指标复用已入库
+    # 序列不重复注册(同 code 二次注册会互灌)。必须晚于 gold(06:05)/
+    # crudeoil(06:55)/copper(06:25) 保证当日原料已落盘,调度 07:55 殿后。
+    # 人工档(events/scenarios/geo_matrix/playbooks)API 直读不经此链。
+    # 回灌走 --only-worldgeo(commodity='worldgeo',GEO_ 前缀防互灌)
+    "world-geo": [(COLLECTOR / "commodity-worldgeo" / "scripts", "fetch_worldgeo.py")],
     "import": [],
 }
 
@@ -213,6 +221,8 @@ IMPORT_DEFAULTS = {
     "aviation-monthly": ["--only-aviation"],
     "ferrous": ["--only-ferrous"],
     "agri": ["--only-agri"],
+    # 世界局势两表(同 cmd_*,commodity='worldgeo';派生序列 GEO_ 前缀)
+    "world-geo": ["--only-worldgeo"],
 }
 
 # 不触发尾部回灌的 job:etf-heal 自带"查完就补跑完整 etf(含回灌)"的语义,
@@ -252,6 +262,7 @@ SCRIPT_TIMEOUT = {
     "crudeoil": 900,  # 实测 8.2s(无 CFTC zip)
     "ferrous": 900,   # 实测 10.8s
     "agri": 900,      # 实测 15.3s
+    "world-geo": 300,  # 零网络纯派生(读三兄弟 JSON 相除),秒级;余量给 JSON 解析
 }
 
 
