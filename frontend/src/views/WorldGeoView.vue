@@ -31,6 +31,36 @@ let echarts = null
 // 链切换(P1:传导链图谱,一次渲染一条链)
 const curChain = ref('')
 
+// ---- 矩阵阅读模式(2026-11-16 用户反馈「看不懂」重构) ----
+// 热力图是数据库形态(行列交叉+颜色编码),阅读形态是「发生了 X 类事件→哪些资产
+// 会被怎么影响」——三元关系(事件→资产→方向)压在一个颜色符号里+note/回测藏在
+// hover 里,移动端没法看。重构:选事件类别→资产按强度排序的影响卡(主视图),
+// 热力图降级为折叠总览(默认收起)。
+const curCat = ref('')
+const mxOpen = ref(false)
+const catCells = computed(() => {
+  if (!mtx.value || !curCat.value) return null
+  const ci = (mtx.value.categories || []).indexOf(curCat.value)
+  if (ci < 0) return null
+  const list = (mtx.value.rows || []).map((r) => {
+    const cell = (r.cells || [])[ci] || {}
+    const bt = cell.bt || {}
+    // 背离:先验有方向且回测样本 n≥3 而历史均值方向相反——提示人工复核
+    const diverge = cell.d !== 0 && (bt.n || 0) >= 3 && bt.mean != null &&
+      ((cell.d > 0 && bt.mean < 0) || (cell.d < 0 && bt.mean > 0))
+    return { row: r, d: cell.d || 0, s: cell.s || 0, note: cell.note || '', bt, diverge }
+  })
+  return {
+    bull: list.filter((x) => x.d > 0).sort((a, b) => b.s - a.s),
+    bear: list.filter((x) => x.d < 0).sort((a, b) => b.s - a.s),
+    flat: list.filter((x) => x.d === 0),
+  }
+})
+function onMxToggle(e) {
+  mxOpen.value = e.target.open
+  if (e.target.open) nextTick(renderMatrix)
+}
+
 // 资产中文显示名:ref 是机器键(verify/exposure 映射依赖),显示层翻译——
 // 优先用 API 下发(/events 与 /scenarios 的 ref_names,与后端 _REF_NAMES 同源),
 // 请求未到/失败时 fallback 本地常量(两者维护需同步,后端头注有提醒)
@@ -121,6 +151,7 @@ async function load() {
     ])
     ov.value = o; evs.value = e; scn.value = s; mtx.value = m; chs.value = c; cnd.value = cd
     if (c?.chains?.length && !curChain.value) curChain.value = c.chains[0].id
+    if (m?.categories?.length && !curCat.value) curCat.value = m.categories[0]
     await nextTick()
     renderMatrix()
     renderChain()
@@ -131,8 +162,9 @@ async function load() {
   }
 }
 
-// ---- 敏感度矩阵热力图:value=d*s ∈ [-3,3],红=利多(A股语义) 绿=利空 ----
+// ---- 敏感度矩阵热力图(折叠总览):value=d*s ∈ [-3,3],红=利多(A股语义) 绿=利空 ----
 function renderMatrix() {
+  if (!mxOpen.value) return  // 折叠态容器隐藏,init 尺寸为 0——展开时才渲染
   if (!mEl.value || !echarts || !mtx.value) return
   if (!mChart) mChart = echarts.init(mEl.value)
   const m = isMobile.value
@@ -141,7 +173,13 @@ function renderMatrix() {
   const data = []
   rows.forEach((r, ri) => {
     (r.cells || []).forEach((cell, ci) => {
-      data.push([ci, ri, (cell.d || 0) * (cell.s || 0)])
+      const v = (cell.d || 0) * (cell.s || 0)
+      // 格内方向符号:箭头一眼可读(纯色块要靠图例反推,用户实测看不懂)
+      data.push({
+        value: [ci, ri, v],
+        label: { color: Math.abs(v) >= 2 ? '#fff' : '#374151',
+                 fontSize: m ? 10 : 13, fontWeight: 600 },
+      })
     })
   })
   // 移动端固定画布宽放进横向滚动容器,桌面自适应
@@ -180,7 +218,13 @@ function renderMatrix() {
     },
     series: [{
       type: 'heatmap', data,
-      label: { show: false },
+      label: {
+        show: true,
+        formatter: (p) => {
+          const c = (rows[p.value[1]].cells || [])[p.value[0]] || {}
+          return c.d > 0 ? '↑' : c.d < 0 ? '↓' : '·'
+        },
+      },
       itemStyle: { borderColor: '#fff', borderWidth: m ? 1 : 2 },
       emphasis: { itemStyle: { shadowBlur: 6, shadowColor: 'rgba(0,0,0,.3)' } },
     }],
@@ -452,17 +496,65 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <!-- ⑤ 敏感度矩阵热力图 -->
+      <!-- ⑤ 敏感度速查:选类别→资产影响排序卡(主视图) + 热力图折叠总览 -->
       <section class="card">
         <div class="title-row">
-          <h3>⑤ 敏感度矩阵</h3>
-          <span class="sub">{{ mtx.updated }} 更新 · 资产×事件类别的方向先验(典型形态,非回测产物)</span>
+          <h3>⑤ 敏感度速查</h3>
+          <span class="sub">{{ mtx.updated }} 更新 · 用法:新事件落地→点它的类别→看各资产怎么走</span>
         </div>
-        <div class="mx-scroll">
-          <div ref="mEl" class="mx-chart" :style="{ height: isMobile ? '620px' : '640px' }"></div>
+        <div class="toolbar tabs">
+          <button v-for="c in mtx.categories" :key="c" type="button" class="tab"
+                  :class="{ on: curCat === c }" @click="curCat = c">{{ c }}</button>
         </div>
-        <details class="tip-fold"><summary>📖 矩阵口径与读法(点开)</summary>
-          <p class="dim tip">{{ mtx.note }}</p>
+        <template v-if="catCells">
+          <div v-if="catCells.bull.length" class="mxg">
+            <h4 class="mxg-h up">↑ 利多 — 事件会推高这些资产的价格</h4>
+            <div v-for="x in catCells.bull" :key="x.row.ref" class="mx-card">
+              <div class="mxr1">
+                <span class="dir dir-up">↑</span>
+                <b>{{ x.row.name }}</b>
+                <span class="mx-strength" :title="'传导强度 ' + x.s + ' (3=主导变量)'">{{ '●'.repeat(x.s) || '·' }}</span>
+              </div>
+              <div class="mx-note">{{ x.note }}</div>
+              <div v-if="x.bt.n" class="mx-bt" :class="{ diverge: x.diverge }">
+                📊 历史 {{ x.bt.n }} 次 · 30 日均值 {{ sign(x.bt.mean) }}%<template v-if="x.bt.hit != null"> · 方向命中 {{ Math.round(x.bt.hit * 100) }}%</template>
+                <b v-if="x.diverge">⚠ 历史与先验背离——先复核再使用</b>
+              </div>
+            </div>
+          </div>
+          <div v-if="catCells.bear.length" class="mxg">
+            <h4 class="mxg-h down">↓ 利空 — 事件会压低这些资产的价格</h4>
+            <div v-for="x in catCells.bear" :key="x.row.ref" class="mx-card">
+              <div class="mxr1">
+                <span class="dir dir-down">↓</span>
+                <b>{{ x.row.name }}</b>
+                <span class="mx-strength" :title="'传导强度 ' + x.s + ' (3=主导变量)'">{{ '●'.repeat(x.s) || '·' }}</span>
+              </div>
+              <div class="mx-note">{{ x.note }}</div>
+              <div v-if="x.bt.n" class="mx-bt" :class="{ diverge: x.diverge }">
+                📊 历史 {{ x.bt.n }} 次 · 30 日均值 {{ sign(x.bt.mean) }}%<template v-if="x.bt.hit != null"> · 方向命中 {{ Math.round(x.bt.hit * 100) }}%</template>
+                <b v-if="x.diverge">⚠ 历史与先验背离——先复核再使用</b>
+              </div>
+            </div>
+          </div>
+          <p v-if="catCells.flat.length" class="mx-flat">
+            → 中性 / 不适用:{{ catCells.flat.map((x) => x.row.name).join('、') }}
+          </p>
+        </template>
+        <p class="mx-usage dim">
+          怎么读:方向=事件对该资产「价格」的预期影响(利多=会涨,A股红涨绿跌);强度 ●~●●●=传导力度
+          (3=主导变量,1=次要变量);📊 行=历史回测对照(该类别历史事件后 30 日该资产代理序列的实际表现,
+          样本相邻相关均值仅供参考)——⚠ 背离格先复核先验再使用(如「地缘冲突×原油」先验利多但历史均值 -2.8%,
+          是「买预期卖事实」的实证)。
+        </p>
+        <details class="mx-fold" @toggle="onMxToggle">
+          <summary>📊 完整矩阵总览(13 资产 × 10 类别全表热力图,点开)</summary>
+          <div v-if="mxOpen" class="mx-scroll">
+            <div ref="mEl" class="mx-chart" :style="{ height: isMobile ? '620px' : '640px' }"></div>
+          </div>
+          <details class="tip-fold"><summary>📖 矩阵口径(点开)</summary>
+            <p class="dim tip">{{ mtx.note }}</p>
+          </details>
         </details>
       </section>
 
@@ -681,6 +773,30 @@ onBeforeUnmount(() => {
 .scn-mag { font-variant-numeric: tabular-nums; }
 .scn-chan { display: block; color: var(--sub, #6b7280); font-size: 10.5px; }
 
+/* ---- 矩阵:阅读模式(类别→资产排序卡) ---- */
+.mxg { margin-bottom: 12px; }
+.mxg-h { margin: 0 0 6px; font-size: 12.5px; }
+.mxg-h.up { color: var(--up, #dc2626); }
+.mxg-h.down { color: var(--down, #16a34a); }
+.mx-card { border: 1px solid var(--line, #e5e9f2); border-radius: 8px; padding: 8px 11px;
+  margin-bottom: 6px; background: var(--bg-soft, #f8fafd); }
+.mxr1 { display: flex; align-items: center; gap: 7px; }
+.mxr1 b { font-size: 13.5px; }
+.mx-strength { color: var(--accent, #2d6cdf); font-size: 11px; letter-spacing: 1px; margin-left: auto; }
+.mx-note { font-size: 11.5px; color: var(--txt-2, #4b5563); line-height: 1.6; margin-top: 3px; }
+.mx-bt { font-size: 11px; color: var(--sub, #6b7280); margin-top: 4px;
+  font-variant-numeric: tabular-nums; }
+.mx-bt.diverge { color: #92400e; background: #fffbeb; border-radius: 5px; padding: 3px 7px;
+  margin-top: 5px; }
+.mx-bt.diverge b { display: inline-block; margin-left: 5px; }
+.mx-flat { font-size: 11.5px; color: var(--sub, #9ca3af); margin: 2px 0 10px; }
+.mx-usage { margin: 10px 2px 8px; line-height: 1.8; }
+.mx-fold { margin-top: 4px; }
+.mx-fold > summary { cursor: pointer; font-size: 12px; color: var(--sub, #6b7280);
+  user-select: none; list-style: none; padding: 6px 0; }
+.mx-fold > summary::before { content: '▸ '; color: var(--sub, #9ca3af); }
+.mx-fold[open] > summary::before { content: '▾ '; }
+.mx-fold > summary::-webkit-details-marker { display: none; }
 /* ---- 矩阵 ---- */
 .mx-scroll { overflow-x: auto; }
 .mx-chart { width: 100%; }
