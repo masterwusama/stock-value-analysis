@@ -158,11 +158,11 @@ const chgClass = (v) => v == null ? 'flat' : v > 0 ? 'up' : v < 0 ? 'down' : 'fl
 // 营收/线着色是「危险度」语义不是涨跌方向:<1 触线=红(危险),1~2 边缘=琥珀
 const lineClass = (r) => r == null ? '' : r < 1 ? 'line-hit' : r < 2 ? 'warn-amber' : ''
 const turnPctileTxt = (it) => it.turn_pctile == null ? '—' : `${Math.round(it.turn_pctile * 100)}%`
-// 四时点表动作列色标:按动作关键词判买/减/持(买=红 减/清=绿 持/等=灰 放弃=琥珀)
+// 两时点表动作列色标:按动作关键词判买/减/持(买=红 减/清=绿 持/等=灰 放弃/不追=琥珀)
 const actClassOf = (t) => {
   if (/首仓|低吸|加2成|\+2成|建首仓/.test(t)) return 'ak-buy'
   if (/减半|清仓|减仓/.test(t)) return 'ak-cut'
-  if (/放弃|不动|严禁|等/.test(t)) return 'ak-wait'
+  if (/放弃|不动|不追|严禁|等/.test(t)) return 'ak-wait'
   return 'ak-hold'
 }
 const ztTxt = (it) => {
@@ -387,7 +387,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
         <div class="plan-head">
           <div>
             <div class="sec-title">收盘复盘 → 明日预案
-              <span class="sec-sub">最多 6 只 · 低位/低险优先 · 每张含四时点应对(加仓/低吸/持有/减半/清仓)</span>
+              <span class="sec-sub">最多 6 只 · 低位/低险优先 · 每张含开盘/尾盘两时点应对(买/持/减/清)</span>
             </div>
             <div class="plan-hint">{{ plan?.header?.position_hint }}{{ plan?.header?.trap ? ' · ⚠陷阱日禁隔夜' : '' }}</div>
           </div>
@@ -435,8 +435,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
               </span>
             </div>
             <div class="pi-sizing" :title="'加仓纪律:分批建仓,每笔独立止损——加仓部分错了只出加仓部分,不动底仓'">{{ p.sizing }}</div>
-            <!-- 四时点决策表:用户只在 开盘/10:00/14:30/14:55 出手 -->
-            <div class="ck-table" title="四时点检查表:条件满足即执行对应列动作;价位锚见上方锚点行,尾盘买入逻辑=吃次日竞价溢价(回测+2.3%/胜率66%)">
+            <!-- 两时点决策表:只在 开盘/14:55 出手(2026-11-16 定稿,原 10:00/14:30 检查点并入) -->
+            <div class="ck-table" title="两时点检查表:开盘定动作,尾盘定隔夜;条件满足即执行对应列动作,价位锚见上方锚点行;尾盘买入逻辑=吃次日竞价溢价(回测+2.3%/胜率66%)">
               <div class="ck-head">
                 <span class="ck-time">时点</span><span class="ck-c">条件</span>
                 <span class="ck-a">未持仓</span><span class="ck-a">持仓</span>
@@ -808,7 +808,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .pi-levels { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11.5px; color: #8a94a6; margin: 6px 0; }
 .pi-levels b { color: #5a6472; font-weight: 600; }
 .pi-sizing { font-size: 11px; color: #6c3fc5; background: #f8f5fe; border-radius: 5px; padding: 3px 7px; margin-bottom: 5px; }
-/* 四时点决策表 */
+/* 两时点决策表 */
 .ck-table { border: 1px solid #e8ebf0; border-radius: 8px; overflow: hidden; font-size: 11.5px; margin-bottom: 5px; }
 .ck-head, .ck-row { display: grid; grid-template-columns: 52px 1fr 1fr 1fr; gap: 6px; padding: 3px 8px; align-items: baseline; }
 .ck-head { background: #f4f6f9; font-weight: 600; color: #5a6472; }
@@ -900,7 +900,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
   }
   .ladder-row::-webkit-scrollbar { display: none; }
   .lv-chip { flex: none; }
-  /* 四时点表块状卡片式:三列挤压会文字竖排,移动端全部全宽+行内标签 */
+  /* 两时点表块状卡片式:三列挤压会文字竖排,移动端全部全宽+行内标签 */
   .ck-head { display: none; }
   .ck-row { grid-template-columns: 1fr; gap: 2px; padding: 6px 9px; }
   .ck-row .ck-time { margin-bottom: 1px; }

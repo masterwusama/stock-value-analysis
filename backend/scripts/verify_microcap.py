@@ -238,33 +238,38 @@ def test_checkpoints():
           "shrink": 3.1, "surge": 6.7, "tma5": 4.5}
     auc = {"strong": 0.68, "weak": 0.14, "tma5": 4.5, "rows": []}
     import re
-    for arch in ("low", "base"):
-        cks = plan_checkpoints(arch, LV, auc)
-        check(f"{arch}四时点齐", [c["time"] for c in cks] == list(_CK_TIMES),
-              str([c["time"] for c in cks]))
-        check(f"{arch}每时点2~5行", all(2 <= len(c["rows"]) <= 5 for c in cks))
-        # 条件覆盖完备性(2026-11-12 审计补):9:30 须含一字/高开>7 与低开2~5 的归属,
-        # 10:00 须含「站上开盘价但破5日线」中间态,14:30 须含常态持有,14:55 须含弱势收盘
-        by_t = {c["time"]: " ".join(r["c"] for r in c["rows"]) for c in cks}
-        check(f"{arch}9:30覆盖一字高开", "高开>7%" in by_t["9:30"])
-        check(f"{arch}9:30覆盖低开<5", "低开<5%" in by_t["9:30"])
-        check(f"{arch}10:00覆盖中间态", "已破" in by_t["10:00"])
-        check(f"{arch}14:30覆盖常态持有", "常态" in by_t["14:30"])
-        check(f"{arch}14:55覆盖弱势收盘", "下方" in by_t["14:55"])
-        for ck in cks:
-            for r in ck["rows"]:
-                if not (r["c"] and r["n"] and r["h"]):
-                    check(f"{arch}字段非空@{ck['time']}", False, str(r))
-                # 每行至少一处(条件或动作)含数字——兜底分支(仍低于开盘价/尾盘跳水)条件
-                # 本身定性,但动作列须可执行;全部无数字即视为模糊话
-                if not any(re.search(r"\d", r[k]) for k in ("c", "n", "h")):
-                    check(f"{arch}行含数字@{ck['time']}", False, str(r))
-        # 关键价位在场:9:30有竞价阈值、10:00有5日线、14:30有前高或5日、14:55有次日竞价逻辑
-        all_c = " ".join(r["c"] for ck in cks for r in ck["rows"])
-        all_n = " ".join(r["n"] for ck in cks for r in ck["rows"])
-        check(f"{arch}条件含5日线", "31.79" in all_c, all_c[:80])
-        check(f"{arch}尾盘吃次日竞价", "次日竞价" in all_n, all_n[:120])
-    cks_noauc = plan_checkpoints("low", LV, None)
+    cks = plan_checkpoints(LV, auc)
+    check("两时点齐", [c["time"] for c in cks] == list(_CK_TIMES),
+          str([c["time"] for c in cks]))
+    check("每时点2~5行", all(2 <= len(c["rows"]) <= 5 for c in cks))
+    # 条件覆盖完备性(2026-11-16 两时点收敛):9:30 须含一字高开与低开的归属,
+    # 14:55 三态=站稳收红/守10日线的弱势/破线清仓
+    by_t = {c["time"]: " ".join(r["c"] for r in c["rows"]) for c in cks}
+    all_h = {c["time"]: " ".join(r["h"] for r in c["rows"]) for c in cks}
+    check("9:30覆盖一字高开", "高开>7%" in by_t["9:30"])
+    check("9:30覆盖低开<5", "低开<5%" in by_t["9:30"])
+    check("9:30无10:00残留", all("10:00" not in r["n"] and "10:00" not in r["h"]
+                                 for r in cks[0]["rows"]))
+    check("14:55覆盖弱势收盘", "下方" in by_t["14:55"])
+    check("14:55减半清仓递进", "减半" in all_h["14:55"] and "清仓" in all_h["14:55"])
+    for ck in cks:
+        for r in ck["rows"]:
+            if not (r["c"] and r["n"] and r["h"]):
+                check(f"字段非空@{ck['time']}", False, str(r))
+            # 每行至少一处(条件或动作)含数字——兜底分支条件本身定性,
+            # 动作列须可执行;全部无数字即视为模糊话
+            if not any(re.search(r"\d", r[k]) for k in ("c", "n", "h")):
+                check(f"行含数字@{ck['time']}", False, str(r))
+            # 文案精简纪律(2026-11-16):动作列只写动作+关键锚,分号>1=又写回段落了
+            if sum(r[k].count(s) for k in ("n", "h") for s in (";", "；")) > 1:
+                check(f"动作列精简@{ck['time']}", False, str(r))
+    # 关键价位在场:9:30有竞价阈值,14:55有5/10日线与次日竞价逻辑
+    all_c = " ".join(r["c"] for ck in cks for r in ck["rows"])
+    all_n = " ".join(r["n"] for ck in cks for r in ck["rows"])
+    check("条件含5日线", "31.79" in all_c, all_c[:80])
+    check("条件含10日线", "31.09" in all_c, all_c[:80])
+    check("尾盘吃次日竞价", "次日竞价" in all_n, all_n[:120])
+    cks_noauc = plan_checkpoints(LV, None)
     check("无量能锚时9:30退定性", all(r["c"] and r["n"] for r in cks_noauc[0]["rows"]))
 
 
@@ -450,7 +455,7 @@ def test_live():
         check("竞价锚三档单调", all(
             p["auction"] is None or (p["auction"]["strong"] > p["auction"]["weak"]
                                      and len(p["auction"]["rows"]) == 3) for p in pl["plans"]))
-        check("live四时点齐", all([c["time"] for c in p["checkpoints"]] == list(_CK_TIMES)
+        check("live两时点齐", all([c["time"] for c in p["checkpoints"]] == list(_CK_TIMES)
                                   for p in pl["plans"]))
         check("预案全部spec≥65", all((p["spec"] or 0) >= 65 for p in pl["plans"]))
         check("预案按spec降序", [p["spec"] for p in pl["plans"]]
