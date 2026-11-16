@@ -74,6 +74,25 @@ const refNames = computed(() => evs.value?.ref_names || scn.value?.ref_names || 
 const refName = (r) => refNames.value[r] || r
 const typeName = (t) => ({ commodity: '商品', fx: '汇率', sector: '板块', stock: '个股' }[t] || t)
 
+// ---- 移动端章节导航:页面 8 板块竖排很长,吸顶 chip 条一键跳转(点按高亮,
+//      不做滚动追踪—— IntersectionObserver 成本不值) ----
+const SECTIONS = [
+  { id: 'sec-thermo', label: '温度计' }, { id: 'sec-pattern', label: '形态' },
+  { id: 'sec-events', label: '事件' }, { id: 'sec-scenario', label: '情景' },
+  { id: 'sec-matrix', label: '速查' }, { id: 'sec-chains', label: '图谱' },
+  { id: 'sec-playbooks', label: '剧本' }, { id: 'sec-candidates', label: '雷达' },
+]
+const curSec = ref('')
+function jumpSec(id) {
+  curSec.value = id
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// ---- 回到顶部浮钮(mobile):滚过首屏才出现 ----
+const showTop = ref(false)
+function onWinScroll() { showTop.value = window.scrollY > 900 }
+function toTop() { window.scrollTo({ top: 0, behavior: 'smooth' }) }
+
 // ---- 展示格式化(与 CommodityView 同款) ----
 const num = (v, d = 2) => (v == null ? '-' : (+v).toFixed(d))
 const sign = (v, d = 1) => (v == null ? '-' : (v >= 0 ? '+' : '') + (+v).toFixed(d))
@@ -295,9 +314,11 @@ onMounted(async () => {
   echarts = await ensureEcharts()
   await load()
   window.addEventListener('resize', onResize)
+  window.addEventListener('scroll', onWinScroll, { passive: true })
 })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onResize)
+  window.removeEventListener('scroll', onWinScroll)
   if (mChart) mChart.dispose()
   if (cChart) cChart.dispose()
   mChart = cChart = null
@@ -321,8 +342,17 @@ onBeforeUnmount(() => {
         </p>
       </section>
 
+      <!-- 移动端章节吸顶导航:8 板块竖排太长,一键跳转(topbar sticky 之下再 sticky) -->
+      <nav v-if="isMobile" class="sec-nav" aria-label="章节导航">
+        <button v-for="s in SECTIONS" :key="s.id" type="button" class="sec-chip"
+                :class="{ on: curSec === s.id }" @click="jumpSec(s.id)">{{ s.label }}</button>
+      </nav>
+      <!-- 回到顶部浮钮(mobile,滚过首屏出现) -->
+      <button v-if="isMobile && showTop" type="button" class="to-top" aria-label="回到顶部"
+              @click="toTop">↑</button>
+
       <!-- ① 温度计:10 卡 -->
-      <section class="card">
+      <section id="sec-thermo" class="card">
         <div class="title-row">
           <h3>① 局势温度计</h3>
           <span class="sub">数据截至 {{ ov.updated_at }} · 读时合成(复用序列 8 + 跨商品派生 2)</span>
@@ -352,7 +382,7 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- ② 形态对照:组合指纹手册(静态人工文案) -->
-      <section class="card">
+      <section id="sec-pattern" class="card">
         <div class="title-row">
           <h3>② 形态对照手册</h3>
           <span class="sub">典型温度计组合 → 局面判别(人工指纹,不算法判别)</span>
@@ -367,7 +397,7 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- ③ 活跃事件时间线 -->
-      <section class="card">
+      <section id="sec-events" class="card">
         <div class="title-row">
           <h3>③ 活跃事件</h3>
           <span class="sub">{{ evs.updated }} 更新 · 方向=对资产价格的方向(航空在停火中是利多) · 强度 1-3</span>
@@ -473,7 +503,7 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- ④ 情景树 -->
-      <section v-for="set in scn.sets" :key="set.set_id" class="card">
+      <section v-for="(set, si) in scn.sets" :key="set.set_id" :id="si === 0 ? 'sec-scenario' : undefined" class="card">
         <div class="title-row">
           <h3>④ 情景树 · {{ set.title }}</h3>
           <span class="sub">{{ set.updated }} 更新 · 概率是主观估计·非模型输出</span>
@@ -497,7 +527,7 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- ⑤ 敏感度速查:选类别→资产影响排序卡(主视图) + 热力图折叠总览 -->
-      <section class="card">
+      <section id="sec-matrix" class="card">
         <div class="title-row">
           <h3>⑤ 敏感度速查</h3>
           <span class="sub">{{ mtx.updated }} 更新 · 用法:新事件落地→点它的类别→看各资产怎么走</span>
@@ -559,7 +589,7 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- ⑥ 传导链图谱(P1):事件→中间变量→资产,无源节点诚实空 -->
-      <section class="card">
+      <section id="sec-chains" class="card">
         <div class="title-row">
           <h3>⑥ 传导链图谱</h3>
           <span class="sub">{{ chs.updated }} 更新 · 有源节点带实时读数 · 灰节点=无免费源(诚实空,不编数据)</span>
@@ -580,7 +610,7 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- ⑦ 历史剧本库 -->
-      <section class="card">
+      <section id="sec-playbooks" class="card">
         <div class="title-row">
           <h3>⑦ 历史剧本库</h3>
           <span class="sub">新事件按类别匹配剧本,对照传导路径-峰值反应-持续期-消退形态</span>
@@ -598,14 +628,20 @@ onBeforeUnmount(() => {
                 <b>{{ c.step }}</b> — {{ c.detail }}
               </li>
             </ol>
-            <table class="pb-tbl">
+            <table v-if="!isMobile" class="pb-tbl">
               <thead><tr><th>资产</th><th>峰值反应</th><th>备注</th></tr></thead>
               <tbody>
                 <tr v-for="(a, ai) in pb.assets" :key="ai">
-                  <td>{{ a.ref }}</td><td>{{ a.peak_move }}</td><td class="pb-note">{{ a.note }}</td>
+                  <td>{{ refName(a.ref) }}</td><td>{{ a.peak_move }}</td><td class="pb-note">{{ a.note }}</td>
                 </tr>
               </tbody>
             </table>
+            <div v-else class="pb-assets">
+              <div v-for="(a, ai) in pb.assets" :key="ai" class="pb-asset">
+                <div class="pb-asset-r1"><b>{{ refName(a.ref) }}</b><span>{{ a.peak_move }}</span></div>
+                <span v-if="a.note" class="pb-asset-note">{{ a.note }}</span>
+              </div>
+            </div>
             <p><b>持续期:</b>{{ pb.duration }} · <b>消退:</b>{{ pb.fade_note }}</p>
             <p class="pb-lesson"><b>💡 方法论:</b>{{ pb.lesson }}</p>
           </div>
@@ -613,7 +649,7 @@ onBeforeUnmount(() => {
       </section>
 
       <!-- ⑧ 候选事件雷达(P2:GDELT 自动发现,人工审阅转正) -->
-      <section class="card">
+      <section id="sec-candidates" class="card">
         <div class="title-row">
           <h3>⑧ 候选事件雷达</h3>
           <span class="sub">{{ cnd?.updated || '未采集' }} · GDELT 自动抓取 · 只做发现线索,转正事件需人工核对写入事件库</span>
@@ -836,19 +872,42 @@ onBeforeUnmount(() => {
 .pb-lesson { color: #92400e; background: #fffbeb; border-radius: 6px; padding: 8px 10px; }
 
 /* ---- 移动端(≤640px,.m 类单点维护) ---- */
-.m .card { padding: 10px 12px; border-radius: 10px; }
+/* 章节吸顶导航:topbar(54px sticky)之下再 sticky;跳转目标 scroll-margin 让出双栈高度 */
+.sec-nav { position: sticky; top: var(--stick-top, 58px); z-index: 20;
+  display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none; background: var(--bg, #f5f6fa); padding: 8px 2px; margin-bottom: 10px; }
+.sec-nav::-webkit-scrollbar { display: none; }
+.sec-chip { flex: 0 0 auto; font-size: 12px; padding: 5px 13px; border-radius: 999px;
+  border: 1px solid var(--line, #e5e7eb); background: var(--card, #fff);
+  color: var(--txt-2, #4b5563); cursor: pointer; }
+.sec-chip.on { border-color: var(--accent, #2d6cdf); color: #fff;
+  background: var(--accent, #2d6cdf); font-weight: 600; }
+.to-top { position: fixed; right: 14px; bottom: 20px; z-index: 30; width: 40px; height: 40px;
+  border-radius: 50%; border: 1px solid var(--line, #e5e9f2); background: var(--card, #fff);
+  box-shadow: var(--shadow-m, 0 2px 10px rgba(20,30,55,.14)); font-size: 16px;
+  color: var(--accent, #2d6cdf); cursor: pointer; }
+.pb-assets { margin: 8px 0; }
+.pb-asset { padding: 6px 0; border-bottom: 1px dashed var(--line-soft, #f0f2f7);
+  font-size: 12px; line-height: 1.6; }
+.pb-asset:last-child { border-bottom: none; }
+.pb-asset-r1 { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.pb-asset-r1 b { font-size: 12.5px; }
+.pb-asset-note { display: block; color: var(--sub, #6b7280); font-size: 11px; margin-top: 2px; }
+.m .card { padding: 10px 12px; border-radius: 10px; scroll-margin-top: var(--scroll-mt, 106px); }
 .m .card h2 { font-size: 16px; }
 .m .card h3 { font-size: 14px; }
 .m .title-row .sub { font-size: 11px; margin-left: 0; width: 100%; }
-.m .thermo-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
-.m .t-val { font-size: 18px; }
+.m .thermo-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.m .t-card { padding: 8px 10px; }
+.m .t-val { font-size: 17px; margin: 4px 0 3px; }
+.m .t-pcts { gap: 2px; font-size: 10.5px; }
 .m .pbar { width: 38px; }
 .m .pattern-grid { grid-template-columns: 1fr; }
 .m .scn-grid { grid-template-columns: 1fr; }
 .m .ev-title { font-size: 13px; }
 .m .a-chan { max-width: none; }
 .m .ev-tbl { font-size: 11px; }
-/* 链切换 tab:移动端横向滚动不换行(7 条链标题长,堆叠占半屏)——CommodityView seg-bar 同款 */
+/* 链切换/速查类别 tab:移动端横向滚动不换行(标题长,堆叠占半屏)——CommodityView seg-bar 同款 */
 .m .toolbar.tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
   scrollbar-width: none; }
 .m .toolbar.tabs::-webkit-scrollbar { display: none; }
@@ -861,5 +920,6 @@ onBeforeUnmount(() => {
 .m .pb-body { padding: 0 10px 10px; }
 .m .cand { padding: 5px 4px; }
 .m .mx-chart { width: 780px; }
+.m .mx-usage { font-size: 11px; }
 .m .foot { font-size: 11px; }
 </style>
