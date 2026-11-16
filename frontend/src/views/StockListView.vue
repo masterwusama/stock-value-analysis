@@ -44,8 +44,13 @@ const COLS = [
   { key: 'w_cash', label: '加权现金(亿)', group: 'asset' },
   { key: 'int_debt', label: '有息负债(亿)', group: 'asset' },
   { key: 'net_cash_w', label: '净现金(扣有息)', group: 'asset' },
-  // 金额口径（本币亿）；占市值的百分比保留在筛选「净现金/市值」与详情页 ①
+  // 金额口径（本币亿）；占市值的比值见右列（同分子不同分母），逐家代入式在详情页 ①
   { key: 'net_cash_b', label: '净现金', sub: '减全部负债', group: 'asset' },
+  // 比值列：分子与左列同（加权类现金 − 负债合计），除以本币市值后跨标的可比，列头即排序
+  // 入口，降序 = net-net 排行（≥100% 全市场极少）；算不出的公司显示 - 且排到末尾。
+  // 2026-11-16 恢复此列：09-19 改显金额后比值只剩筛选与详情页，用户要比值排序入口；
+  // 排序键走后端 SORT_COLS 里一直留着的 net_cash_ratio（当年做筛选时同步留的）
+  { key: 'net_cash_ratio', label: '净现金/市值', group: 'asset' },
   // PB 十年分位（外源 Wind 口径）：只放这一列，PE/PS 分位在详情页——
   // PE 分位对亏损股无意义（一片 “-”）、PS 分位又宽又少人看，摆进这张表只会稀释信号。
   { key: 'pb_pctile', label: 'PB十年分位', group: 'asset' },
@@ -1199,6 +1204,7 @@ const REF_COLS = COLS.filter((c) => c.ref)
             <td :title="IDEBT_TIP">{{ yi(s.int_debt) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :title="NCW_TIP">{{ yi(s.net_cash_w) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
             <td :title="NCB_TIP" :class="{ 'r-hit': s.net_cash_b != null && s.net_cash_b > 0 }">{{ yi(s.net_cash_b) }}<i v-if="s.market !== 'A'" class="ccy">{{ s.currency }}</i></td>
+            <td :title="NCR_CELL_TIP" :class="{ 'r-hit': s.net_cash_ratio != null && s.net_cash_ratio >= 1 }">{{ score2(s.net_cash_ratio) }}</td>
             <td :class="{ 'r-hit': s.pb_pctile != null && s.pb_pctile <= 20 }" :title="pbCellTip(s)">{{ pbCell(s) }}</td>
             <td v-for="c in COLS.filter(x => x.ref)" :key="c.school" class="c-ref" :class="{ gedge: c.edge }" :title="refTitle(s, c.school)">
               <span class="rf-buy" :class="{ 'r-hit': refBuy(s, c.school) != null && s.price != null && s.price <= refBuy(s, c.school) }">{{ fmt(refBuy(s, c.school)) }}<i v-if="buySortSchool === c.school && refSpace(s, c.school) != null" class="rf-sp">{{ refSpaceText(refSpace(s, c.school)) }}</i></span>
