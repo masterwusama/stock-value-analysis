@@ -275,15 +275,22 @@ def _synth_one(info, spot, val_series, close_series, holds, smap, score_td, spot
     if val_out["pctile"].get("pe") or val_out["pctile"].get("pb"):
         p_pe = val_out["pctile"].get("pe", {}).get("pct")
         p_pb = val_out["pctile"].get("pb", {}).get("pct")
+        # 2026-11-18 缺陷修复:PE/PB 分位只有其一时,原实现 raw 封顶 60/40
+        # (估值分静默最高 18/30,既不归一也不注明)——PB 分位缺数的 ETF 被
+        # 静默压最多 12 分,足以跨 buy/watch 档。改与本模块「缺项按剩余权重
+        # 归一」总原则一致:可用子项权重归一到 1,理由行注明口径收窄。
+        sub_w = (0.6 if p_pe is not None else 0.0) + (0.4 if p_pb is not None else 0.0)
         raw = 0.0
         if p_pe is not None:
             raw += 0.6 * (100 - p_pe)
         if p_pb is not None:
             raw += 0.4 * (100 - p_pb)
+        raw = raw / sub_w
         factor = TOP10_VAL_FACTOR if basis_source == "f10" else 1.0
         parts["valuation"] = round(W_VAL * raw / 100.0 * factor, 1)
         reasons.append(f"估值分:PE 分位 {p_pe}/PB 分位 {p_pb}"
-                       + ("(前十口径已打 8 折)" if factor < 1 else ""))
+                       + ("(前十口径已打 8 折)" if factor < 1 else "")
+                       + ("(单一分位,子权重已归一)" if sub_w < 1.0 else ""))
     elif val_series:
         w_eff -= W_VAL
         # 评分用 pe/pb(持仓口径)分位;官方 PE 回填只抬 pe_mcap 行数,pe 列可能仍薄

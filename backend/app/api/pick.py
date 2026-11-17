@@ -280,13 +280,16 @@ def _discounts(price, buy_s, buy_g):
 
 
 def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late,
-           negeq: bool = False, ncw: float | None = None) -> dict:
+           negeq: bool = False, ncw: float | None = None,
+           cur_consistent: bool = True) -> dict:
     """pick/tier/理由合成。入参都是纯量,验证脚本可直接离线复用。
 
     negeq=最新披露期归母权益为负(中报/三季报转负、年报仍为正的盲区):
     强制封顶 watch 并亮旗,不没收 pick 分数。
     ncw=净有息负债/市值(net_cash_w/原币市值,负值=净负债):−30% 起灰带扣分,
     <−100% 封顶 watch、<−200% 封顶 na(三级制,详见常量块注释)。
+    cur_consistent=分子报表币种与分母行情币种可确认一致(A/US 成立;港股财报
+    多以人民币/美元披露而行情一律 HKD,比值族整体置停用,见 _to_item 注)。
     """
     reasons: list[str] = []
     risks: list[str] = []
@@ -316,7 +319,12 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late,
 
     if pick is not None and not avoid:
         if disc is not None and disc < -0.01:
-            pick += min(DISC_BONUS_CAP, -disc * 100 * DISC_BONUS_PER)
+            # 烟蒂通道初始化(min(STUB_CAP, 施洛斯×0.5+折价加分))折价加分已计入,
+            # 公共块对 stub 再加一次=双计:封顶被突破(65+10=75,「到不了强推」变形),
+            # 施洛斯 80/折价 25% 会从 watch(50) 抬到 buy(60≥STUB_BUY_MIN)——
+            # 2026-11-18 修复:stub 只补文案不再加分(2026-11-18 前为双计)
+            if channel != "stub":
+                pick += min(DISC_BONUS_CAP, -disc * 100 * DISC_BONUS_PER)
             anchor = "施洛斯买点" if disc_anchor == "schloss" else "格雷厄姆买点"
             reasons.append(f"现价较{anchor}低 {-disc * 100:.0f}%")
         if pb_pctile is not None:
@@ -335,7 +343,9 @@ def _synth(s, price, mcap_cny, disc, disc_anchor, pb_pctile, report_late,
                     pick += b
                     reasons.append(f"股息率 {s.div_yield * 100:.1f}%")
                     break
-        if s.net_cash_ratio is not None:
+        if s.net_cash_ratio is not None and cur_consistent:
+            # 宽口径比值(加权类现金−负债合计)÷快照市值:分子报表本币、分母行情币种,
+            # 港股混币种(cur_consistent=False 时整体停用,与 ncw 同族同修)
             for lo, b in NCR_BONUS:
                 if s.net_cash_ratio >= lo:
                     pick += b
@@ -486,7 +496,8 @@ def _apply_research_verdict(it: PickItem, rv: dict | None, today: date) -> None:
     if cap is None:  # 增持/无法解析的主档:不设限
         return
     lo, hi = rv.get("val_low"), rv.get("val_high")
-    band = f"{lo:g}~{hi:g}" if lo and hi else None
+    # 0~x 的区间(烟蒂/困境标的估值下沿给 0)是合法值,不能当缺失——须显式判 None
+    band = f"{lo:g}~{hi:g}" if (lo is not None and hi is not None) else None
     capped = _TIER_ORDER.index(it.tier) < _TIER_ORDER.index(cap)
     if main == "回避":
         why = f"研报回避({d})" + (f",估值区间 {band}" if band else "")
@@ -505,10 +516,19 @@ def _to_item(s, sec, q, val_row, cov, today, negeq: bool = False) -> PickItem:
     pb, pb_days = _fresh_pctile(val_row, s.trade_date)
     late = _report_late(s.report_date, today)
     # 净有息负债/市值:分子(财报本币)÷分母(行情同币种原币),比率天然币种中性,
-    # 不可用 mcap_cny——HKD 换算会把比率整体抬高 8%
+    # 不可用 mcap_cny——HKD 换算会把比率整体抬高 8%。
+    # 2026-11-18 缺陷修复:「同币种」假设只对 A/US 成立——港股财报多以人民币披露
+    # (腾讯/中海物业等,scoring.js:52 同源说明),少数以美元披露(汇丰系),而行情市值
+    # 一律 HKD:人民币报表的港股 ncw 被系统性低估 ~8%(02669 实测现口径 57.4% vs
+    # 真值 62.5%,灰带 −30% 边界标的会错放过降档),美元报表的被放大约 7.8 倍(可能
+    # 误触 −100%/−200% 封顶)。库里暂无「报表币种」字段,无法精确折算——港股比值
+    # 族一律停用(ncw 置 None、宽口径加分经 cur_consistent=False 停用;与银行 NULL
+    # 同语法:算不出,不罚不奖),待报表币种入库后恢复。宽口径 net_cash_ratio 的
+    # 同源混币种见列表列/详情页(展示照旧,分数路径已停)。
     ncw = (float(s.net_cash_w) / float(q.market_cap)
-           if s.net_cash_w is not None and q.market_cap else None)
-    core = _synth(s, price, mcap_cny, disc, anchor, pb, late, negeq=negeq, ncw=ncw)
+           if s.net_cash_w is not None and q.market_cap and sec.market != "HK" else None)
+    core = _synth(s, price, mcap_cny, disc, anchor, pb, late, negeq=negeq, ncw=ncw,
+                  cur_consistent=(sec.market != "HK"))
     it = PickItem(
         sid=sec.sid, code=sec.code, name=sec.name, market=sec.market,
         currency=sec.currency, industry=sec.industry,

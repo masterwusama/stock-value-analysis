@@ -324,7 +324,12 @@ def _cmd_series(db: Session, commodity: str):
             select(CmdValue.cmd_code, CmdValue.data_date, CmdValue.val)
             .where(CmdValue.cmd_code.in_(codes)).order_by(CmdValue.data_date)
         ):
-            pts[code].append([d.isoformat(), float(v) if v is not None else None])
+            # val 为 NULL 的行不入 points(2026-11-18 缺陷修复):_chg/_stats 对
+            # None 无防护,窗口内混入一个空值后 v0−v/max(vals) 直接 TypeError,
+            # 整个商品接口 500;图表侧空点本来就画不出,丢弃无损
+            if v is None:
+                continue
+            pts[code].append([d.isoformat(), float(v)])
 
     desc = _DESC.get(commodity, {})
     series = []

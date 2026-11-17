@@ -73,7 +73,12 @@ def load_rows(db, sids):
 
 
 def dip_of(rows, p_iso):
-    """生产 interim_dip_yoy 的同一条规则，在 (sid, 报告期) 字典上。"""
+    """生产 interim_dip_yoy 的同一条规则，在 (sid, 报告期) 字典上。
+
+    【双源警示】这是生产规则的**手抄副本**(入参形状不同:面板字典 vs 公司载荷,
+    无法直接 import)。生产端改判定规则(如扣非缺则回退条件、abs(p) 基数处理)
+    时必须人肉同步本处——验收结论失真是双源漂移的默认症状。
+    """
     cur = rows.get(p_iso)
     y = p_iso[:4]
     prev = rows.get(str(int(y) - 1) + p_iso[4:])

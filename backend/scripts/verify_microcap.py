@@ -273,6 +273,31 @@ def test_checkpoints():
     check("无量能锚时9:30退定性", all(r["c"] and r["n"] for r in cks_noauc[0]["rows"]))
 
 
+def test_review_suspended():
+    """复盘统计停牌修复回归(2026-11-18):chg=None(今无行情)不进均值与红盘率——
+    修复前按 0.0 计入,稀释 avg_chg 并压低 red_rate 分母口径。"""
+    from types import SimpleNamespace as NS
+    from app.api.microcap import _build_review
+    prior = {"date": "2026-11-17", "items": [
+        {"code": "000123", "name": "停牌股", "spec": 70, "streak": 1, "ma5": 5.0, "ma10": 4.8},
+        {"code": "000124", "name": "红盘股", "spec": 70, "streak": 1, "ma5": 5.0, "ma10": 4.8},
+        {"code": "000125", "name": "绿盘股", "spec": 70, "streak": 1, "ma5": 5.0, "ma10": 4.8},
+    ]}
+    by = {
+        "000123": NS(chg_pct=None, price=5.0, dt_today=False, streak=None),   # 今无行情
+        "000124": NS(chg_pct=0.05, price=5.25, dt_today=False, streak=1),
+        "000125": NS(chg_pct=-0.04, price=4.8, dt_today=False, streak=None),
+    }
+    out = _build_review(prior, by, "2026-11-18")
+    st = out["stats"]
+    check("复盘行数含停牌", st["n"] == 3, str(st))
+    check("停牌不进红盘率分母", st["red_rate"] == 0.5, str(st))
+    check("停牌不进均值", st["avg_chg"] is not None
+          and abs(st["avg_chg"] - 0.005) < 1e-9, str(st))
+    row = next(r for r in out["items"] if r["code"] == "000123")
+    check("停牌行仍如实标注", row["chg"] is None and "无行情" in row["note"], str(row))
+
+
 def test_calendar():
     cal = _calendar(date(2026, 11, 10), None, 0.999)
     check("11月=出清窗口", cal["state"] == "cleared")
@@ -480,6 +505,7 @@ if __name__ == "__main__":
     test_danger_spec()
     test_plan_moves()
     test_checkpoints()
+    test_review_suspended()
     test_calendar()
     if "--live" in sys.argv:
         test_live()

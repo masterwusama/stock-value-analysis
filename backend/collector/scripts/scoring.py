@@ -2072,7 +2072,10 @@ def _st_risk(company):
         flags.append('price_low')
     if not flags:
         return 0, ''
-    risk = 2 if (('loss_rev' in flags or 'loss_rev_ex' in flags) and not exempt) else 1
+    # loss_rev_ex 只在 exempt=True(双创豁免窗)时入旗,豁免窗内一律关注级——
+    # 原写法 `'loss_rev_ex' in flags and not exempt` 前半恒假(死代码,行为碰巧
+    # 正确但表达误导):高危的唯一来源是非豁免的 loss_rev
+    risk = 2 if ('loss_rev' in flags and not exempt) else 1
     return risk, ','.join(flags)
 
 

@@ -657,7 +657,12 @@ def _synth_base(db: Session, key, fresh: bool):
     td = key[0] and date.fromisoformat(key[0]) or None
     qd_max = key[2] and date.fromisoformat(key[2]) or None
     today = date.today()
-    list_cutoff = date(today.year - LIST_AGE_MIN_YEARS, today.month, today.day)
+    # 闰日防护(与 pick._listed_cutoff 同款):今天是 2/29 时一年前的规则日不存在,
+    # 直取 day 会 ValueError 500(2028-02-29 首触)——回退 2/28
+    try:
+        list_cutoff = date(today.year - LIST_AGE_MIN_YEARS, today.month, today.day)
+    except ValueError:
+        list_cutoff = date(today.year - LIST_AGE_MIN_YEARS, 2, 28)
 
     # ---- 主行:A股 × 最新评分 × 最新行情(相关子查询取每家最新一行,pick 同款) ----
     _Q2 = aliased(QuoteDaily)
@@ -834,11 +839,15 @@ def _synth_base(db: Session, key, fresh: bool):
         series = hist.get(sid) or []
         prices = [p for _d, p, _t in series if p is not None][-(TURN_WIN_MAX + 1):]
         turns = [t for _d, _p, t in series if t is not None][-TURN_WIN_MAX:]
-        avg20 = (sum(prices[-20:]) / len(prices[-20:])) if len(prices) >= 5 else None
+        # 「20 日」口径须足 20 行(2026-11-18 缺陷修复):新股/长停股 5~19 行时
+        # 「20日均价/20日低」名实不符——面值退市近线(avg20<FACE_AVG20)与破位
+        # 判断都踩在这两个值上,样本不足时的阈值判断是假信号;不足 20 行判缺
+        avg20 = (sum(prices[-20:]) / len(prices[-20:])) if len(prices) >= 20 else None
         ma5 = round(sum(prices[-5:]) / len(prices[-5:]), 3) if len(prices) >= 5 else None
         ma10 = round(sum(prices[-10:]) / len(prices[-10:]), 3) if len(prices) >= 10 else None
-        lo20 = min(prices[-20:]) if len(prices) >= 5 else None
-        hi20_ex = max(prices[-21:-1]) if len(prices) >= 6 else None   # 不含今日
+        lo20 = min(prices[-20:]) if len(prices) >= 20 else None
+        # 同口径:20日高(不含今日)须足 21 行,短窗的「前高」是假压力锚
+        hi20_ex = max(prices[-21:-1]) if len(prices) >= 21 else None   # 不含今日
         r5 = r20 = None
         if len(prices) > 5 and prices[-6] > 0:
             r5 = prices[-1] / prices[-6] - 1
@@ -1407,7 +1416,11 @@ def _build_review(prior: dict | None, by_code: dict, quote_date):
                          "chg": None, "verdict": "na", "note": "已出池(市值/次新变动)"})
             continue
         chg = cur.chg_pct
-        chgs.append(chg if chg is not None else 0.0)
+        # 停牌/无行情(chg=None)不进均值与红盘率(2026-11-18 缺陷修复):
+        # 0.0 是假样本,既稀释 avg_chg 又拉低 red_rate 分母口径(行内 verdict
+        # 已如实标「今无行情」,统计侧不再把缺行情当平盘)
+        if chg is not None:
+            chgs.append(chg)
         if chg is not None and chg > 0:
             red += 1
         y5, y10 = s.get("ma5"), s.get("ma10")

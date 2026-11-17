@@ -146,6 +146,22 @@ def test_synth_tiers():
     # 烟蒂折价不够深 → 不入围
     out = _synth(S(score_schloss=85), 10.0, 100e8, *mk(-0.05, None), pb_pctile=None, report_late=0)
     check("浅折价不入烟蒂", out["channel"] is None and out["pick"] is None, str(out))
+    # 夹顶样例(2026-11-18 双计修复回归):施洛斯 100/折价 25% →
+    # 初始化 min(65, 50+10)=60,公共块不再加第二次折价(修复前=70 破封顶);
+    # 修复前旧样例(85/−20%)因不触夹顶而漏检——这是当年漏网的原因
+    out = _synth(S(score_schloss=100), 10.0, 100e8, *mk(-0.25, None), pb_pctile=None, report_late=0)
+    check("烟蒂封顶不破(双计修复)", out["channel"] == "stub" and out["pick"] == 60.0
+          and out["tier"] == "buy", str(out))
+    check("烟蒂折价文案保留", any("低 25%" in r for r in out["reasons"]), str(out["reasons"]))
+    # 港股比值族停用(混币种修复回归):net_cash_ratio 30%(≥30% 档 +3 分)在
+    # cur_consistent=False(港股)下不得计入
+    out_a = _synth(S(recommend=70, value=70, growth=70, net_cash_ratio=0.30),
+                   10.0, 100e8, *mk(None, None), pb_pctile=None, report_late=0)
+    out_hk = _synth(S(recommend=70, value=70, growth=70, net_cash_ratio=0.30),
+                    10.0, 100e8, *mk(None, None), pb_pctile=None, report_late=0,
+                    cur_consistent=False)
+    check("港股宽口径加分停用", out_hk["pick"] == 70.0 and out_a["pick"] == 73.0,
+          f"A={out_a['pick']} HK={out_hk['pick']}")
     # 灰带扣分:fraud 30 → −4;trap 15 → −5
     base = _synth(S(recommend=70, value=70, growth=70), 10.0, 100e8, *mk(None, None),
                   pb_pctile=None, report_late=0)
