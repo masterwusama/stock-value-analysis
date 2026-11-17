@@ -15,6 +15,13 @@ const SEO_TIP = '最近一次已发行定增：发行价（元/股）、发行�
 const BUY_TIP = '新=最新公告记录，完=最近已完成回购；同一笔合并展示。价、量、金额各自优先取累计成交值，缺项标注方案上限或计划区间。'
   + '新行日期为公告日（缺失取决议日），完行为完成日（缺失取公告日）。价格单位元/股，历史价格未复权。'
   + '注销/非注销/待核是公告中的股份用途分类；注销不代表已办理注销，回购完成也不等于注销完成。'
+// 买点列口径（2026-11-18 币种警示）：买点=报表本币每股值 vs 行情本币价,A/US 同币种成立;
+// 港股财报多为人民币(少数美元/港元)而行情是 HKD,折价% 含 ~8% 币差失真(掘金台的分数路径
+// 已停用该维度,列表列保留展示但跨币种慎读),待报表币种字段落库后修复
+const REF_TIP = '价格参考价 = 施洛斯/格雷厄姆防御买点、保守/公允卖点（每股,年报口径）。'
+  + '排序按买入性价比:现价相对买入参考价的折价越深越靠前(保守/公允价点格内小字),再点切换升/降序。'
+  + '【币种口径】A股/美股买点与行情同币种;港股行买点是报表币种(多为人民币,少数港元/美元)口径,'
+  + '与港元现价比较含 ~8% 币差失真——掘金台分数已停用该维度,本列保留展示,跨币种行请心里折算。'
   + '仅 A 股，未收录或未覆盖显示 -；不参与评分、买卖点或排序筛选。'
 
 const COLS = [
@@ -58,8 +65,8 @@ const COLS = [
   // 列头排序键 buy_* 走的是"买入性价比"（现价相对买价的折价深度，后端算），不是买价绝对值；
   // 格内保守/公允两档小字仍按各自卖价排。键名与 score_daily 列/SecurityItem 字段保持一致。
   // 排在股本事件之前：价格参考是估值域的延伸，紧贴资产组；事件是消息域，放表尾。
-  { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef', group: 'ref', edge: true },
-  { key: 'buy_schloss', label: '施洛斯 买/保/公', ref: true, school: 'schloss', group: 'ref' },
+  { key: 'buy_graham_def', label: '格防御 买/保/公', ref: true, school: 'grahamDef', group: 'ref', edge: true, tip: REF_TIP },
+  { key: 'buy_schloss', label: '施洛斯 买/保/公', ref: true, school: 'schloss', group: 'ref', tip: REF_TIP },
   { key: null, label: '定增', noSort: true, tip: SEO_TIP, group: 'event', edge: true },
   { key: null, label: '回购', noSort: true, tip: BUY_TIP, group: 'event' },
 ]

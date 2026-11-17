@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.pick import (  # noqa: E402
     BUY_MIN, STRONG_CAP_FLOOR, STRONG_MIN, STUB_BUY_MIN, WATCH_MIN,
-    _discounts, _expected_annual, _listed_cutoff, _report_late, _synth,
+    _discounts, _expected_annual, _listed_cutoff, _report_late, _synth, _to_item,
 )
 
 PASS = FAIL = 0
@@ -179,6 +179,25 @@ def test_synth_tiers():
     check("理由>=2", len(out["reasons"]) >= 2, str(out["reasons"]))
 
 
+def test_to_item_hk_discount_off():
+    """港股买点跨币种停用回归(2026-11-18):_to_item 对 market='HK' 把
+    折价族置 None——烟蒂通道不可达、折价 payload 为空;A 股不受影响。"""
+    from types import SimpleNamespace as NS
+    sec = NS(sid=1, code="00700", name="腾讯控股", market="HK", currency="HKD", industry="软件")
+    q = NS(price=240.0, change_pct=0.01, market_cap=3.4e12)  # 240<280:深折价,A股对照组须入烟蒂
+    t = date(2026, 11, 18)
+    s = S(score_schloss=100, net_cash_w=None, trade_date=t, report_date=date(2025, 12, 31),
+          buy_schloss=280.0, buy_graham_def=None, recommend_gate=None, mgmt=None)
+    it = _to_item(s, sec, q, None, {}, t)
+    check("HK折价停用", it.discount is None and it.discount_schloss is None
+          and it.channel != "stub", f"disc={it.discount} ch={it.channel}")
+    check("HK买点原值保留", it.buy_schloss is not None, str(it.buy_schloss))
+    sec_a = NS(sid=2, code="600000", name="浦发银行", market="A", currency="CNY", industry="银行")
+    it_a = _to_item(s, sec_a, q, None, {}, t)
+    check("A股折价不受影响", it_a.channel == "stub" and it_a.discount is not None,
+          f"disc={it_a.discount} ch={it_a.channel}")
+
+
 def test_synth_cycle_flags():
     # 周期位置旗三档(2026-11-13):strong 且 ≥75 高位旗 / ≤25 底部旗 / 其余「强周期」;非周期无旗
     out = _synth(S(recommend=70, value=70, growth=70, cyclical=True, cycle=85, cycle_class="strong"),
@@ -279,6 +298,7 @@ if __name__ == "__main__":
     test_discounts()
     test_synth_avoid()
     test_synth_tiers()
+    test_to_item_hk_discount_off()
     test_synth_cycle_flags()
     if "--live" in sys.argv:
         test_live()

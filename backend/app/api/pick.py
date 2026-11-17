@@ -513,6 +513,16 @@ def _to_item(s, sec, q, val_row, cov, today, negeq: bool = False) -> PickItem:
     price = float(q.price) if q.price is not None else None
     mcap_cny = float(q.market_cap) * (HK_TO_CNY if sec.market == "HK" else 1.0) if q.market_cap else None
     ds, dg, disc, anchor = _discounts(price, s.buy_schloss, s.buy_graham_def)
+    if sec.market == "HK":
+        # 买点跨币种停用(2026-11-18,与下方比值族同一缺陷家族):
+        # buy_schloss/buy_graham_def 是 score 时点存量列=报表本币每股值
+        # (港股财报多为人民币、少数美元/港元),与港元行情价比折价系统性失真
+        # (人民币报表 ~8% 低估折价,美元报表失真 7.8 倍量级)。烟蒂门槛/安全边际
+        # 加分/强推折价过硬项全部跨币种,拿不出可信折算就全部停用——强推仍可经
+        # PB 分位/股息两项过硬成立(PB 分位与股息率是比值口径,天然币种中性)。
+        # 报表币种字段落库后恢复(东财/新浪源均无币种元数据,已实测三接口)。
+        ds = dg = disc = None
+        anchor = None
     pb, pb_days = _fresh_pctile(val_row, s.trade_date)
     late = _report_late(s.report_date, today)
     # 净有息负债/市值:分子(财报本币)÷分母(行情同币种原币),比率天然币种中性,
