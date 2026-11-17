@@ -100,7 +100,32 @@ a { color: var(--accent); text-decoration: none; }
   background: linear-gradient(135deg, #4f8bff, #2d6cdf 60%, #7a5cf0);
   box-shadow: 0 2px 6px rgba(45, 108, 223, 0.45);
 }
-.topbar nav { display: flex; gap: 6px; }
+.topbar nav {
+  display: flex;
+  gap: 6px;
+  /* 导航溢出自滚:12 个路由在 601~1000px 桌面规则下总宽超视口,body overflow-x:clip
+     会把右侧导航项整排静默裁掉(不可见也不可达)——横滑规则必须放在基础层,
+     不能只留在手机块。宽屏下内容放得下,这些声明无副作用。 */
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  -webkit-overflow-scrolling: touch;
+}
+.topbar nav::-webkit-scrollbar { display: none; }
+/* 右缘渐隐提示还可横滑:盖在顶栏上而不是 mask 掉导航——mask 在不滚动时
+   也会把最后一项淡掉,白纱只压 padding 区,静置时几乎不可见 */
+.topbar::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 26px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.9));
+  pointer-events: none;
+}
 .topbar nav a {
   padding: 5px 13px;
   border-radius: 999px;
@@ -231,32 +256,14 @@ table.grid thead th.stick { z-index: 2; }
   input, select, textarea { font-size: 16px; }
 
   /* 顶栏：品牌固定在左，导航单行横滑成胶囊条（不再两行叠字）；
-     吸顶保持——详情页 .va-nav / 列表 .m-tgls 改挂在它下面（--stick-top）。 */
+     吸顶保持——详情页 .va-nav / 列表 .m-tgls 改挂在它下面（--stick-top）。
+     导航横滑与右缘渐隐已提为基础规则(601~1000px 同样需要),此处只留移动端专属。 */
   .topbar { gap: 0; padding: 0 6px 0 14px; }
-  /* 右缘渐隐提示还可横滑：盖在顶栏上而不是 mask 掉导航——mask 在不滚动时
-     也会把最后一项淡掉，白纱只压 padding 区，静置时几乎不可见 */
-  .topbar::after {
-    content: '';
-    position: absolute;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    width: 26px;
-    background: linear-gradient(90deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.9));
-    pointer-events: none;
-  }
   .topbar .brand { font-size: 15px; flex: none; }
   .topbar nav {
-    flex: 1 1 auto;
-    min-width: 0;
     margin-left: 10px;
     gap: 4px;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-    -webkit-overflow-scrolling: touch;
   }
-  .topbar nav::-webkit-scrollbar { display: none; }
   .topbar nav a { flex: none; padding: 6px 12px; font-size: 14px; }
   .topbar nav a.router-link-active { background: var(--accent); box-shadow: none; }
 
@@ -274,8 +281,10 @@ table.grid thead th.stick { z-index: 2; }
   }
   .toolbar .tabs::-webkit-scrollbar { display: none; }
   .tab { flex: none; white-space: nowrap; padding: 6px 13px; min-height: 32px; }
-  /* 干掉桌面的固定 200px：窄屏上它会把整行挤到溢出 */
-  .toolbar input { width: auto; flex: 1 1 140px; min-width: 0; min-height: 34px; }
+  /* 干掉桌面的固定 200px：窄屏上它会把整行挤到溢出。
+     font-size 须重申 16px：基础规则的 14px 与本条同特异度(0-1-1)，若删掉这条的
+     字号声明，本条不会让上面的元素级 16px 规则赢回——iOS 聚焦整页放大。 */
+  .toolbar input { width: auto; flex: 1 1 140px; min-width: 0; min-height: 34px; font-size: 16px; }
 
   .pager { flex-wrap: wrap; justify-content: center; gap: 8px; }
   .pager button { padding: 7px 16px; }

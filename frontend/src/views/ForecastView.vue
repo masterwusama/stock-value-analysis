@@ -17,6 +17,7 @@ const chartEl = ref(null)
 let chart = null
 let echarts = null
 const curCode = ref('')  // 主图序列(code),空=不画
+const confOpen = ref(false) // 把握徽标的依据/疑点展开态(触屏无悬浮,点按切换)
 
 onMounted(async () => {
   try {
@@ -133,6 +134,9 @@ function render() {
   }, true)
 }
 watch([curSid, curCode], () => nextTick(render))
+// 跨断点重渲染:grid/dataZoom/标题字号在 render 时读 isMobile 定参,
+// 只 resize 不重设的话手机横竖旋转后图表仍用旧断点参数
+watch(isMobile, () => nextTick(render))
 // 切标的时主图重置到新标的第一个序列(否则旧 curCode 会让主图定格在上一标的)
 watch(curSid, () => { curCode.value = '' })
 watch(() => allPrices.value.length, (n) => {
@@ -188,10 +192,16 @@ watch(() => allPrices.value.length, (n) => {
           <h3>动态预估</h3>
           <span class="sub">{{ target.model.period_label || '2026Q4E' }} · 三情景 · {{ periodShort === 'Q3' ? '价格已实现' : '每日随价格滚动' }}</span>
           <span v-if="target.model.confidence" class="conf" :class="'conf-' + (target.model.confidence.level || '')"
-                :title="'依据:\n· ' + (target.model.confidence.drivers || []).join('\n· ') + '\n\n疑点:\n· ' + (target.model.confidence.doubts || []).join('\n· ')">
+                :title="'依据:\n· ' + (target.model.confidence.drivers || []).join('\n· ') + '\n\n疑点:\n· ' + (target.model.confidence.doubts || []).join('\n· ')"
+                @click="confOpen = !confOpen">
             把握 {{ target.model.confidence.score }}<em>/100·{{ target.model.confidence.level }}</em>
           </span>
           <span class="sub proj-clock">{{ periodShort === 'Q3' ? 'Q3 已收官 · 价格全部已实现' : `Q4 已过 ${target.model.q4_window.days_gone}/${target.model.q4_window.days_total} 天` }} · 传导 {{ target.model.conduit }}</span>
+        </div>
+        <!-- 把握徽标的依据/疑点触屏没有悬浮,点按展开(桌面点按同样可用) -->
+        <div v-if="confOpen && target.model.confidence" class="conf-detail">
+          <p><b>依据</b>：<template v-for="(d, i) in target.model.confidence.drivers || []" :key="'d' + i">· {{ d }}<br /></template></p>
+          <p v-if="(target.model.confidence.doubts || []).length"><b>疑点</b>：<template v-for="(d, i) in target.model.confidence.doubts || []" :key="'x' + i">· {{ d }}<br /></template></p>
         </div>
 
         <div class="scn-cards">
@@ -423,6 +433,10 @@ tbody tr.on { background: var(--accent-soft, #eaf1fe); }
 /* 精确度自评徽标:高=绿/中高=蓝/中=琥珀/低=红灰,hover title 展示依据与疑点 */
 .conf { font-size: 13px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: help; }
 .conf em { font-style: normal; font-size: 11px; font-weight: normal; opacity: .75; }
+.conf-detail { font-size: 12px; color: #4b5563; background: #f8fafc; border: 1px solid #eef2f7;
+  border-radius: 8px; padding: 8px 11px; margin: 8px 0 0; line-height: 1.7; }
+.conf-detail p { margin: 2px 0; }
+.conf-detail b { color: #1d2735; }
 .conf-高 { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
 .conf-中高 { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
 .conf-中 { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }

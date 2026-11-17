@@ -96,7 +96,8 @@ var $ = function (id) { return document.getElementById(id); }
         ],
         dataZoom: [
           { type: 'inside', startValue: data.length - zoomN, endValue: data.length - 1 },
-          { type: 'slider', height: 14, bottom: 6, startValue: data.length - zoomN, endValue: data.length - 1 }
+          // 移动端滑杆加高到 18:14px 拖把手指点不中(与 Forecast/Etf/Sentiment 统一)
+          { type: 'slider', height: mqMobile.matches ? 18 : 15, bottom: 6, startValue: data.length - zoomN, endValue: data.length - 1 }
         ],
         series: []
       };

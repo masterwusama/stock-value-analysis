@@ -6,7 +6,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { get } from '../api/client'
 import { ensureEcharts } from '../lib/echartsLoader'
-import { MOBILE_QUERY } from '../lib/useMediaQuery'
+import { useMediaQuery, MOBILE_QUERY } from '../lib/useMediaQuery'
 
 const router = useRouter()
 
@@ -278,8 +278,9 @@ function onCloudClick(params) {
   if (params.data?.code) router.push(`/stock/${params.data.code}`)
 }
 
-const isMobile = ref(window.matchMedia(MOBILE_QUERY).matches)
-let mq = null
+// 断点走共用 useMediaQuery(初值当场求值 + change 之外的 resize 兜底 + 卸载自动清理,
+// 不再本地复刻只挂 change 的版本——WebView 不派发 change 时桌面旋转会漏翻)
+const isMobile = useMediaQuery(MOBILE_QUERY)
 function onResize() { chart?.resize() }
 function fmtCap(v, cur) {
   if (v == null) return '—'
@@ -313,9 +314,6 @@ const rGateNote = (s) => {
 }
 
 onMounted(async () => {
-  mq = window.matchMedia(MOBILE_QUERY)
-  const onMq = (e) => { isMobile.value = e.matches }
-  mq.addEventListener?.('change', onMq)
   window.addEventListener('resize', onResize)
 
   // hash 恢复
@@ -435,8 +433,10 @@ onBeforeUnmount(() => {
           <input v-model="keyword" placeholder="代码/名称" @input="onKeyword" />
         </div>
 
-        <!-- 桌面表格 -->
-        <table v-if="!isMobile" class="grid pick-table">
+        <!-- 桌面表格:必须自带横滚容器。平板 601~1024px 之下 10 列 nowrap 远超视口,
+             body 是 overflow-x:clip(保 sticky 体系),没有这层容器右半边会被静默裁掉且无法滑。 -->
+        <div v-if="!isMobile" class="tbl-wrap">
+          <table class="grid pick-table">
           <thead>
             <tr>
               <th class="l stick">标的</th>
@@ -480,6 +480,7 @@ onBeforeUnmount(() => {
             </tr>
           </tbody>
         </table>
+        </div>
 
         <!-- 移动端卡片 -->
         <div v-else class="m-list">
@@ -627,6 +628,9 @@ onBeforeUnmount(() => {
 
 .list-card { margin-bottom: 14px; }
 .sel { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); font-size: 13px; }
+/* 桌面宽表横滚容器:平板 601~1024px 下 10 列 nowrap 超视口,
+   body 是 overflow-x:clip(保 sticky),没有这层右半边(市值/风险列)被静默裁掉且无法横滑 */
+.tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .pick-table th.on { color: var(--accent); font-weight: 700; }
 .pick-table .rank { color: var(--sub); font-size: 11px; display: inline-block; width: 22px; }
 .nm-row { display: flex; align-items: center; gap: 6px; }
@@ -687,8 +691,10 @@ onBeforeUnmount(() => {
     -webkit-overflow-scrolling: touch;
   }
   .list-card .toolbar .tabs::-webkit-scrollbar { display: none; }
-  .list-card .toolbar .sel { flex: 1 1 auto; min-width: 0; min-height: 34px; }
+  .list-card .toolbar .sel { flex: 1 1 auto; min-width: 0; min-height: 34px; font-size: 16px; }
   .list-card .toolbar input { flex: 1 1 120px; min-width: 0; min-height: 34px; }
+  /* 排除行业 chip 触控目标 ≥32px(桌面 24px 高在拇指下误触率高) */
+  .ex-chip { padding: 6px 10px; min-height: 32px; }
   /* 排除行业弹层：近全屏高度 + 底部安全区，触控行加高 */
   .ex-panel { width: min(440px, 94vw); max-height: min(82vh, 640px); padding: 14px; }
   .ex-item { padding: 10px 12px; }

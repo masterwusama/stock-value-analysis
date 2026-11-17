@@ -10,11 +10,12 @@
 import { computed, onBeforeUnmount, onMounted, nextTick, ref, watch } from 'vue'
 import { get } from '../api/client'
 import { ensureEcharts } from '../lib/echartsLoader'
-import { useMediaQuery } from '../lib/useMediaQuery'
+import { useMediaQuery, MOBILE_QUERY } from '../lib/useMediaQuery'
 
-// 移动断点与 CSS .m 类统一 640px(MOBILE_QUERY 全局常量是 600px,本页自带);
-// 样式用 .m class 而非 @media——桌面注入 class 即可验证移动布局
-const isMobile = useMediaQuery('(max-width: 640px)')
+// 移动断点与全局统一 600px(2026-11-18 前自用 640px,601~640 区间与全站断点割裂:
+// 顶栏/全局走桌面规则而本页已是移动布局)。样式用 .m class 而非 @media——
+// 桌面注入 class 即可验证移动布局
+const isMobile = useMediaQuery(MOBILE_QUERY)
 const cur = ref('gold')    // 当前商品 gold | silver
 const data = ref(null)
 const error = ref('')
@@ -577,6 +578,18 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
 .stress-tbl .ok { color: var(--up, #dc2626); }
 .m .stress-tbl { font-size: 11.5px; }
 .m .stress-tbl td, .m .stress-tbl th { padding: 5px 6px; }
+/* 首三列(存续#/损伤#/公司)固定:13 列横滑时始终知道自己在看哪家——
+   手机横到 PS分位 早就忘了行头。背景必须不透明,否则滚动内容从下面透出 */
+.m .stress-tbl th:nth-child(-n+3), .m .stress-tbl td:nth-child(-n+3) {
+  position: sticky; z-index: 1; background: var(--card, #fff);
+  box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.18);
+}
+.m .stress-tbl th:nth-child(1), .m .stress-tbl td:nth-child(1) { left: 0; min-width: 30px; }
+.m .stress-tbl th:nth-child(2), .m .stress-tbl td:nth-child(2) { left: 32px; min-width: 34px; }
+.m .stress-tbl th:nth-child(3), .m .stress-tbl td:nth-child(3) { left: 66px; min-width: 86px; }
+.m .stress-tbl tr.worst td:nth-child(-n+3) { background: #fff7ed; }
+/* 范围下拉 12px 会触发 iOS 聚焦整页放大(agro.css 同坑已修,此处补齐) */
+.m .tools select { font-size: 16px; padding: 4px 8px; }
 
 /* 商品切换条:独立一行,桌面自动换行,移动端横向滚动 */
 .seg-bar { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -584,7 +597,7 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
   background: var(--card, #fff); cursor: pointer; color: var(--txt-2, #4b5563); }
 .seg-btn.on { border-color: var(--accent, #2d6cdf); color: #fff; background: var(--accent, #2d6cdf); font-weight: 600; }
 
-/* ---- 移动端(≤640px,isMobile 注入 .m 类;桌面注入同名 class 可直接验证) ---- */
+/* ---- 移动端(≤600px 与全站断点一致,isMobile 注入 .m 类;桌面注入同名 class 可直接验证) ---- */
 .m .card { padding: 10px 12px; border-radius: 10px; }
 .m .card h3 { font-size: 14px; }
 .m .title-row { align-items: flex-start; }
@@ -663,5 +676,5 @@ watch(isMobile, () => nextTick(() => { renderCore(); render() }))
 .i-foot { font-size: 10.5px; color: var(--sub, #9ca3af); margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .foot { line-height: 1.8; padding: 8px 4px 0; }
-/* 移动规则统一走 .m 类(见上),不再用 @media——断点由 useMediaQuery(640px) 单点维护 */
+/* 移动规则统一走 .m 类(见上),不再用 @media——断点由 useMediaQuery(600px) 单点维护 */
 </style>

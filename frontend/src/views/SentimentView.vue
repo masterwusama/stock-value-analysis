@@ -7,6 +7,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, nextTick } from 'vue'
 import { get } from '../api/client'
 import { ensureEcharts } from '../lib/echartsLoader'
+import { MOBILE_QUERY } from '../lib/useMediaQuery'
+
+// 手机断点读数(仅图表渲染参数用,模板分支全走 @media CSS)
+const atMobile = () => window.matchMedia(MOBILE_QUERY).matches
 
 const daily = ref(null)
 const history = ref([])          // 升序(旧→新),来自 /sentiment/history
@@ -158,7 +162,7 @@ function renderTrend() {
     ],
     dataZoom: [
       { type: 'inside', xAxisIndex: [0, 1, 2, 3], start: startPct, end: 100, zoomOnMouseWheel: false, moveOnMouseWheel: true },
-      { type: 'slider', xAxisIndex: [0, 1, 2, 3], start: startPct, end: 100, bottom: 2, height: 16,
+      { type: 'slider', xAxisIndex: [0, 1, 2, 3], start: startPct, end: 100, bottom: 2, height: atMobile() ? 18 : 16,
         borderColor: '#e5e7eb', fillerColor: 'rgba(37,99,235,0.08)' },
     ],
     series: [
@@ -476,6 +480,8 @@ details > summary .sub { font-weight: normal; }
   /* 翻日按钮整行、触控加高 */
   .nav { margin-top: 10px; }
   .nav button { flex: 1; min-height: 38px; font-size: 13px; border-radius: 9px; }
+  /* 黑名单/跌停 chip 是可点的详情链接,24px 高拇指误触率高,加到 32px */
+  .chips .chip { display: inline-flex; align-items: center; padding: 6px 12px; min-height: 32px; }
   .trow { font-size: 12px; }
   .tbl { font-size: 12px; }
   .trend { height: 320px; }

@@ -7,6 +7,10 @@
 import { computed, onBeforeUnmount, onMounted, nextTick, ref, watch } from 'vue'
 import { get } from '../api/client'
 import { ensureEcharts } from '../lib/echartsLoader'
+import { MOBILE_QUERY } from '../lib/useMediaQuery'
+
+// 手机断点读数(仅渲染参数用,不驱动模板分支——本页模板分支全走 @media CSS)
+const atMobile = () => window.matchMedia(MOBILE_QUERY).matches
 
 const list = ref([])
 const detail = ref(null)
@@ -247,7 +251,7 @@ function renderChart() {
     ],
     dataZoom: [
       { type: 'inside', xAxisIndex: [0, 1], start, end: 100, zoomOnMouseWheel: false, moveOnMouseWheel: true },
-      { type: 'slider', xAxisIndex: [0, 1], start, end: 100, bottom: 2, height: 16,
+      { type: 'slider', xAxisIndex: [0, 1], start, end: 100, bottom: 2, height: atMobile() ? 18 : 16,
         borderColor: '#e5e7eb', fillerColor: 'rgba(37,99,235,0.08)' },
     ],
     series: [
@@ -326,6 +330,8 @@ function renderChart() {
               <span class="chip v" v-else>估值样本 {{ valuation.sample_days }} 日</span>
               <span class="chip v" v-if="holdings.source === 'f10'">持仓为季报前十口径(覆盖率 {{ ((holdings.weight_covered || 0) * 100).toFixed(1) }}%)</span>
             </div>
+            <!-- 估值口径提示:桌面悬浮可见,移动端常驻小字(持仓=自算权重加权,Wind=官方市值加权) -->
+            <div class="val-hint">口径:持仓=按实际持仓权重自算 · Wind=市值加权,与官方读数同源(中证系取官方滚动PE回填全史)——两者背离时以 Wind 口径对表</div>
           </div>
         </section>
 
@@ -576,6 +582,9 @@ details > summary { cursor: pointer; font-size: 13px; font-weight: 600; margin: 
 
 .note { color: var(--sub, #9ca3af); font-size: 12px; line-height: 1.7; }
 
+/* 估值口径提示:桌面悬浮 chip title 已覆盖,默认隐藏只在移动端常驻 */
+.val-hint { display: none; font-size: 11px; color: var(--sub, #9ca3af); line-height: 1.6; margin-top: 6px; }
+
 @media (max-width: 600px) {
   .head { flex-direction: column; align-items: stretch; gap: 10px; }
   .score-badge { align-self: flex-start; display: flex; align-items: baseline; gap: 8px; padding: 8px 14px; }
@@ -586,5 +595,12 @@ details > summary { cursor: pointer; font-size: 13px; font-weight: 600; margin: 
   .chart { height: 300px; }
   .tbl { font-size: 12px; }
   .card { padding: 12px 11px; }
+  .val-hint { display: block; }
+  /* 成份表前两列(权重/代码名称)固定:横滑后始终知道在看哪家 */
+  .tbl th:first-child, .tbl td:first-child { position: sticky; left: 0; z-index: 1;
+    min-width: 56px; background: var(--card, #fff); box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.18); }
+  .tbl th:nth-child(2), .tbl td:nth-child(2) { position: sticky; left: 56px; z-index: 1;
+    background: var(--card, #fff); box-shadow: 6px 0 6px -6px rgba(0, 0, 0, 0.18); }
+  .tbl thead th:first-child, .tbl thead th:nth-child(2) { z-index: 3; }
 }
 </style>

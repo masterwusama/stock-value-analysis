@@ -10,9 +10,10 @@
 import { computed, onBeforeUnmount, onMounted, nextTick, ref, watch } from 'vue'
 import { get } from '../api/client'
 import { ensureEcharts } from '../lib/echartsLoader'
-import { useMediaQuery } from '../lib/useMediaQuery'
+import { useMediaQuery, MOBILE_QUERY } from '../lib/useMediaQuery'
 
-const isMobile = useMediaQuery('(max-width: 640px)')
+// 断点与全站统一 600px(原自用 640px,601~640 区间与全局顶栏/吸顶规则割裂)
+const isMobile = useMediaQuery(MOBILE_QUERY)
 const ov = ref(null)      // /overview 温度计
 const evs = ref(null)     // /events 事件+应验度+exposure
 const scn = ref(null)     // /scenarios 情景树
@@ -24,6 +25,7 @@ const loading = ref(false)
 
 const mEl = ref(null)     // 热力图容器
 const cEl = ref(null)     // 传导链图容器
+const chainH = ref('240px') // 传导链画布高度(按节点数动态,防纵裁)
 let mChart = null
 let cChart = null
 let echarts = null
@@ -267,6 +269,11 @@ function renderChain() {
   const m = isMobile.value
   if (m && cEl.value) cEl.value.style.width = '1020px'
   if (!m && cEl.value) cEl.value.style.width = '100%'
+  // 高度按节点数动态:LR 树纵向 span 随节点线性涨,240px 死高在链条长时纵裁
+  // (canvas 外内容直接丢失,roam=false 也无法拖看)——桌面留 240,移动按 26px/节点
+  // 估算并封顶 640(再高吸顶导航就找不到了,极端长链靠 tooltip confine 兜底)
+  const h = m ? Math.min(640, Math.max(240, (chs.value.chains.find((x) => x.id === curChain.value)?.nodes?.length || 0) * 26)) : 240
+  chainH.value = `${h}px`
   cChart.resize()
   const rawOf = Object.fromEntries(ch.nodes.map((n) => [n.name, n]))
   const kids = Object.fromEntries(ch.nodes.map((n) => [n.id, []]))
@@ -598,7 +605,11 @@ onBeforeUnmount(() => {
           <button v-for="ch in chs.chains" :key="ch.id" type="button" class="tab"
                   :class="{ on: curChain === ch.id }" @click="curChain = ch.id">{{ ch.title }}</button>
         </div>
-        <div ref="cEl" class="c-chart" :style="{ height: isMobile ? '240px' : '240px' }"></div>
+        <!-- 横滚容器必须有:移动端画布固定 1020px 宽,body overflow-x:clip 之下
+             没有这层右半边被静默裁掉(与矩阵 .mx-scroll 同款) -->
+        <div class="chain-scroll">
+          <div ref="cEl" class="c-chart" :style="{ height: chainH }"></div>
+        </div>
         <p v-if="curChainObj" class="dim" style="margin: 8px 2px 0">
           <template v-if="curChainObj.validation?.verified" style="color:#166534"><span style="color:#166534">✓ 已实测对照</span></template>
           <span v-else style="color:#9ca3af">◎ 方向先验·未回测</span>
@@ -839,6 +850,8 @@ onBeforeUnmount(() => {
 
 /* ---- 传导链图谱(P1) ---- */
 .c-chart { width: 100%; }
+/* 移动端画布 1020px 定宽靠这层横滚(body clip 之下裸放会被静默裁掉) */
+.chain-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 /* ---- 候选雷达(P2) ---- */
 .cand-list { display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
@@ -871,7 +884,7 @@ onBeforeUnmount(() => {
 .pb-note { color: var(--sub, #6b7280); }
 .pb-lesson { color: #92400e; background: #fffbeb; border-radius: 6px; padding: 8px 10px; }
 
-/* ---- 移动端(≤640px,.m 类单点维护) ---- */
+/* ---- 移动端(≤600px 与全站断点一致,.m 类单点维护) ---- */
 /* 章节吸顶导航:topbar(54px sticky)之下再 sticky;跳转目标 scroll-margin 让出双栈高度 */
 .sec-nav { position: sticky; top: var(--stick-top, 58px); z-index: 20;
   display: flex; gap: 6px; overflow-x: auto; -webkit-overflow-scrolling: touch;
@@ -882,6 +895,7 @@ onBeforeUnmount(() => {
   color: var(--txt-2, #4b5563); cursor: pointer; }
 .sec-chip.on { border-color: var(--accent, #2d6cdf); color: #fff;
   background: var(--accent, #2d6cdf); font-weight: 600; }
+.m .sec-chip { min-height: 32px; }
 .to-top { position: fixed; right: 14px; bottom: 20px; z-index: 30; width: 40px; height: 40px;
   border-radius: 50%; border: 1px solid var(--line, #e5e9f2); background: var(--card, #fff);
   box-shadow: var(--shadow-m, 0 2px 10px rgba(20,30,55,.14)); font-size: 16px;

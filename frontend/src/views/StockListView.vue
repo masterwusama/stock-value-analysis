@@ -468,6 +468,15 @@ watch(market, () => {
 // windMode 同理：它是整列口径的开关，不在依赖里就会看到“点了没反应”的老毛病。
 watch([market, board, sort, order, page, kwDebounced, windMode, niche, gateFlag, stMode], load)
 watch(pageSize, load)
+// 跨断点旋转同步 pageSize:初值按断点定死(20/50),旋转翻转后不联动会一直用旧页大小。
+// 只在携带「另一断点的默认值」时才翻(用户手动选过 100 等自定义值则不动),页码拉回 1(watch(pageSize) 自动重拉)
+watch(isMobile, (m) => {
+  const otherDefault = m ? 50 : 20
+  if (pageSize.value === otherDefault) {
+    pageSize.value = m ? 20 : 50
+    page.value = 1
+  }
+})
 // 状态写入 hash query（防抖 replace 不产生历史；只写非默认值，URL 保持可读）。
 // 刷新/分享/收藏即恢复——这是筛选状态唯一的持久化出口。
 let routeTimer = null

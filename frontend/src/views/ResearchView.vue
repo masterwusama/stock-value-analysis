@@ -370,10 +370,14 @@ section.card:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(20, 30, 
 @media (max-width: 600px) {
   /* 研报卡:标题/区间换行、摘要行高收紧 */
   section.card { padding: 12px 12px; }
-  /* 检索条:窄屏占满整行,三个下拉均分第二行,计数换行 */
+  /* 检索条:窄屏占满整行,三个下拉均分第二行,计数换行。
+     .search/.filter 基础 13px 特异度(0-1-0)压过全局元素级 16px 规则,
+     须在此重申 16px——否则手机上一点检索框/下拉 iOS 整页放大且不回缩 */
   .toolbar { flex-wrap: wrap; row-gap: 6px; }
-  .search { max-width: none; width: 100%; }
-  .filter { flex: 1 1 30%; min-width: 0; }
+  .search { max-width: none; width: 100%; font-size: 16px; }
+  .filter { flex: 1 1 30%; min-width: 0; font-size: 16px; }
+  /* 翻页钮触控目标 ≥32px(桌面 26px 高拇指误触率高) */
+  .pager button { min-height: 32px; min-width: 32px; padding: 6px 12px; }
   .row1 { flex-wrap: wrap; row-gap: 4px; }
   .row1 .date { margin-left: 0; flex-basis: 100%; order: 9; }
   .row2 h3 { font-size: 15px; }

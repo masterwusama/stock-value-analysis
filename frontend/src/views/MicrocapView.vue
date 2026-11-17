@@ -7,7 +7,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { get } from '../api/client'
-import { MOBILE_QUERY } from '../lib/useMediaQuery'
+import { useMediaQuery, MOBILE_QUERY } from '../lib/useMediaQuery'
 
 const router = useRouter()
 
@@ -210,10 +210,6 @@ const riskTitle = (it) => {
 const heatOnMine = (it) => it.risk_level >= 2 && (it.heat || 0) >= 70
 
 onMounted(async () => {
-  const mq = window.matchMedia(MOBILE_QUERY)
-  const onMq = (e) => { isMobile.value = e.matches }
-  mq.addEventListener?.('change', onMq)
-
   const q = new URLSearchParams(location.hash.split('?')[1] || '')
   if (q.get('pool')) pool.value = q.get('pool')
   if (q.get('band')) band.value = q.get('band')
@@ -235,8 +231,9 @@ onMounted(async () => {
     loading.value = false
   }
 })
-// 初值必须当场求值:只挂 change 监听的话,移动端直接加载(从不缩放)会永远渲染桌面表格
-const isMobile = ref(window.matchMedia(MOBILE_QUERY).matches)
+// 断点走共用 useMediaQuery:初值当场求值(移动端直载不会误渲桌面表)+change 之外的
+// resize 兜底(WebView 不派发 change 也能翻)+卸载自动清理——本地复刻版三者皆缺
+const isMobile = useMediaQuery(MOBILE_QUERY)
 onBeforeUnmount(() => { clearTimeout(kwTimer) })
 </script>
 
@@ -518,6 +515,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           <button class="chip" :class="{ on: preset === 'trade' }" title="投机推荐分≥65:热度×(100−危险度)/100,热度够且短期回撤折损小——进攻首选档" @click="setPreset('trade')">可上手</button>
           <button v-if="preset" class="chip" @click="setPreset(preset)">清除</button>
         </div>
+        <!-- 快捷预设口径触屏不可悬浮,移动端给一行小字(桌面隐藏) -->
+        <div class="preset-hint">口径:涨停=今日板(含晋级) · 断板=昨日板今日未续 · 扭亏=亏转正摘帽博弈 · 可上手=spec≥65(热度×(100−危险度))</div>
         <div class="toolbar">
           <div class="tabs">
             <button v-for="t in POOL_TABS" :key="t.key" class="tab" :class="{ active: pool === t.key }"
@@ -540,8 +539,9 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
           已筛概念 <b>{{ concept }}</b><i class="ex-x" @click="setConcept(concept)">×</i>
         </div>
 
-        <!-- 桌面表格 -->
-        <table v-if="!isMobile" class="grid mc-table">
+        <!-- 桌面表格:自带横滚容器(理由同掘金台——body clip 之下平板区间右半边会被静默裁掉) -->
+        <div v-if="!isMobile" class="tbl-wrap">
+        <table class="grid mc-table">
           <thead>
             <tr>
               <th class="l stick">标的</th>
@@ -618,6 +618,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
             </tr>
           </tbody>
         </table>
+        </div>
 
         <!-- 移动端卡片 -->
         <div v-else class="m-list">
@@ -840,6 +841,8 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .preset-label { font-size: 12px; color: #8a94a6; }
 .preset-row .chip.on { background: #f4eefd; border-color: #b9a3e8; color: #6c3fc5; font-weight: 600; }
+/* 预设口径提示:桌面悬浮有 title,默认隐藏只在移动端显形 */
+.preset-hint { display: none; font-size: 11.5px; color: #8a94a6; line-height: 1.5; margin: -2px 0 8px; }
 /* 热度列迷你条 */
 .heat-cell { display: flex; flex-direction: column; gap: 3px; min-width: 46px; }
 .hbar { display: block; height: 3px; background: #eef0f3; border-radius: 2px; overflow: hidden; }
@@ -848,6 +851,9 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
 .mc-table th { white-space: nowrap; font-weight: 600; cursor: pointer; }
 .mc-table th.on { color: #2d6cdf; }
 .mc-table td { white-space: nowrap; }
+/* 桌面宽表横滚容器:13 列 nowrap 在平板 601~1024px 超视口,
+   body overflow-x:clip 之下没有这层右半边被静默裁掉且无法横滑 */
+.tbl-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .nm-row { display: flex; align-items: center; gap: 6px; }
 .cd { color: #8a94a6; font-size: 11.5px; }
 .seal { margin-left: 4px; font-size: 11px; color: #8a94a6; }
@@ -924,6 +930,7 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
   }
   .preset-row::-webkit-scrollbar { display: none; }
   .preset-row .chip { flex: none; white-space: nowrap; }
+  .preset-hint { display: block; }
   /* 环境行:五个指标一条横滑,不折行 */
   .env-row {
     flex-wrap: nowrap;
@@ -973,9 +980,12 @@ onBeforeUnmount(() => { clearTimeout(kwTimer) })
   }
   .list-card .toolbar .tabs::-webkit-scrollbar { display: none; }
   .list-card .toolbar .tabs .tab { flex: none; white-space: nowrap; }
-  .list-card .toolbar .sel { flex: 1 1 auto; min-width: 0; min-height: 34px; }
+  .list-card .toolbar .sel { flex: 1 1 auto; min-width: 0; min-height: 34px; font-size: 16px; }
   .list-card .toolbar input { flex: 1 1 120px; min-width: 0; min-height: 34px; }
-  /* 已筛概念条不满宽 */
+  /* 已筛概念条不满宽;chip 的 × 是唯一出口,触控目标加高 */
   .concept-active { max-width: 100%; }
+  .concept-active .ex-x { padding: 4px 6px; }
+  /* 速查表三列长文案在窄屏溢出:块化+横滚(research 正文表格同款模式) */
+  .cheat-table { display: block; width: max-content; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
 </style>
