@@ -119,10 +119,10 @@ CREATE TABLE score_daily (
 	score_schloss DOUBLE, 
 	fraud DOUBLE, 
 	mgmt DOUBLE, 
-	cycle DOUBLE,
-	cyclical BOOL,
-	cycle_trend VARCHAR(8),
-	cycle_class VARCHAR(16),
+	cycle DOUBLE, 
+	cyclical BOOL, 
+	cycle_trend VARCHAR(8), 
+	cycle_class VARCHAR(16), 
 	trap DOUBLE, 
 	trap_c DOUBLE, 
 	trap_eval INTEGER, 
@@ -130,8 +130,8 @@ CREATE TABLE score_daily (
 	growth_eval INTEGER, 
 	value DOUBLE, 
 	value_eval INTEGER, 
-	recommend DOUBLE,
-	recommend_gate VARCHAR(48),
+	recommend DOUBLE, 
+	recommend_gate VARCHAR(48), 
 	interim_dip DOUBLE, 
 	w_cash DOUBLE, 
 	int_debt DOUBLE, 
@@ -160,23 +160,23 @@ CREATE TABLE score_daily (
 	PRIMARY KEY (sid, trade_date)
 );
 
+CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
+
+CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
+
+CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
+
+CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
+
+CREATE INDEX idx_list_value ON score_daily (trade_date, value);
+
+CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
+
 CREATE INDEX idx_list_schloss ON score_daily (trade_date, score_schloss);
 
 CREATE INDEX idx_list_gate ON score_daily (trade_date, gate);
 
 CREATE INDEX idx_list_mgmt ON score_daily (trade_date, mgmt);
-
-CREATE INDEX idx_list_cycle ON score_daily (trade_date, cycle);
-
-CREATE INDEX idx_list_trap ON score_daily (trade_date, trap);
-
-CREATE INDEX idx_list_fraud ON score_daily (trade_date, fraud);
-
-CREATE INDEX idx_list_growth ON score_daily (trade_date, growth);
-
-CREATE INDEX idx_list_value ON score_daily (trade_date, value);
-
-CREATE INDEX idx_list_graham_def ON score_daily (trade_date, score_graham_def);
 
 CREATE TABLE valuation_pctile (
 	sid INTEGER NOT NULL AUTO_INCREMENT, 
@@ -533,4 +533,32 @@ CREATE TABLE theory_daily (
 );
 
 CREATE INDEX idx_theory_daily_scan ON theory_daily (theory_id, trade_date, tier);
+
+CREATE TABLE inst_holding (
+	holder_code VARCHAR(16) NOT NULL, 
+	holder_name VARCHAR(128) NOT NULL, 
+	holder_type VARCHAR(16) NOT NULL, 
+	holder_type_sub VARCHAR(32), 
+	secu_code VARCHAR(16) NOT NULL, 
+	secu_name VARCHAR(64) NOT NULL, 
+	end_date VARCHAR(10) NOT NULL, 
+	report_name VARCHAR(32), 
+	is_std_period BOOL NOT NULL, 
+	hold_num DOUBLE, 
+	free_ratio DOUBLE, 
+	free_ratio_qoq DOUBLE, 
+	change_type VARCHAR(16), 
+	change_num DOUBLE, 
+	hold_mktcap DOUBLE, 
+	holder_rank SMALLINT, 
+	shares_type VARCHAR(8) NOT NULL, 
+	updated_at DATETIME NOT NULL, 
+	PRIMARY KEY (holder_code, holder_name, secu_code, end_date, shares_type)
+);
+
+CREATE INDEX idx_inst_holding_secu ON inst_holding (secu_code, end_date);
+
+CREATE INDEX idx_inst_holding_type ON inst_holding (holder_type, end_date);
+
+CREATE INDEX idx_inst_holding_holder ON inst_holding (holder_code, end_date);
 

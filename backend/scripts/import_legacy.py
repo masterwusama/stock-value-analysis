@@ -66,6 +66,7 @@ from app.models import (
     FinIncome,
     FinIndicator,
     FinNote,
+    InstHolding,
     PeriodicReport,
     QuoteDaily,
     ScoreDaily,
@@ -94,6 +95,7 @@ AVIATION_DIR = LEGACY_DATA_DIR / "commodity-aviation" / "data"
 FERROUS_DIR = LEGACY_DATA_DIR / "commodity-ferrous" / "data"
 AGRI_DIR = LEGACY_DATA_DIR / "commodity-agri" / "data"
 WORLDGEO_DIR = LEGACY_DATA_DIR / "commodity-worldgeo" / "data"
+INST_DIR = LEGACY_DATA_DIR / "inst" / "data"
 SENTIMENT_DIR = LEGACY_DATA_DIR / "data" / "sentiment"  # 与 fetch_sentiment 的 OUT 同径
 
 # Wind 事件类型 → etype
@@ -1081,6 +1083,33 @@ def import_forecast(db, stats):
             stats["fc_target"] += 1
 
 
+def import_inst(db, stats):
+    """collector/inst/data/freeholders_{期}.json → inst_holding(自然主键 upsert)。
+
+    社保及外资持仓模块(设计:docs/设计-社保及外资持仓模块.md)。历史期文件由
+    backfill_inst.py 一次性生成后冻结,当期文件由 fetch_inst.py 周任务全量重写,
+    两者同构:逐文件全量重放幂等。不追删:机构从十大流通股东消失本就该留痕,
+    相邻期 diff(新进/减持判定源侧已给)与单股机构历史都靠旧行存在。
+    """
+    if not INST_DIR.exists():
+        return  # 首轮采集还没跑过:无源可读不是回灌失败
+    w = _Writer(db, stats, InstHolding, mode="upsert")
+    for path in sorted(INST_DIR.glob("freeholders_*.json")):
+        try:
+            src = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            stats["inst.skipped_broken"] += 1
+            continue
+        upd = parse_dt(src.get("updated_at")) or datetime.now()
+        for x in src.get("rows") or []:
+            if not x.get("holder_code") or not x.get("secu_code") or not x.get("end_date"):
+                stats["inst.skipped_incomplete"] += 1
+                continue
+            w.add(dict(x, updated_at=upd))
+            stats["inst.rows"] += 1
+    w.flush()
+
+
 def _as_date(v):
     """源侧日期是文本（'2026-05-20' / '2026-05-20 00:00:00'），认不出的当缺失而不是抛错。"""
     return parse_date(v) if isinstance(v, str) and DATE_RE.match(v) else None
@@ -1606,6 +1635,9 @@ def main():
     ap.add_argument("--only-worldgeo", action="store_true",
                     help="只回灌 commodity-worldgeo/data/worldgeo.json 世界局势派生序列"
                          "（fetch_worldgeo 采集后跑；cmd_indicator/cmd_value 两表）")
+    ap.add_argument("--only-inst", action="store_true",
+                    help="只回灌 inst/data/freeholders_*.json 机构持仓(社保及外资模块;"
+                         "fetch_inst/backfill_inst 采集后跑；inst_holding 一表)")
     ap.add_argument("--quiet", action="store_true", help="不打导入进度")
     args = ap.parse_args()
     if args.only_fresh and not args.no_clean:
@@ -1643,6 +1675,8 @@ def main():
         args.no_clean = True
     if args.only_agri:
         args.no_clean = True
+    if args.only_inst:
+        args.no_clean = True
 
     started = datetime.now()
     db = SessionLocal()
@@ -1660,6 +1694,7 @@ def main():
             else "only-ferrous" if args.only_ferrous
             else "only-agri" if args.only_agri
             else "only-worldgeo" if args.only_worldgeo
+            else "only-inst" if args.only_inst
             else ("only-fresh" if args.only_fresh else "full"))
     try:
         if not args.no_clean:
@@ -1693,6 +1728,8 @@ def main():
             import_agri(db, stats)
         elif args.only_worldgeo:
             import_worldgeo(db, stats)
+        elif args.only_inst:
+            import_inst(db, stats)
         elif args.only_case:
             # 先灌公告面，再刷分：立案旗与 ST 高危补旗都发生在 score 行重建（build_score_rows）里
             import_case(db, stats)

@@ -20,6 +20,8 @@ onMounted(prefetchEcharts)
       <router-link to="/forecast">业绩预测</router-link>
       <router-link to="/sentiment">情绪日报</router-link>
       <router-link to="/etf">ETF评估</router-link>
+      <router-link to="/inst">机构持仓</router-link>
+      <router-link to="/theory">价值理论</router-link>
       <router-link to="/research">投研库</router-link>
     </nav>
   </header>

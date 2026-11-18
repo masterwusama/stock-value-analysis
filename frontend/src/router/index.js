@@ -12,6 +12,8 @@ const routes = [
   { path: '/forecast', name: 'forecast', component: () => import('../views/ForecastView.vue') },
   { path: '/sentiment', name: 'sentiment', component: () => import('../views/SentimentView.vue') },
   { path: '/etf', name: 'etf', component: () => import('../views/EtfView.vue') },
+  { path: '/inst', name: 'inst', component: () => import('../views/InstView.vue') },
+  { path: '/theory', name: 'theory', component: () => import('../views/TheoryView.vue') },
   { path: '/research', name: 'research', component: () => import('../views/ResearchView.vue') },
   { path: '/research/:slug', name: 'research-report', component: () => import('../views/ResearchView.vue') },
 ]

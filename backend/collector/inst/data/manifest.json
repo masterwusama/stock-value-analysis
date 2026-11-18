@@ -1,0 +1,33 @@
+{
+ "updated_at": "2026-11-18T12:24:34",
+ "period": "2026-09-30",
+ "report_name": "2026三季报",
+ "types": {
+  "社保": {
+   "std": 761,
+   "adhoc": 36,
+   "period": "2026-09-30",
+   "std_mktcap_yi": 1973.1
+  },
+  "QFII": {
+   "std": 2910,
+   "adhoc": 64,
+   "period": "2026-09-30",
+   "std_mktcap_yi": 3841.1
+  },
+  "保险": {
+   "std": 817,
+   "adhoc": 36,
+   "period": "2026-09-30",
+   "std_mktcap_yi": 17202.6
+  },
+  "养老": {
+   "std": 192,
+   "adhoc": 10,
+   "period": "2026-09-30",
+   "std_mktcap_yi": 425.3
+  }
+ },
+ "kept_rows": 4695,
+ "warns": []
+}
